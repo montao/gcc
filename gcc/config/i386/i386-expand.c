@@ -1,4 +1,4 @@
-/* Copyright (C) 1988-2021 Free Software Foundation, Inc.
+/* Copyright (C) 1988-2022 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -612,6 +612,23 @@ ix86_expand_vector_move (machine_mode mode, rtx operands[])
 
       tmp[0] = op0; tmp[1] = op1;
       ix86_expand_vector_move_misalign (mode, tmp);
+      return;
+    }
+
+  /* Special case TImode to V1TImode conversions, via V2DI.  */
+  if (mode == V1TImode
+      && SUBREG_P (op1)
+      && GET_MODE (SUBREG_REG (op1)) == TImode
+      && TARGET_64BIT && TARGET_SSE
+      && can_create_pseudo_p ())
+    {
+      rtx tmp = gen_reg_rtx (V2DImode);
+      rtx lo = gen_reg_rtx (DImode);
+      rtx hi = gen_reg_rtx (DImode);
+      emit_move_insn (lo, gen_lowpart (DImode, SUBREG_REG (op1)));
+      emit_move_insn (hi, gen_highpart (DImode, SUBREG_REG (op1)));
+      emit_insn (gen_vec_concatv2di (tmp, lo, hi));
+      emit_move_insn (op0, gen_lowpart (V1TImode, tmp));
       return;
     }
 
@@ -16245,10 +16262,11 @@ ix86_expand_vector_set (bool mmx_ok, rtx target, rtx val, int elt)
       goto half;
 
     case E_V16HFmode:
-      if (TARGET_AVX2)
+      /* For ELT == 0, vec_setv8hf_0 can save 1 vpbroadcastw.  */
+      if (TARGET_AVX2 && elt != 0)
 	{
 	  mmode = SImode;
-	  gen_blendm = gen_avx2_pblendph;
+	  gen_blendm = gen_avx2_pblendph_1;
 	  blendm_const = true;
 	  break;
 	}
@@ -18730,7 +18748,7 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
 {
   unsigned i, nelt, eltsz, mask;
   unsigned char perm[64];
-  machine_mode vmode = V16QImode;
+  machine_mode vmode;
   struct expand_vec_perm_d nd;
   rtx rperm[64], vperm, target, op0, op1;
 
@@ -18754,6 +18772,7 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
       case 16:
 	if (!TARGET_XOP)
 	  return false;
+	vmode = V16QImode;
 	break;
 
       case 32:
@@ -18803,6 +18822,7 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
       case 16:
 	if (!TARGET_SSSE3)
 	  return false;
+	vmode = V16QImode;
 	break;
 
       case 32:
@@ -18894,6 +18914,7 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
 	/* Or if vpermps can be used.  */
 	else if (d->vmode == V16SFmode)
 	  vmode = V16SImode;
+
 	if (vmode == V64QImode)
 	  {
 	    /* vpshufb only works intra lanes, it is not
@@ -18946,8 +18967,10 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
 
   machine_mode vpmode = vmode;
 
-  if (vmode == V4QImode
-      || vmode == V8QImode)
+  nelt = GET_MODE_SIZE (vmode);
+
+  /* Emulate narrow modes with V16QI instructions.  */
+  if (nelt < 16)
     {
       rtx m128 = GEN_INT (-128);
 
@@ -18955,19 +18978,15 @@ expand_vec_perm_pshufb (struct expand_vec_perm_d *d)
 	 account for inactive top elements from the first operand.  */
       if (!d->one_operand_p)
 	{
-	  int sz = GET_MODE_SIZE (vmode);
-
 	  for (i = 0; i < nelt; ++i)
 	    {
-	      int ival = INTVAL (rperm[i]);
-	      if (ival >= sz)
-		ival += 16-sz;
-	      rperm[i] = GEN_INT (ival);
+	      unsigned ival = UINTVAL (rperm[i]);
+	      if (ival >= nelt)
+		rperm[i] = GEN_INT (ival + 16 - nelt);
 	    }
 	}
 
-      /* V4QI/V8QI is emulated with V16QI instruction, fill inactive
-	 elements in the top positions with zeros.  */
+      /* Fill inactive elements in the top positions with zeros.  */
       for (i = nelt; i < 16; ++i)
 	rperm[i] = m128;
 

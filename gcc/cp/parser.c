@@ -1,5 +1,5 @@
 /* -*- C++ -*- Parser.
-   Copyright (C) 2000-2021 Free Software Foundation, Inc.
+   Copyright (C) 2000-2022 Free Software Foundation, Inc.
    Written by Mark Mitchell <mark@codesourcery.com>.
 
    This file is part of GCC.
@@ -4607,7 +4607,8 @@ make_char_string_pack (tree value)
 {
   tree charvec;
   tree argpack = make_node (NONTYPE_ARGUMENT_PACK);
-  const char *str = TREE_STRING_POINTER (value);
+  const unsigned char *str
+    = (const unsigned char *) TREE_STRING_POINTER (value);
   int i, len = TREE_STRING_LENGTH (value) - 1;
   tree argvec = make_tree_vec (1);
 
@@ -12750,9 +12751,6 @@ cp_parser_compound_statement (cp_parser *parser, tree in_statement_expr,
   /* Parse an (optional) statement-seq.  */
   cp_parser_statement_seq_opt (parser, in_statement_expr);
 
-  if (function_body)
-    maybe_splice_retval_cleanup (compound_stmt);
-
   /* Consume the `}'.  */
   braces.require_close (parser);
 
@@ -15820,7 +15818,7 @@ cp_parser_decl_specifier_seq (cp_parser* parser,
       if (found_decl_spec
 	  && (flags & CP_PARSER_FLAGS_ONLY_TYPE_OR_CONSTEXPR)
 	  && token->keyword != RID_CONSTEXPR)
-	error ("%<decl-specifier%> invalid in condition");
+	error ("%qD invalid in condition", ridpointers[token->keyword]);
 
       if (found_decl_spec
 	  && (flags & CP_PARSER_FLAGS_ONLY_MUTABLE_OR_CONSTEXPR)
