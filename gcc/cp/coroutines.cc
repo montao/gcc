@@ -1824,7 +1824,7 @@ expand_one_await_expression (tree *stmt, tree *await_expr, void *d)
       cp_walk_tree (await_init, co_await_find_in_subtree, &aw_expr_ptr, NULL))
     expand_one_await_expression (await_init, aw_expr_ptr, d);
 
-  /* Expand any more await expressions in the the original statement.  */
+  /* Expand any more await expressions in the original statement.  */
   if (cp_walk_tree (revised, co_await_find_in_subtree, &aw_expr_ptr, NULL))
     expand_one_await_expression (revised, aw_expr_ptr, d);
 
@@ -4387,7 +4387,7 @@ morph_fn_to_coro (tree orig, tree *resumer, tree *destroyer)
      If we encounter a fatal error we might return a now-empty body.
 
      Note, the returned ramp body is not 'popped', to be compatible with
-     the way that decl.c handles regular functions, the scope pop is done
+     the way that decl.cc handles regular functions, the scope pop is done
      in the caller.  */
 
   tree newbody = push_stmt_list ();

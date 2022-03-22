@@ -32,11 +32,11 @@
 /* Default needs to be in sync with default for misa in nvptx.opt.
    We add a default here to work around a hard-coded sm_30 default in
    nvptx-as.  */
-#define ASM_SPEC "%{misa=*:-m %*; :-m sm_35}"
+#define ASM_SPEC "%{misa=*:-m %*; :-m sm_35}%{misa=sm_30:--no-verify}"
 
 #define TARGET_CPU_CPP_BUILTINS() nvptx_cpu_cpp_builtins ()
 
-/* Avoid the default in ../../gcc.c, which adds "-pthread", which is not
+/* Avoid the default in ../../gcc.cc, which adds "-pthread", which is not
    supported for nvptx.  */
 #define GOMP_SELF_SPECS ""
 
@@ -86,11 +86,9 @@
 #define Pmode (TARGET_ABI64 ? DImode : SImode)
 #define STACK_SIZE_MODE Pmode
 
-#define TARGET_SM35 (ptx_isa_option >= PTX_ISA_SM35)
-#define TARGET_SM53 (ptx_isa_option >= PTX_ISA_SM53)
-#define TARGET_SM75 (ptx_isa_option >= PTX_ISA_SM75)
-#define TARGET_SM80 (ptx_isa_option >= PTX_ISA_SM80)
+#include "nvptx-gen.h"
 
+#define TARGET_PTX_6_0 (ptx_version_option >= PTX_VERSION_6_0)
 #define TARGET_PTX_6_3 (ptx_version_option >= PTX_VERSION_6_3)
 #define TARGET_PTX_7_0 (ptx_version_option >= PTX_VERSION_7_0)
 
@@ -228,6 +226,7 @@ struct GTY(()) machine_function
   rtx sync_bar; /* Synchronization barrier ID for vectors.  */
   rtx unisimt_master; /* 'Master lane index' for -muniform-simt.  */
   rtx unisimt_predicate; /* Predicate for -muniform-simt.  */
+  rtx unisimt_outside_simt_predicate; /* Predicate for -muniform-simt.  */
   rtx unisimt_location; /* Mask location for -muniform-simt.  */
   /* The following two fields hold the maximum size resp. alignment required
      for per-lane storage in OpenMP SIMD regions.  */
