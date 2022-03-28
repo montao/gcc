@@ -2821,7 +2821,7 @@ add_builtin_candidate (struct z_candidate **candidates, enum tree_code code,
 	  tree c1 = TREE_TYPE (type1);
 	  tree c2 = TYPE_PTRMEM_CLASS_TYPE (type2);
 
-	  if (MAYBE_CLASS_TYPE_P (c1) && DERIVED_FROM_P (c2, c1)
+	  if (CLASS_TYPE_P (c1) && DERIVED_FROM_P (c2, c1)
 	      && (TYPE_PTRMEMFUNC_P (type2)
 		  || is_complete (TYPE_PTRMEM_POINTED_TO_TYPE (type2))))
 	    break;
@@ -9939,7 +9939,7 @@ build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
 		    obj_arg = TREE_OPERAND (addr, 0);
 		}
 	    }
-	  call = cxx_constant_value (call, obj_arg);
+	  call = cxx_constant_value_sfinae (call, obj_arg, complain);
 	  if (obj_arg && !error_operand_p (call))
 	    call = build2 (INIT_EXPR, void_type_node, obj_arg, call);
 	  call = convert_from_reference (call);

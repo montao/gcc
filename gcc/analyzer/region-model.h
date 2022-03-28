@@ -349,6 +349,8 @@ public:
 
   logger *get_logger () const { return m_logger; }
 
+  void dump_untracked_regions () const;
+
 private:
   bool too_complex_p (const complexity &c) const;
   bool reject_if_too_complex (svalue *sval);
@@ -658,7 +660,7 @@ class region_model
 			    region_model_context *ctxt);
   const frame_region *get_current_frame () const { return m_current_frame; }
   function * get_current_function () const;
-  void pop_frame (const region *result_dst,
+  void pop_frame (tree result_lvalue,
 		  const svalue **out_result,
 		  region_model_context *ctxt);
   int get_stack_depth () const;
@@ -1262,14 +1264,15 @@ private:
 class engine
 {
 public:
-  engine (logger *logger = NULL);
+  engine (const supergraph *sg = NULL, logger *logger = NULL);
+  const supergraph *get_supergraph () { return m_sg; }
   region_model_manager *get_model_manager () { return &m_mgr; }
 
   void log_stats (logger *logger) const;
 
 private:
+  const supergraph *m_sg;
   region_model_manager m_mgr;
-
 };
 
 } // namespace ana

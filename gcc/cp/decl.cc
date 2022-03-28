@@ -5774,15 +5774,15 @@ start_decl (const cp_declarator *declarator,
       && cxx_dialect < cxx23)
     {
       bool ok = false;
-      if (CP_DECL_THREAD_LOCAL_P (decl))
+      if (CP_DECL_THREAD_LOCAL_P (decl) && !DECL_REALLY_EXTERN (decl))
 	error_at (DECL_SOURCE_LOCATION (decl),
-		  "%qD declared %<thread_local%> in %qs function only "
+		  "%qD defined %<thread_local%> in %qs function only "
 		  "available with %<-std=c++2b%> or %<-std=gnu++2b%>", decl,
 		  DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
 		  ? "consteval" : "constexpr");
       else if (TREE_STATIC (decl))
 	error_at (DECL_SOURCE_LOCATION (decl),
-		  "%qD declared %<static%> in %qs function only available "
+		  "%qD defined %<static%> in %qs function only available "
 		  "with %<-std=c++2b%> or %<-std=gnu++2b%>", decl,
 		  DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
 		  ? "consteval" : "constexpr");
@@ -6543,6 +6543,21 @@ reshape_init_vector (tree type, reshape_iter *d, tsubst_flags_t complain)
 			       NULL_TREE, complain);
 }
 
+/* Subroutine of reshape_init*: We're initializing an element with TYPE from
+   INIT, in isolation from any designator or other initializers.  */
+
+static tree
+reshape_single_init (tree type, tree init, tsubst_flags_t complain)
+{
+  /* We could also implement this by wrapping init in a new CONSTRUCTOR and
+     calling reshape_init, but this way can just live on the stack.  */
+  constructor_elt elt = { /*index=*/NULL_TREE, init };
+  reshape_iter iter = { &elt, &elt + 1 };
+  return reshape_init_r (type, &iter,
+			 /*first_initializer_p=*/NULL_TREE,
+			 complain);
+}
+
 /* Subroutine of reshape_init_r, processes the initializers for classes
    or union. Parameters are the same of reshape_init_r.  */
 
@@ -6690,24 +6705,19 @@ reshape_init_class (tree type, reshape_iter *d, bool first_initializer_p,
 
       if (direct_desig)
 	{
-	  /* The designated field F is initialized from this one element:
-	     Temporarily clear the designator so a recursive reshape_init_class
-	     doesn't try to find it again in F, and adjust d->end so we don't
-	     try to use the next initializer to initialize another member of F.
+	  /* The designated field F is initialized from this one element.
 
-	     Note that we don't want these changes if we found the designator
-	     inside an anon aggr above; we leave them alone to implement:
+	     Note that we don't want to do this if we found the designator
+	     inside an anon aggr above; we use the normal code to implement:
 
 	     "If the element is an anonymous union member and the initializer
 	     list is a brace-enclosed designated- initializer-list, the element
 	     is initialized by the designated-initializer-list { D }, where D
 	     is the designated- initializer-clause naming a member of the
 	     anonymous union member."  */
-	  auto end_ = make_temp_override (d->end, d->cur + 1);
-	  auto idx_ = make_temp_override (d->cur->index, NULL_TREE);
-	  field_init = reshape_init_r (TREE_TYPE (field), d,
-				       /*first_initializer_p=*/NULL_TREE,
-				       complain);
+	  field_init = reshape_single_init (TREE_TYPE (field),
+					    d->cur->value, complain);
+	  d->cur++;
 	}
       else
 	field_init = reshape_init_r (TREE_TYPE (field), d,
@@ -7322,6 +7332,10 @@ check_initializer (tree decl, tree init, int flags, vec<tree, va_gc> **cleanups)
 	   && !(init && BRACE_ENCLOSED_INITIALIZER_P (init)
 		&& CP_AGGREGATE_TYPE_P (type)
 		&& (CLASS_TYPE_P (type)
+		    /* The call to build_aggr_init below could end up
+		       calling build_vec_init, which may break when we
+		       are processing a template.  */
+		    || processing_template_decl
 		    || !TYPE_NEEDS_CONSTRUCTING (type)
 		    || type_has_extended_temps (type))))
 	  || (DECL_DECOMPOSITION_P (decl) && TREE_CODE (type) == ARRAY_TYPE))
