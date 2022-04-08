@@ -1736,12 +1736,6 @@ valid_builtin_call (gimple *stmt)
     return false;
 
   tree callee = gimple_call_fndecl (stmt);
-  tree decl = builtin_decl_explicit (DECL_FUNCTION_CODE (callee));
-  if (decl
-      && decl != callee
-      && !gimple_builtin_call_types_compatible_p (stmt, decl))
-    return false;
-
   switch (DECL_FUNCTION_CODE (callee))
     {
     case BUILT_IN_MEMCMP:
@@ -5858,13 +5852,8 @@ printf_strlen_execute (function *fun, bool warn_only)
   strlen_optimize = !warn_only;
 
   calculate_dominance_info (CDI_DOMINATORS);
-
-  bool use_scev = optimize > 0 && flag_printf_return_value;
-  if (use_scev)
-    {
-      loop_optimizer_init (LOOPS_NORMAL);
-      scev_initialize ();
-    }
+  loop_optimizer_init (LOOPS_NORMAL);
+  scev_initialize ();
 
   gcc_assert (!strlen_to_stridx);
   if (warn_stringop_overflow || warn_stringop_truncation)
@@ -5902,11 +5891,8 @@ printf_strlen_execute (function *fun, bool warn_only)
       strlen_to_stridx = NULL;
     }
 
-  if (use_scev)
-    {
-      scev_finalize ();
-      loop_optimizer_finalize ();
-    }
+  scev_finalize ();
+  loop_optimizer_finalize ();
 
   return walker.m_cleanup_cfg ? TODO_cleanup_cfg : 0;
 }
