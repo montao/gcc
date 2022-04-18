@@ -1,3 +1,17 @@
+2022-04-13  Tobias Burnus  <tobias@codesourcery.com>
+
+	PR fortran/105242
+	* match.cc (match_exit_cycle): Handle missing OMP LOOP, DO and SIMD
+	directives in the EXIT/CYCLE diagnostic.
+
+2022-04-10  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/105184
+	* array.cc (match_subscript): Reject assumed size coarray
+	specification with missing lower bound.
+	* resolve.cc (resolve_allocate_expr): Fix logic for checking
+	allocate-coshape-spec in ALLOCATE statement.
+
 2022-04-05  Sandra Loosemore  <sandra@codesourcery.com>
 
 	* trans-openmp.cc (gfc_split_omp_clauses): Fix mask for

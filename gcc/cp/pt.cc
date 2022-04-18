@@ -2863,7 +2863,9 @@ check_explicit_specialization (tree declarator,
 	  specialization = 1;
 	  SET_DECL_TEMPLATE_SPECIALIZATION (decl);
 	}
-      else if (TREE_CODE (declarator) == TEMPLATE_ID_EXPR)
+      else if (TREE_CODE (declarator) == TEMPLATE_ID_EXPR
+	       || (DECL_LANG_SPECIFIC (decl)
+		   && DECL_IMPLICIT_INSTANTIATION (decl)))
 	{
 	  if (is_friend)
 	    /* This could be something like:
@@ -13046,7 +13048,7 @@ build_extra_args (tree pattern, tree args, tsubst_flags_t complain)
 {
   /* Make a copy of the extra arguments so that they won't get changed
      out from under us.  */
-  tree extra = copy_template_args (args);
+  tree extra = preserve_args (copy_template_args (args), /*cow_p=*/false);
   if (local_specializations)
     if (tree locals = extract_local_specs (pattern, complain))
       extra = tree_cons (NULL_TREE, extra, locals);
@@ -15082,6 +15084,12 @@ tsubst_decl (tree t, tree args, tsubst_flags_t complain)
 	  {
 	    DECL_ORIGINAL_TYPE (r) = NULL_TREE;
 	    set_underlying_type (r);
+
+	    /* common_handle_aligned_attribute doesn't apply the alignment
+	       to DECL_ORIGINAL_TYPE.  */
+	    if (TYPE_USER_ALIGN (TREE_TYPE (t)))
+	      TREE_TYPE (r) = build_aligned_type (TREE_TYPE (r),
+						  TYPE_ALIGN (TREE_TYPE (t)));
 	  }
 
 	layout_decl (r, 0);
@@ -15180,7 +15188,9 @@ tsubst_arg_types (tree arg_types,
   /* Except that we do substitute default arguments under tsubst_lambda_expr,
      since the new op() won't have any associated template arguments for us
      to refer to later.  */
-  if (lambda_fn_in_template_p (in_decl))
+  if (lambda_fn_in_template_p (in_decl)
+      || (in_decl && TREE_CODE (in_decl) == FUNCTION_DECL
+	  && DECL_LOCAL_DECL_P (in_decl)))
     default_arg = tsubst_copy_and_build (default_arg, args, complain, in_decl,
 					 false/*fn*/, false/*constexpr*/);
 
@@ -16468,7 +16478,8 @@ tsubst_baselink (tree baselink, tree object_type,
 
   tree binfo_type = BINFO_TYPE (BASELINK_BINFO (baselink));
   binfo_type = tsubst (binfo_type, args, complain, in_decl);
-  bool dependent_p = binfo_type != BINFO_TYPE (BASELINK_BINFO (baselink));
+  bool dependent_p = (binfo_type != BINFO_TYPE (BASELINK_BINFO (baselink))
+		      || optype != BASELINK_OPTYPE (baselink));
 
   if (dependent_p)
     {

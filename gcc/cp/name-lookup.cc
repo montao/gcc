@@ -5898,6 +5898,7 @@ set_decl_namespace (tree decl, tree scope, bool friendp)
 
   tree found = NULL_TREE;
   bool hidden_p = false;
+  bool saw_template = false;
 
   for (lkp_iterator iter (old); iter; ++iter)
     {
@@ -5922,6 +5923,20 @@ set_decl_namespace (tree decl, tree scope, bool friendp)
 	  found = ofn;
 	  hidden_p = iter.hidden_p ();
 	}
+      else if (TREE_CODE (decl) == FUNCTION_DECL
+	       && TREE_CODE (ofn) == TEMPLATE_DECL)
+	saw_template = true;
+    }
+
+  if (!found && friendp && saw_template)
+    {
+      /* "[if no non-template match is found,] each remaining function template
+	 is replaced with the specialization chosen by deduction from the
+	 friend declaration or discarded if deduction fails."
+
+	 So tell check_explicit_specialization to look for a match.  */
+      SET_DECL_IMPLICIT_INSTANTIATION (decl);
+      return;
     }
 
   if (found)
@@ -8960,5 +8975,23 @@ cp_emit_debug_info_for_using (tree t, tree context)
 					      false, false);
     }
 }
+
+/* True if D is a local declaration in dependent scope.  Assumes that it is
+   (part of) the current lookup result for its name.  */
+
+bool
+dependent_local_decl_p (tree d)
+{
+  if (!DECL_LOCAL_DECL_P (d))
+    return false;
+
+  cxx_binding *b = IDENTIFIER_BINDING (DECL_NAME (d));
+  cp_binding_level *l = b->scope;
+  while (!l->this_entity)
+    l = l->level_chain;
+  return uses_template_parms (l->this_entity);
+}
+
+
 
 #include "gt-cp-name-lookup.h"
