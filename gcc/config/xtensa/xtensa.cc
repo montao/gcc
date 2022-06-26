@@ -118,7 +118,7 @@ const char xtensa_leaf_regs[FIRST_PSEUDO_REGISTER] =
 
 static void xtensa_option_override (void);
 static enum internal_test map_test_to_internal_test (enum rtx_code);
-static rtx gen_int_relational (enum rtx_code, rtx, rtx, int *);
+static rtx gen_int_relational (enum rtx_code, rtx, rtx);
 static rtx gen_float_relational (enum rtx_code, rtx, rtx);
 static rtx gen_conditional_move (enum rtx_code, machine_mode, rtx, rtx);
 static rtx fixup_subreg_mem (rtx);
@@ -189,7 +189,7 @@ static bool xtensa_can_eliminate (const int from ATTRIBUTE_UNUSED,
 				  const int to);
 static HOST_WIDE_INT xtensa_starting_frame_offset (void);
 static unsigned HOST_WIDE_INT xtensa_asan_shadow_offset (void);
-
+static bool xtensa_function_ok_for_sibcall (tree, tree);
 static rtx xtensa_delegitimize_address (rtx);
 
 
@@ -346,6 +346,9 @@ static rtx xtensa_delegitimize_address (rtx);
 
 #undef TARGET_DELEGITIMIZE_ADDRESS
 #define TARGET_DELEGITIMIZE_ADDRESS xtensa_delegitimize_address
+
+#undef TARGET_FUNCTION_OK_FOR_SIBCALL
+#define TARGET_FUNCTION_OK_FOR_SIBCALL xtensa_function_ok_for_sibcall
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
@@ -680,8 +683,7 @@ map_test_to_internal_test (enum rtx_code test_code)
 static rtx
 gen_int_relational (enum rtx_code test_code, /* relational test (EQ, etc) */
 		    rtx cmp0, /* first operand to compare */
-		    rtx cmp1, /* second operand to compare */
-		    int *p_invert /* whether branch needs to reverse test */)
+		    rtx cmp1 /* second operand to compare */)
 {
   struct cmp_info
   {
@@ -713,6 +715,7 @@ gen_int_relational (enum rtx_code test_code, /* relational test (EQ, etc) */
   enum internal_test test;
   machine_mode mode;
   struct cmp_info *p_info;
+  int invert;
 
   test = map_test_to_internal_test (test_code);
   gcc_assert (test != ITEST_MAX);
@@ -749,9 +752,9 @@ gen_int_relational (enum rtx_code test_code, /* relational test (EQ, etc) */
     }
 
   /* See if we need to invert the result.  */
-  *p_invert = ((GET_CODE (cmp1) == CONST_INT)
-	       ? p_info->invert_const
-	       : p_info->invert_reg);
+  invert = (CONST_INT_P (cmp1)
+	    ? p_info->invert_const
+	    : p_info->invert_reg);
 
   /* Comparison to constants, may involve adding 1 to change a LT into LE.
      Comparison between two registers, may involve switching operands.  */
@@ -768,7 +771,9 @@ gen_int_relational (enum rtx_code test_code, /* relational test (EQ, etc) */
       cmp1 = temp;
     }
 
-  return gen_rtx_fmt_ee (p_info->test_code, VOIDmode, cmp0, cmp1);
+  return gen_rtx_fmt_ee (invert ? reverse_condition (p_info->test_code)
+				: p_info->test_code,
+			 VOIDmode, cmp0, cmp1);
 }
 
 
@@ -827,45 +832,33 @@ xtensa_expand_conditional_branch (rtx *operands, machine_mode mode)
   enum rtx_code test_code = GET_CODE (operands[0]);
   rtx cmp0 = operands[1];
   rtx cmp1 = operands[2];
-  rtx cmp;
-  int invert;
-  rtx label1, label2;
+  rtx cmp, label;
 
   switch (mode)
     {
+    case E_SFmode:
+      if (TARGET_HARD_FLOAT)
+	{
+	  cmp = gen_float_relational (test_code, cmp0, cmp1);
+	  break;
+	}
+      /* FALLTHRU */
+
     case E_DFmode:
     default:
       fatal_insn ("bad test", gen_rtx_fmt_ee (test_code, VOIDmode, cmp0, cmp1));
 
     case E_SImode:
-      invert = FALSE;
-      cmp = gen_int_relational (test_code, cmp0, cmp1, &invert);
-      break;
-
-    case E_SFmode:
-      if (!TARGET_HARD_FLOAT)
-	fatal_insn ("bad test", gen_rtx_fmt_ee (test_code, VOIDmode,
-						cmp0, cmp1));
-      invert = FALSE;
-      cmp = gen_float_relational (test_code, cmp0, cmp1);
+      cmp = gen_int_relational (test_code, cmp0, cmp1);
       break;
     }
 
   /* Generate the branch.  */
-
-  label1 = gen_rtx_LABEL_REF (VOIDmode, operands[3]);
-  label2 = pc_rtx;
-
-  if (invert)
-    {
-      label2 = label1;
-      label1 = pc_rtx;
-    }
-
+  label = gen_rtx_LABEL_REF (VOIDmode, operands[3]);
   emit_jump_insn (gen_rtx_SET (pc_rtx,
 			       gen_rtx_IF_THEN_ELSE (VOIDmode, cmp,
-						     label1,
-						     label2)));
+						     label,
+						     pc_rtx)));
 }
 
 
@@ -1189,7 +1182,8 @@ xtensa_emit_move_sequence (rtx *operands, machine_mode mode)
 	  return 1;
 	}
 
-      if (! TARGET_AUTO_LITPOOLS && ! TARGET_CONST16)
+      if (! TARGET_AUTO_LITPOOLS && ! TARGET_CONST16
+	  && ! (CONST_INT_P (src) && can_create_pseudo_p ()))
 	{
 	  src = force_const_mem (SImode, src);
 	  operands[1] = src;
@@ -1215,7 +1209,7 @@ xtensa_emit_move_sequence (rtx *operands, machine_mode mode)
 	}
     }
 
-  if (!(reload_in_progress | reload_completed)
+  if (can_create_pseudo_p ()
       && !xtensa_valid_move (mode, operands))
     operands[1] = force_reg (mode, operands[1]);
 
@@ -1618,7 +1612,7 @@ xtensa_expand_block_set_small_loop (rtx *operands)
 	 thus limited to only offset to the end address for ADDI/ADDMI
 	 instruction.  */
       if (align == 4
-	  && ! (bytes <= 127 || (bytes <= 32512 && bytes % 256 == 0)))
+	  && ! (bytes <= 127 || xtensa_simm8x256 (bytes)))
 	return 0;
 
       /* If no 4-byte aligned, loop count should be treated as the
@@ -2068,21 +2062,20 @@ xtensa_emit_loop_end (rtx_insn *insn, rtx *operands)
 
 
 char *
-xtensa_emit_branch (bool inverted, bool immed, rtx *operands)
+xtensa_emit_branch (bool immed, rtx *operands)
 {
   static char result[64];
-  enum rtx_code code;
+  enum rtx_code code = GET_CODE (operands[3]);
   const char *op;
 
-  code = GET_CODE (operands[3]);
   switch (code)
     {
-    case EQ:	op = inverted ? "ne" : "eq"; break;
-    case NE:	op = inverted ? "eq" : "ne"; break;
-    case LT:	op = inverted ? "ge" : "lt"; break;
-    case GE:	op = inverted ? "lt" : "ge"; break;
-    case LTU:	op = inverted ? "geu" : "ltu"; break;
-    case GEU:	op = inverted ? "ltu" : "geu"; break;
+    case EQ:	op = "eq"; break;
+    case NE:	op = "ne"; break;
+    case LT:	op = "lt"; break;
+    case GE:	op = "ge"; break;
+    case LTU:	op = "ltu"; break;
+    case GEU:	op = "geu"; break;
     default:	gcc_unreachable ();
     }
 
@@ -2102,32 +2095,6 @@ xtensa_emit_branch (bool inverted, bool immed, rtx *operands)
 
 
 char *
-xtensa_emit_bit_branch (bool inverted, bool immed, rtx *operands)
-{
-  static char result[64];
-  const char *op;
-
-  switch (GET_CODE (operands[3]))
-    {
-    case EQ:	op = inverted ? "bs" : "bc"; break;
-    case NE:	op = inverted ? "bc" : "bs"; break;
-    default:	gcc_unreachable ();
-    }
-
-  if (immed)
-    {
-      unsigned bitnum = INTVAL (operands[1]) & 0x1f; 
-      operands[1] = GEN_INT (bitnum); 
-      sprintf (result, "b%si\t%%0, %%d1, %%2", op);
-    }
-  else
-    sprintf (result, "b%s\t%%0, %%1, %%2", op);
-
-  return result;
-}
-
-
-char *
 xtensa_emit_movcc (bool inverted, bool isfp, bool isbool, rtx *operands)
 {
   static char result[64];
@@ -2135,12 +2102,14 @@ xtensa_emit_movcc (bool inverted, bool isfp, bool isbool, rtx *operands)
   const char *op;
 
   code = GET_CODE (operands[4]);
+  if (inverted)
+    code = reverse_condition (code);
   if (isbool)
     {
       switch (code)
 	{
-	case EQ:	op = inverted ? "t" : "f"; break;
-	case NE:	op = inverted ? "f" : "t"; break;
+	case EQ:	op = "f"; break;
+	case NE:	op = "t"; break;
 	default:	gcc_unreachable ();
 	}
     }
@@ -2148,10 +2117,10 @@ xtensa_emit_movcc (bool inverted, bool isfp, bool isbool, rtx *operands)
     {
       switch (code)
 	{
-	case EQ:	op = inverted ? "nez" : "eqz"; break;
-	case NE:	op = inverted ? "eqz" : "nez"; break;
-	case LT:	op = inverted ? "gez" : "ltz"; break;
-	case GE:	op = inverted ? "ltz" : "gez"; break;
+	case EQ:	op = "eqz"; break;
+	case NE:	op = "nez"; break;
+	case LT:	op = "ltz"; break;
+	case GE:	op = "gez"; break;
 	default:	gcc_unreachable ();
 	}
     }
@@ -2159,6 +2128,20 @@ xtensa_emit_movcc (bool inverted, bool isfp, bool isbool, rtx *operands)
   sprintf (result, "mov%s%s\t%%0, %%%d, %%1",
 	   op, isfp ? ".s" : "", inverted ? 3 : 2);
   return result;
+}
+
+
+void
+xtensa_prepare_expand_call (int callop, rtx *operands)
+{
+  rtx addr = XEXP (operands[callop], 0);
+
+  if (flag_pic && SYMBOL_REF_P (addr)
+      && (!SYMBOL_REF_LOCAL_P (addr) || SYMBOL_REF_EXTERNAL_P (addr)))
+    addr = gen_sym_PLT (addr);
+
+  if (!call_insn_operand (addr, VOIDmode))
+    XEXP (operands[callop], 0) = copy_to_mode_reg (Pmode, addr);
 }
 
 
@@ -2175,6 +2158,24 @@ xtensa_emit_call (int callop, rtx *operands)
     sprintf (result, "callx%d\t%%%d", WINDOW_SIZE, callop);
   else
     sprintf (result, "call%d\t%%%d", WINDOW_SIZE, callop);
+
+  return result;
+}
+
+
+char *
+xtensa_emit_sibcall (int callop, rtx *operands)
+{
+  static char result[64];
+  rtx tgt = operands[callop];
+
+  if (CONST_INT_P (tgt))
+    sprintf (result, "j.l\t" HOST_WIDE_INT_PRINT_HEX ", a9",
+	     INTVAL (tgt));
+  else if (register_operand (tgt, VOIDmode))
+    sprintf (result, "jx\t%%%d", callop);
+  else
+    sprintf (result, "j.l\t%%%d, a9", callop);
 
   return result;
 }
@@ -2400,6 +2401,20 @@ xtensa_tls_referenced_p (rtx x)
 	  }
     }
   return false;
+}
+
+
+/* Helper function for "*shlrd_..." patterns.  */
+
+enum rtx_code
+xtensa_shlrd_which_direction (rtx op0, rtx op1)
+{
+  if (GET_CODE (op0) == ASHIFT && GET_CODE (op1) == LSHIFTRT)
+    return ASHIFT;	/* shld  */
+  if (GET_CODE (op0) == LSHIFTRT && GET_CODE (op1) == ASHIFT)
+    return LSHIFTRT;	/* shrd  */
+
+  return UNKNOWN;
 }
 
 
@@ -3291,7 +3306,7 @@ xtensa_expand_prologue (void)
 }
 
 void
-xtensa_expand_epilogue (void)
+xtensa_expand_epilogue (bool sibcall_p)
 {
   if (!TARGET_WINDOWED_ABI)
     {
@@ -3325,10 +3340,13 @@ xtensa_expand_epilogue (void)
 	  if (xtensa_call_save_reg(regno))
 	    {
 	      rtx x = gen_rtx_PLUS (Pmode, stack_pointer_rtx, GEN_INT (offset));
+	      rtx reg;
 
 	      offset -= UNITS_PER_WORD;
-	      emit_move_insn (gen_rtx_REG (SImode, regno),
+	      emit_move_insn (reg = gen_rtx_REG (SImode, regno),
 			      gen_frame_mem (SImode, x));
+	      if (regno == A0_REG && sibcall_p)
+		emit_use (reg);
 	    }
 	}
 
@@ -3363,7 +3381,8 @@ xtensa_expand_epilogue (void)
 				  EH_RETURN_STACKADJ_RTX));
     }
   cfun->machine->epilogue_done = true;
-  emit_jump_insn (gen_return ());
+  if (!sibcall_p)
+    emit_jump_insn (gen_return ());
 }
 
 bool
@@ -4263,20 +4282,26 @@ xtensa_rtx_costs (rtx x, machine_mode mode, int outer_code,
 }
 
 static bool
-xtensa_is_insn_L32R_p(const rtx_insn *insn)
+xtensa_is_insn_L32R_p (const rtx_insn *insn)
 {
   rtx x = PATTERN (insn);
 
-  if (GET_CODE (x) == SET)
+  if (GET_CODE (x) != SET)
+    return false;
+
+  x = XEXP (x, 1);
+  if (MEM_P (x))
     {
-      x = XEXP (x, 1);
-      if (GET_CODE (x) == MEM)
-	{
-	  x = XEXP (x, 0);
-	  return (GET_CODE (x) == SYMBOL_REF || CONST_INT_P (x))
-		 && CONSTANT_POOL_ADDRESS_P (x);
-	}
+      x = XEXP (x, 0);
+      return (SYMBOL_REF_P (x) || CONST_INT_P (x))
+	     && CONSTANT_POOL_ADDRESS_P (x);
     }
+
+  /* relaxed MOVI instructions, that will be converted to L32R by the
+     assembler.  */
+  if (CONST_INT_P (x)
+      && ! xtensa_simm12b (INTVAL (x)))
+    return true;
 
   return false;
 }
@@ -4888,6 +4913,17 @@ static unsigned HOST_WIDE_INT
 xtensa_asan_shadow_offset (void)
 {
   return HOST_WIDE_INT_UC (0x10000000);
+}
+
+/* Implement TARGET_FUNCTION_OK_FOR_SIBCALL.  */
+static bool
+xtensa_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED, tree exp ATTRIBUTE_UNUSED)
+{
+  /* Do not allow sibcalls when windowed registers ABI is in effect.  */
+  if (TARGET_WINDOWED_ABI)
+    return false;
+
+  return true;
 }
 
 static rtx

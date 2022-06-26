@@ -10089,16 +10089,19 @@ lookup_template_class (tree d1, tree arglist, tree in_decl, tree context,
 	    {
 	      context = tsubst_aggr_type (context, arglist,
 					  complain, in_decl, true);
-	      context = complete_type (context);
-	      if (is_dependent_type && arg_depth > 1)
+	      /* Try completing the enclosing context if it's not already so.  */
+	      if (context != error_mark_node
+		  && !COMPLETE_TYPE_P (context))
 		{
-		  /* If this is a dependent nested specialization such as
-		     A<T>::B<U> [with T=int, U=U], then completion of A<int>
-		     could have caused to register the desired specialization
-		     of B already, so check the table again (33959).  */
-		  entry = type_specializations->find_with_hash (&elt, hash);
-		  if (entry)
-		    return entry->spec;
+		  context = complete_type (context);
+		  if (COMPLETE_TYPE_P (context))
+		    {
+		      /* Completion could have caused us to register the desired
+			 specialization already, so check the table again.  */
+		      entry = type_specializations->find_with_hash (&elt, hash);
+		      if (entry)
+			return entry->spec;
+		    }
 		}
 	    }
 	}
@@ -18547,6 +18550,29 @@ lookup_init_capture_pack (tree decl)
   return r;
 }
 
+/* T is an operand of a template tree being substituted.  Return whether
+   T is dependent such that we should suppress some warnings that would
+   make sense if the substituted expression were written directly, like
+     template <int I> bool f() { return I == 2; }
+   We don't want to warn when instantiating f that comparing two constants
+   always has the same value.
+
+   This is a more limited concept of dependence than instantiation-dependent;
+   here we don't care whether substitution could fail.  */
+
+static bool
+dependent_operand_p (tree t)
+{
+  while (TREE_CODE (t) == IMPLICIT_CONV_EXPR)
+    t = TREE_OPERAND (t, 0);
+  ++processing_template_decl;
+  bool r = (potential_constant_expression (t)
+	    ? value_dependent_expression_p (t)
+	    : type_dependent_expression_p (t));
+  --processing_template_decl;
+  return r;
+}
+
 /* Like tsubst_copy for expressions, etc. but also does semantic
    processing.  */
 
@@ -18872,8 +18898,13 @@ tsubst_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl,
       IF_STMT_CONSTEVAL_P (stmt) = IF_STMT_CONSTEVAL_P (t);
       if (IF_STMT_CONSTEXPR_P (t))
 	args = add_extra_args (IF_STMT_EXTRA_ARGS (t), args, complain, in_decl);
-      tmp = RECUR (IF_COND (t));
-      tmp = finish_if_stmt_cond (tmp, stmt);
+      {
+	tree cond = IF_COND (t);
+	bool was_dep = dependent_operand_p (cond);
+	cond = RECUR (cond);
+	warning_sentinel s1(warn_address, was_dep);
+	tmp = finish_if_stmt_cond (cond, stmt);
+      }
       if (IF_STMT_CONSTEXPR_P (t)
 	  && instantiation_dependent_expression_p (tmp))
 	{
@@ -20422,15 +20453,8 @@ tsubst_copy_and_build (tree t,
 	   warnings that depend on the range of the types involved.  */
 	tree op0 = TREE_OPERAND (t, 0);
 	tree op1 = TREE_OPERAND (t, 1);
-	auto dep_p = [](tree t) {
-	  ++processing_template_decl;
-	  bool r = (potential_constant_expression (t)
-		    ? value_dependent_expression_p (t)
-		    : type_dependent_expression_p (t));
-	  --processing_template_decl;
-	  return r;
-	};
-	const bool was_dep = dep_p (op0) || dep_p (op1);
+	const bool was_dep = (dependent_operand_p (op0)
+			      || dependent_operand_p (op1));
 	op0 = RECUR (op0);
 	op1 = RECUR (op1);
 
@@ -20438,6 +20462,7 @@ tsubst_copy_and_build (tree t,
 	warning_sentinel s2(warn_div_by_zero, was_dep);
 	warning_sentinel s3(warn_logical_op, was_dep);
 	warning_sentinel s4(warn_tautological_compare, was_dep);
+	warning_sentinel s5(warn_address, was_dep);
 
 	tree r = build_x_binary_op
 	  (input_location, TREE_CODE (t),
@@ -22982,6 +23007,7 @@ type_unification_real (tree tparms,
 	     deduced from a later argument than the one from which
 	     this parameter can be deduced.  */
 	  if (TREE_CODE (tparm) == PARM_DECL
+	      && !is_auto (TREE_TYPE (tparm))
 	      && uses_template_parms (TREE_TYPE (tparm))
 	      && saw_undeduced < 2)
 	    {
@@ -23042,6 +23068,7 @@ type_unification_real (tree tparms,
 
 	  if (saw_undeduced == 1
 	      && TREE_CODE (parm) == PARM_DECL
+	      && !is_auto (TREE_TYPE (parm))
 	      && uses_template_parms (TREE_TYPE (parm)))
 	    {
 	      /* The type of this non-type parameter depends on undeduced
@@ -27959,6 +27986,15 @@ type_dependent_expression_p (tree expression)
       && !TYPE_DOMAIN (TREE_TYPE (expression))
       && DECL_INITIAL (expression))
    return true;
+
+  /* Pull a FUNCTION_DECL out of a BASELINK if we can.  */
+  if (BASELINK_P (expression))
+    {
+      if (BASELINK_OPTYPE (expression)
+	  && dependent_type_p (BASELINK_OPTYPE (expression)))
+	return true;
+      expression = BASELINK_FUNCTIONS (expression);
+    }
 
   /* A function or variable template-id is type-dependent if it has any
      dependent template arguments.  */

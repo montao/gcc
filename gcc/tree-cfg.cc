@@ -9503,9 +9503,8 @@ pass_warn_function_return::execute (function *fun)
 	     with __builtin_unreachable () call.  */
 	  if (optimize && gimple_code (last) == GIMPLE_RETURN)
 	    {
-	      tree fndecl = builtin_decl_implicit (BUILT_IN_UNREACHABLE);
-	      gimple *new_stmt = gimple_build_call (fndecl, 0);
-	      gimple_set_location (new_stmt, gimple_location (last));
+	      location_t loc = gimple_location (last);
+	      gimple *new_stmt = gimple_build_builtin_unreachable (loc);
 	      gimple_stmt_iterator gsi = gsi_for_stmt (last);
 	      gsi_replace (&gsi, new_stmt, true);
 	      remove_edge (e);
@@ -9543,7 +9542,7 @@ pass_warn_function_return::execute (function *fun)
 	}
       /* The C++ FE turns fallthrough from the end of non-void function
 	 into __builtin_unreachable () call with BUILTINS_LOCATION.
-	 Recognize those too.  */
+	 Recognize those as well as calls from ubsan_instrument_return.  */
       basic_block bb;
       if (!warning_suppressed_p (fun->decl, OPT_Wreturn_type))
 	FOR_EACH_BB_FN (bb, fun)
@@ -9555,7 +9554,8 @@ pass_warn_function_return::execute (function *fun)
 	      if (last
 		  && ((LOCATION_LOCUS (gimple_location (last))
 		       == BUILTINS_LOCATION
-		       && gimple_call_builtin_p (last, BUILT_IN_UNREACHABLE))
+		       && (gimple_call_builtin_p (last, BUILT_IN_UNREACHABLE)
+			   || gimple_call_builtin_p (last, BUILT_IN_TRAP)))
 		      || gimple_call_builtin_p (last, ubsan_missing_ret)))
 		{
 		  gimple_stmt_iterator gsi = gsi_for_stmt (last);
@@ -9833,7 +9833,7 @@ execute_fixup_cfg (void)
 	    {
 	      if (stmt && is_gimple_call (stmt))
 		gimple_call_set_ctrl_altering (stmt, false);
-	      tree fndecl = builtin_decl_implicit (BUILT_IN_UNREACHABLE);
+	      tree fndecl = builtin_decl_unreachable ();
 	      stmt = gimple_build_call (fndecl, 0);
 	      gimple_stmt_iterator gsi = gsi_last_bb (bb);
 	      gsi_insert_after (&gsi, stmt, GSI_NEW_STMT);

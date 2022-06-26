@@ -180,6 +180,7 @@ make_internal_typeinfo (tinfo_kind tk, Identifier *ident, ...)
 
   /* Create the TypeInfo type.  */
   tree type = make_node (RECORD_TYPE);
+  TYPE_ARTIFICIAL (type) = 1;
   finish_builtin_struct (type, ident->toChars (), fields, NULL_TREE);
 
   tinfo_types[tk] = type;
@@ -1049,7 +1050,7 @@ public:
     this->layout_string (ti->deco);
 
     /* Default initializer for struct.  */
-    tree ptr = (sd->zeroInit) ? null_pointer_node
+    tree ptr = (sd->zeroInit ()) ? null_pointer_node
       : build_address (aggregate_initializer_decl (sd));
     this->layout_field (d_array_value (array_type_node,
 				       size_int (sd->structsize), ptr));
@@ -1770,7 +1771,7 @@ public:
       {
 	if (!ti->needsCodegen ())
 	  {
-	    if (ti->minst || sd->requestTypeInfo)
+	    if (ti->minst || sd->requestTypeInfo ())
 	      return;
 
 	    this->result_ |= true;
