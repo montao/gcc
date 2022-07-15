@@ -1033,6 +1033,7 @@
     FAIL;
   if (! xtensa_constantsynth (operands[0], INTVAL (x)))
     emit_move_insn (operands[0], x);
+  DONE;
 })
 
 ;; 16-bit Integer moves
@@ -1243,35 +1244,17 @@
   "! optimize_debug && reload_completed"
   [(const_int 0)]
 {
-  int i = 0;
-  rtx x = XEXP (operands[1], 0);
-  long l[2];
-  if (SYMBOL_REF_P (x)
-      && CONSTANT_POOL_ADDRESS_P (x))
-    x = get_pool_constant (x);
-  else if (GET_CODE (x) == CONST)
-    {
-      x = XEXP (x, 0);
-      gcc_assert (GET_CODE (x) == PLUS
-		  && SYMBOL_REF_P (XEXP (x, 0))
-		  && CONSTANT_POOL_ADDRESS_P (XEXP (x, 0))
-		  && CONST_INT_P (XEXP (x, 1)));
-      i = INTVAL (XEXP (x, 1));
-      gcc_assert (i == 0 || i == 4);
-      i /= 4;
-      x = get_pool_constant (XEXP (x, 0));
-    }
-  else
-    gcc_unreachable ();
-  if (GET_MODE (x) == SFmode)
-    REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l[0]);
-  else if (GET_MODE (x) == DFmode)
-    REAL_VALUE_TO_TARGET_DOUBLE (*CONST_DOUBLE_REAL_VALUE (x), l);
-  else
+  rtx x = avoid_constant_pool_reference (operands[1]);
+  long l;
+  HOST_WIDE_INT value;
+  if (! CONST_DOUBLE_P (x) || GET_MODE (x) != SFmode)
     FAIL;
+  REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l);
   x = gen_rtx_REG (SImode, REGNO (operands[0]));
-  if (! xtensa_constantsynth (x, l[i]))
-    emit_move_insn (x, GEN_INT (l[i]));
+  value = (int32_t)l;
+  if (! xtensa_constantsynth (x, value))
+    emit_move_insn (x, GEN_INT (value));
+  DONE;
 })
 
 ;; 64-bit floating point moves
@@ -2807,4 +2790,37 @@
 	 && GET_MODE (x) == inner_mode
 	 && REGNO (x) == regno + REG_NREGS (operands[0]) / 2))
     FAIL;
+})
+
+(define_peephole2
+  [(set (match_operand:SI 0 "register_operand")
+	(match_operand:SI 1 "const_int_operand"))
+   (set (match_dup 0)
+	(plus:SI (match_dup 0)
+		 (match_operand:SI 2 "const_int_operand")))
+   (set (match_operand:SI 3 "register_operand")
+	(plus:SI (match_operand:SI 4 "register_operand")
+		 (match_dup 0)))]
+  "IN_RANGE (INTVAL (operands[1]) + INTVAL (operands[2]),
+	     (-128 - 32768), (127 + 32512))
+   && REGNO (operands[0]) != REGNO (operands[3])
+   && REGNO (operands[0]) != REGNO (operands[4])
+   && peep2_reg_dead_p (3, operands[0])"
+  [(set (match_dup 3)
+	(plus:SI (match_dup 4)
+		 (match_dup 1)))
+   (set (match_dup 3)
+	(plus:SI (match_dup 3)
+		 (match_dup 2)))]
+{
+  HOST_WIDE_INT value = INTVAL (operands[1]) + INTVAL (operands[2]);
+  int imm0, imm1;
+  value += 128;
+  if (value > 32512)
+    imm1 = 32512;
+  else
+    imm1 = value & ~255;
+  imm0 = value - imm1 - 128;
+  operands[1] = GEN_INT (imm0);
+  operands[2] = GEN_INT (imm1);
 })

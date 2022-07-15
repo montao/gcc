@@ -1,3 +1,18 @@
+2022-07-06  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* libdruntime/MERGE: Merge upstream druntime 651389b5.
+	* src/MERGE: Merge upstream phobos 1516ecad9.
+
+2022-06-29  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* libdruntime/Makefile.am (DRUNTIME_DSOURCES): Add gcc/simd.d.
+	* libdruntime/Makefile.in: Regenerate.
+	* libdruntime/gcc/simd.d: New file.
+
+2022-06-28  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* libdruntime/gcc/attributes.d (simd): Define.
+
 2022-06-24  Iain Buclaw  <ibuclaw@gdcproject.org>
 
 	PR d/105413

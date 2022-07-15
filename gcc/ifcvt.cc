@@ -999,7 +999,8 @@ noce_emit_move_insn (rtx x, rtx y)
 		}
 
 	      gcc_assert (start < (MEM_P (op) ? BITS_PER_UNIT : BITS_PER_WORD));
-	      store_bit_field (op, size, start, 0, 0, GET_MODE (x), y, false);
+	      store_bit_field (op, size, start, 0, 0, GET_MODE (x), y, false,
+			       false);
 	      return;
 	    }
 
@@ -1056,7 +1057,7 @@ noce_emit_move_insn (rtx x, rtx y)
   outmode = GET_MODE (outer);
   bitpos = SUBREG_BYTE (outer) * BITS_PER_UNIT;
   store_bit_field (inner, GET_MODE_BITSIZE (outmode), bitpos,
-		   0, 0, outmode, y, false);
+		   0, 0, outmode, y, false, false);
 }
 
 /* Return the CC reg if it is used in COND.  */
@@ -5934,12 +5935,12 @@ public:
   {}
 
   /* opt_pass methods: */
-  virtual bool gate (function *)
+  bool gate (function *) final override
     {
       return (optimize > 0) && dbg_cnt (if_conversion);
     }
 
-  virtual unsigned int execute (function *)
+  unsigned int execute (function *) final override
     {
       return rest_of_handle_if_conversion ();
     }
@@ -5981,13 +5982,13 @@ public:
   {}
 
   /* opt_pass methods: */
-  virtual bool gate (function *)
+  bool gate (function *) final override
     {
       return optimize > 0 && flag_if_conversion
 	&& dbg_cnt (if_after_combine);
     }
 
-  virtual unsigned int execute (function *)
+  unsigned int execute (function *) final override
     {
       if_convert (true);
       return 0;
@@ -6027,13 +6028,13 @@ public:
   {}
 
   /* opt_pass methods: */
-  virtual bool gate (function *)
+  bool gate (function *) final override
     {
       return optimize > 0 && flag_if_conversion2
 	&& dbg_cnt (if_after_reload);
     }
 
-  virtual unsigned int execute (function *)
+  unsigned int execute (function *) final override
     {
       if_convert (true);
       return 0;
