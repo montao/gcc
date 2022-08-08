@@ -1,3 +1,119 @@
+2022-08-07  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/88174
+	* constexpr.cc (cxx_eval_store_expression): Handle REALPART_EXPR
+	and IMAGPART_EXPR.  Change ctors from releasing_vec to
+	auto_vec<tree *>, adjust all uses.  For !preeval, update ctors
+	vector.
+
+2022-07-31  Lewis Hyatt  <lhyatt@gmail.com>
+
+	PR c++/66290
+	* parser.cc (cp_lexer_new_main): Rename global done_lexing to
+	override_libcpp_locations.
+
+2022-07-31  Jason Merrill  <jason@redhat.com>
+
+	PR c++/106369
+	* constexpr.cc (reduced_constant_expression_p): Return false
+	if a CONSTRUCTOR initializes an empty field.
+
+2022-07-29  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/106448
+	* parser.cc (cp_parser_omp_atomic): For simple cast followed by
+	CPP_QUERY token, don't try cp_parser_binary_operation if compare
+	is true.
+
+2022-07-26  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/106311
+	* pt.cc (redeclare_class_template): Check DECL_P before accessing
+	DECL_SOURCE_LOCATION.
+
+2022-07-26  Jason Merrill  <jason@redhat.com>
+
+	PR c++/106230
+	* semantics.cc (finish_for_stmt): Check stmts_are_full_exprs_p.
+
+2022-07-25  Jason Merrill  <jason@redhat.com>
+
+	PR c++/87729
+	* class.cc (warn_hidden): Remove shortcut.
+
+2022-07-22  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/106366
+	* pt.cc (do_class_deduction): Don't consider TYPE_HAS_LIST_CTOR
+	when setting try_list_ctor.  Reset args even when try_list_ctor
+	is true and there are no list candidates.  Call resolve_args on
+	the reset args.  Rename try_list_ctor to try_list_cand.
+
+2022-07-22  Martin Liska  <mliska@suse.cz>
+
+	PR other/106370
+	* init.cc (sort_mem_initializers): Remove continue as last stmt
+	in a loop.
+
+2022-07-21  Jason Merrill  <jason@redhat.com>
+
+	PR c++/106361
+	* decl.cc (move_fn_p): Remove assert.
+
+2022-07-21  Jason Merrill  <jason@redhat.com>
+
+	DR 2084
+	PR c++/98423
+	* method.cc (walk_field_subobs): Fix DMI in union case.
+
+2022-07-19  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/94894
+	PR c++/105766
+	PR c++/106201
+	* call.cc (enum conversion_kind): Add ck_deferred_bad enumerator.
+	(has_next): Return false for it.
+	(reference_binding): Return a ck_deferred_bad conversion instead
+	of an actual bad conversion when LOOKUP_SHORTCUT_BAD_CONVS is set.
+	Remove now obsolete early exit for the incomplete TO case.
+	(implicit_conversion_1): Don't mask out LOOKUP_SHORTCUT_BAD_CONVS.
+	(add_function_candidate): Set LOOKUP_SHORTCUT_BAD_CONVS iff
+	shortcut_bad_convs.
+	(missing_conversion_p): Also return true for a ck_deferred_bad
+	conversion.
+	* cp-tree.h (LOOKUP_SHORTCUT_BAD_CONVS): Define.
+
+2022-07-19  Jonathan Wakely  <jwakely@redhat.com>
+
+	* cp-objcp-common.cc (names_builtin_p): Return true for
+	RID_REF_CONSTRUCTS_FROM_TEMPORARY and
+	RID_REF_CONVERTS_FROM_TEMPORARY.
+
+2022-07-15  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/104477
+	* call.cc (ref_conv_binds_directly_p): Rename to ...
+	(ref_conv_binds_directly): ... this.  Add a new bool parameter.  Change
+	the return type to tristate.
+	* constraint.cc (diagnose_trait_expr): Handle
+	CPTK_REF_CONSTRUCTS_FROM_TEMPORARY and CPTK_REF_CONVERTS_FROM_TEMPORARY.
+	* cp-tree.h: Include "tristate.h".
+	(enum cp_trait_kind): Add CPTK_REF_CONSTRUCTS_FROM_TEMPORARY
+	and CPTK_REF_CONVERTS_FROM_TEMPORARY.
+	(ref_conv_binds_directly_p): Rename to ...
+	(ref_conv_binds_directly): ... this.
+	(ref_xes_from_temporary): Declare.
+	* cxx-pretty-print.cc (pp_cxx_trait_expression): Handle
+	CPTK_REF_CONSTRUCTS_FROM_TEMPORARY and CPTK_REF_CONVERTS_FROM_TEMPORARY.
+	* method.cc (ref_xes_from_temporary): New.
+	* parser.cc (cp_parser_primary_expression): Handle
+	RID_REF_CONSTRUCTS_FROM_TEMPORARY and RID_REF_CONVERTS_FROM_TEMPORARY.
+	(cp_parser_trait_expr): Likewise.
+	(warn_for_range_copy): Adjust to call ref_conv_binds_directly.
+	* semantics.cc (trait_expr_value): Handle
+	CPTK_REF_CONSTRUCTS_FROM_TEMPORARY and CPTK_REF_CONVERTS_FROM_TEMPORARY.
+	(finish_trait_expr): Likewise.
+
 2022-07-13  Patrick Palka  <ppalka@redhat.com>
 
 	PR c++/105912

@@ -630,6 +630,7 @@ class region_model
   void impl_call_malloc (const call_details &cd);
   void impl_call_memcpy (const call_details &cd);
   void impl_call_memset (const call_details &cd);
+  void impl_call_putenv (const call_details &cd);
   void impl_call_realloc (const call_details &cd);
   void impl_call_strchr (const call_details &cd);
   void impl_call_strcpy (const call_details &cd);
@@ -931,6 +932,13 @@ class region_model_context
 			     enum tree_code op,
 			     const svalue *rhs) = 0;
 
+  /* Hook for clients to be notified when the condition that
+     SVAL is within RANGES is added to the region model.
+     Similar to on_condition, but for use when handling switch statements.
+     RANGES is non-empty.  */
+  virtual void on_bounded_ranges (const svalue &sval,
+				  const bounded_ranges &ranges) = 0;
+
   /* Hooks for clients to be notified when an unknown change happens
      to SVAL (in response to a call to an unknown function).  */
   virtual void on_unknown_change (const svalue *sval, bool is_mutable) = 0;
@@ -989,6 +997,10 @@ public:
   void on_condition (const svalue *lhs ATTRIBUTE_UNUSED,
 		     enum tree_code op ATTRIBUTE_UNUSED,
 		     const svalue *rhs ATTRIBUTE_UNUSED) override
+  {
+  }
+  void on_bounded_ranges (const svalue &,
+			  const bounded_ranges &) override
   {
   }
   void on_unknown_change (const svalue *sval ATTRIBUTE_UNUSED,
@@ -1085,6 +1097,12 @@ class region_model_context_decorator : public region_model_context
 		     const svalue *rhs) override
   {
     m_inner->on_condition (lhs, op, rhs);
+  }
+
+  void on_bounded_ranges (const svalue &sval,
+			  const bounded_ranges &ranges) override
+  {
+    m_inner->on_bounded_ranges (sval, ranges);
   }
 
   void on_unknown_change (const svalue *sval, bool is_mutable) override

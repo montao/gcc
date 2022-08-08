@@ -184,6 +184,8 @@ enum rid
   RID_IS_UNION,                RID_UNDERLYING_TYPE,
   RID_IS_ASSIGNABLE,           RID_IS_CONSTRUCTIBLE,
   RID_IS_NOTHROW_ASSIGNABLE,   RID_IS_NOTHROW_CONSTRUCTIBLE,
+  RID_REF_CONSTRUCTS_FROM_TEMPORARY,
+  RID_REF_CONVERTS_FROM_TEMPORARY,
 
   /* C++11 */
   RID_CONSTEXPR, RID_DECLTYPE, RID_NOEXCEPT, RID_NULLPTR, RID_STATIC_ASSERT,
@@ -765,10 +767,12 @@ extern int max_tinst_depth;
 
 extern int c_inhibit_evaluation_warnings;
 
-/* Whether lexing has been completed, so subsequent preprocessor
-   errors should use the compiler's input_location.  */
+/* Depending on which phase of processing we are in, we may need
+   to prefer input_location to libcpp's locations.  (Specifically,
+   after the C++ lexer is done lexing tokens, but prior to calling
+   cpp_finish (), we need to do so.  */
 
-extern bool done_lexing;
+extern bool override_libcpp_locations;
 
 /* C types are partitioned into three subsets: object, function, and
    incomplete types.  */

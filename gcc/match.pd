@@ -339,6 +339,11 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
  (if (REAL_VALUE_NEGATIVE (TREE_REAL_CST (@0)))
   (COPYSIGN_ALL (negate @0) @1)))
 
+/* (x >= 0 ? x : 0) + (x <= 0 ? -x : 0) -> abs x.  */
+(simplify
+  (plus:c (max @0 integer_zerop) (max (negate @0) integer_zerop))
+  (abs @0))
+
 /* X * 1, X / 1 -> X.  */
 (for op (mult trunc_div ceil_div floor_div round_div exact_div)
   (simplify
@@ -1303,6 +1308,11 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
 (simplify
  (bit_not (plus:c (bit_not @0) @1))
  (minus @0 @1))
+/* (~X - ~Y) -> Y - X.  */
+(simplify
+ (minus (bit_not @0) (bit_not @1))
+  (with { tree utype = unsigned_type_for (type); }
+   (convert (minus (convert:utype @1) (convert:utype @0)))))
 
 /* ~(X - Y) -> ~X + Y.  */
 (simplify
@@ -1937,6 +1947,13 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
  (bit_xor:c (nop_convert?:s (bit_not:s @0)) @1)
  (if (tree_nop_conversion_p (type, TREE_TYPE (@0)))
   (bit_not (bit_xor (view_convert @0) @1))))
+
+/* ~(a ^ b) is a == b for truth valued a and b.  */
+(simplify
+ (bit_not (bit_xor:s truth_valued_p@0 truth_valued_p@1))
+ (if (INTEGRAL_TYPE_P (TREE_TYPE (@0))
+      && TYPE_PRECISION (TREE_TYPE (@0)) == 1)
+  (convert (eq @0 @1))))
 
 /* (x & ~m) | (y & m) -> ((x ^ y) & m) ^ x */
 (simplify
@@ -3419,6 +3436,11 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
       && (GIMPLE || !TREE_SIDE_EFFECTS (@1)))
   (cond (convert:boolean_type_node @2) @1 @0)))
 
+/* (x <= 0 ? -x : 0) -> max(-x, 0).  */
+(simplify
+  (cond (le @0 integer_zerop@1) (negate@2 @0) integer_zerop@1)
+  (max @2 @1))
+
 /* Simplifications of shift and rotates.  */
 
 (for rotate (lrotate rrotate)
@@ -3964,6 +3986,12 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
   (simplify
    (plus:c (mult:c (div @0 @1) @1) (mod @0 @1))
    @0))
+
+/* x / y * y == x -> x % y == 0.  */
+(simplify
+  (eq:c (mult:c (trunc_div:s @0 @1) @1) @0)
+  (if (TREE_CODE (TREE_TYPE (@0)) != COMPLEX_TYPE)
+    (eq (trunc_mod @0 @1) { build_zero_cst (TREE_TYPE (@0)); })))
 
 /* ((X /[ex] A) +- B) * A  -->  X +- A * B.  */
 (for op (plus minus)
@@ -8038,3 +8066,8 @@ and,
       (if (TYPE_UNSIGNED (TREE_TYPE (@0)))
         (bit_and @0 @1)
       (cond (le @0 @1) @0 (bit_and @0 @1))))))
+
+/* -x & 1 -> x & 1.  */
+(simplify 
+  (bit_and (negate @0) integer_onep@1)
+  (bit_and @0 @1))

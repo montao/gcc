@@ -916,6 +916,32 @@ impl_region_model_context::on_condition (const svalue *lhs,
     }
 }
 
+/* Implementation of region_model_context::on_bounded_ranges vfunc.
+   Notify all state machines about the ranges, which could lead to
+   state transitions.  */
+
+void
+impl_region_model_context::on_bounded_ranges (const svalue &sval,
+					      const bounded_ranges &ranges)
+{
+  int sm_idx;
+  sm_state_map *smap;
+  FOR_EACH_VEC_ELT (m_new_state->m_checker_states, sm_idx, smap)
+    {
+      const state_machine &sm = m_ext_state.get_sm (sm_idx);
+      impl_sm_context sm_ctxt (*m_eg, sm_idx, sm, m_enode_for_diag,
+			       m_old_state, m_new_state,
+			       m_old_state->m_checker_states[sm_idx],
+			       m_new_state->m_checker_states[sm_idx],
+			       m_path_ctxt);
+      sm.on_bounded_ranges (&sm_ctxt,
+			    (m_enode_for_diag
+			     ? m_enode_for_diag->get_supernode ()
+			     : NULL),
+			    m_stmt, sval, ranges);
+    }
+}
+
 /* Implementation of region_model_context::on_phi vfunc.
    Notify all state machines about the phi, which could lead to
    state transitions.  */
@@ -3679,6 +3705,46 @@ private:
   bool m_terminate_path;
 };
 
+/* A subclass of pending_diagnostic for complaining about jumps through NULL
+   function pointers.  */
+
+class jump_through_null : public pending_diagnostic_subclass<jump_through_null>
+{
+public:
+  jump_through_null (const gcall *call)
+  : m_call (call)
+  {}
+
+  const char *get_kind () const final override
+  {
+    return "jump_through_null";
+  }
+
+  bool operator== (const jump_through_null &other) const
+  {
+    return m_call == other.m_call;
+  }
+
+  int get_controlling_option () const final override
+  {
+    return OPT_Wanalyzer_jump_through_null;
+  }
+
+  bool emit (rich_location *rich_loc) final override
+  {
+    return warning_at (rich_loc, get_controlling_option (),
+		       "jump through null pointer");
+  }
+
+  label_text describe_final_event (const evdesc::final_event &ev) final override
+  {
+    return ev.formatted_print ("jump through null pointer here");
+  }
+
+private:
+  const gcall *m_call;
+};
+
 /* The core of exploded_graph::process_worklist (the main analysis loop),
    handling one node in the worklist.
 
@@ -3974,8 +4040,12 @@ exploded_graph::process_node (exploded_node *node)
 	  {
 	    found_a_superedge = true;
 	    if (logger)
-	      logger->log ("considering SN: %i -> SN: %i",
-			   succ->m_src->m_index, succ->m_dest->m_index);
+	      {
+		label_text succ_desc (succ->get_description (false));
+		logger->log ("considering SN: %i -> SN: %i (%s)",
+			     succ->m_src->m_index, succ->m_dest->m_index,
+			     succ_desc.get ());
+	      }
 
 	    program_point next_point
 	      = program_point::before_supernode (succ->m_dest, succ,
@@ -4016,6 +4086,15 @@ exploded_graph::process_node (exploded_node *node)
 							       logger);
 		if (!call_discovered)
 		  {
+		    /* Check for jump through NULL.  */
+		    if (tree fn_ptr = gimple_call_fn (call))
+		      {
+			const svalue *fn_ptr_sval
+			  = model->get_rvalue (fn_ptr, &ctxt);
+			if (fn_ptr_sval->all_zeroes_p ())
+			  ctxt.warn (new jump_through_null (call));
+		      }
+
 		    /* An unknown function or a special function was called
 		       at this point, in such case, don't terminate the
 		       analysis of the current function.
@@ -4590,7 +4669,7 @@ feasibility_state::maybe_update_for_edge (logger *logger,
 	  logger->log ("  sedge: SN:%i -> SN:%i %s",
 		       sedge->m_src->m_index,
 		       sedge->m_dest->m_index,
-		       desc.m_buffer);
+		       desc.get ());
 	}
 
       const gimple *last_stmt = src_point.get_supernode ()->get_last_stmt ();

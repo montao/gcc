@@ -1181,7 +1181,6 @@ gfc_match_iterator (gfc_namespace **ns, bool permit_var)
 	}
       if (':' == gfc_peek_ascii_char ())
 	{
-	  step = gfc_get_expr ();
 	  if (gfc_match (": %e ", &step) != MATCH_YES)
 	    {
 	      gfc_free_expr (begin);
@@ -7387,7 +7386,8 @@ resolve_omp_clauses (gfc_code *code, gfc_omp_clauses *omp_clauses,
 			|| code->op == EXEC_OACC_PARALLEL
 			|| code->op == EXEC_OACC_SERIAL))
 		  check_array_not_assumed (n->sym, n->where, name);
-		else if (n->sym->as && n->sym->as->type == AS_ASSUMED_SIZE)
+		else if (list != OMP_LIST_UNIFORM
+			 && n->sym->as && n->sym->as->type == AS_ASSUMED_SIZE)
 		  gfc_error ("Assumed size array %qs in %s clause at %L",
 			     n->sym->name, name, &n->where);
 		if (n->sym->attr.in_namelist && !is_reduction)

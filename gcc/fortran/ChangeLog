@@ -1,3 +1,62 @@
+2022-07-31  Harald Anlauf  <anlauf@gmx.de>
+	    Steven G. Kargl  <kargl@gcc.gnu.org>
+
+	PR fortran/92805
+	* match.cc (gfc_match_small_literal_int): Make gobbling of leading
+	whitespace optional.
+	(gfc_match_name): Likewise.
+	(gfc_match_char): Likewise.
+	* match.h (gfc_match_small_literal_int): Adjust prototype.
+	(gfc_match_name): Likewise.
+	(gfc_match_char): Likewise.
+	* primary.cc (match_kind_param): Match small literal int or name
+	without gobbling whitespace.
+	(get_kind): Do not skip over blanks.
+	(match_string_constant): Likewise.
+
+2022-07-31  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/77652
+	* check.cc (gfc_check_associated): Make the rank check of POINTER
+	vs. TARGET match the allowed forms of pointer assignment for the
+	selected Fortran standard.
+
+2022-07-29  Tobias Burnus  <tobias@codesourcery.com>
+
+	* openmp.cc (resolve_omp_clauses): Permit assumed-size arrays
+	in uniform clause.
+
+2022-07-26  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/103504
+	* interface.cc (get_sym_storage_size): Array bounds and character
+	length can only be of integer type.
+
+2022-07-21  Martin Liska  <mliska@suse.cz>
+
+	* intrinsic.texi: Remove trailing dots for 2 Fortran fns.
+
+2022-07-20  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/101330
+	* openmp.cc (gfc_match_iterator): Remove left-over code from
+	development that could lead to a crash on invalid input.
+
+2022-07-19  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/103590
+	* resolve.cc (find_array_spec): Change function result to bool to
+	enable error recovery.  Generate error message for invalid array
+	reference of non-array entity instead of an internal error.
+	(gfc_resolve_ref): Use function result from find_array_spec for
+	error recovery.
+
+2022-07-15  Steve Kargl  <kargl@gcc.gnu.org>
+
+	PR fortran/104313
+	* trans-decl.cc (gfc_generate_return): Do not generate conflicting
+	fake results for functions with no result variable under -ff2c.
+
 2022-07-14  Harald Anlauf  <anlauf@gmx.de>
 	    Steven G. Kargl  <kargl@gcc.gnu.org>
 

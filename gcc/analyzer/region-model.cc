@@ -1539,6 +1539,12 @@ region_model::on_call_pre (const gcall *call, region_model_context *ctxt,
 	  impl_call_memset (cd);
 	  return false;
 	}
+      else if (is_named_call_p (callee_fndecl, "putenv", call, 1)
+	       && POINTER_TYPE_P (cd.get_arg_type (0)))
+	{
+	  impl_call_putenv (cd);
+	  return false;
+	}
       else if (is_named_call_p (callee_fndecl, "strchr", call, 2)
 	       && POINTER_TYPE_P (cd.get_arg_type (0)))
 	{
@@ -2956,7 +2962,7 @@ capacity_compatible_with_type (tree cst, tree pointee_size_tree,
   unsigned HOST_WIDE_INT alloc_size = TREE_INT_CST_LOW (cst);
 
   if (is_struct)
-    return alloc_size >= pointee_size;
+    return alloc_size == 0 || alloc_size >= pointee_size;
   return alloc_size % pointee_size == 0;
 }
 
@@ -4228,6 +4234,8 @@ region_model::apply_constraints_for_gswitch (const switch_cfg_superedge &edge,
   bool sat = m_constraints->add_bounded_ranges (index_sval, all_cases_ranges);
   if (!sat && out)
     *out = new rejected_ranges_constraint (*this, index, all_cases_ranges);
+  if (sat && ctxt && !all_cases_ranges->empty_p ())
+    ctxt->on_bounded_ranges (*index_sval, *all_cases_ranges);
   return sat;
 }
 
