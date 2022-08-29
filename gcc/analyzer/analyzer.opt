@@ -98,6 +98,10 @@ Wanalyzer-free-of-non-heap
 Common Var(warn_analyzer_free_of_non_heap) Init(1) Warning
 Warn about code paths in which a non-heap pointer is freed.
 
+Wanalyzer-imprecise-fp-arithmetic
+Common Var(warn_analyzer_imprecise_fp_arithmetic) Init(1) Warning
+Warn about code paths in which floating-point arithmetic is used in locations where precise computation is needed.
+
 Wanalyzer-jump-through-null
 Common Var(warn_analyzer_jump_through_null) Init(1) Warning
 Warn about code paths in which a NULL function pointer is called.
@@ -109,6 +113,10 @@ Warn about code paths in which a heap-allocated pointer leaks.
 Wanalyzer-mismatching-deallocation
 Common Var(warn_analyzer_mismatching_deallocation) Init(1) Warning
 Warn about code paths in which the wrong deallocation function is called.
+
+Wanalyzer-out-of-bounds
+Common Var(warn_analyzer_out_of_bounds) Init(1) Warning
+Warn about code paths in which a write or read to a buffer is out-of-bounds.
 
 Wanalyzer-possible-null-argument
 Common Var(warn_analyzer_possible_null_argument) Init(1) Warning

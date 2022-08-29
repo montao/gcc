@@ -919,8 +919,7 @@ general_scalar_chain::convert_op (rtx *op, rtx_insn *insn)
 rtx
 scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
 {
-  rtx tmp = gen_reg_rtx (vmode);
-  rtx src;
+  rtx src, tmp;
   /* Comparison against anything other than zero, requires an XOR.  */
   if (op2 != const0_rtx)
     {
@@ -929,6 +928,7 @@ scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
       /* If both operands are MEMs, explicitly load the OP1 into TMP.  */
       if (MEM_P (op1) && MEM_P (op2))
 	{
+	  tmp = gen_reg_rtx (vmode);
 	  emit_insn_before (gen_rtx_SET (tmp, op1), insn);
 	  src = tmp;
 	}
@@ -943,34 +943,56 @@ scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
       rtx op12 = XEXP (op1, 1);
       convert_op (&op11, insn);
       convert_op (&op12, insn);
-      if (MEM_P (op11))
+      if (!REG_P (op11))
 	{
+	  tmp = gen_reg_rtx (vmode);
 	  emit_insn_before (gen_rtx_SET (tmp, op11), insn);
 	  op11 = tmp;
 	}
       src = gen_rtx_AND (vmode, gen_rtx_NOT (vmode, op11), op12);
+    }
+  else if (GET_CODE (op1) == AND)
+    {
+      rtx op11 = XEXP (op1, 0);
+      rtx op12 = XEXP (op1, 1);
+      convert_op (&op11, insn);
+      convert_op (&op12, insn);
+      if (!REG_P (op11))
+	{
+	  tmp = gen_reg_rtx (vmode);
+	  emit_insn_before (gen_rtx_SET (tmp, op11), insn);
+	  op11 = tmp;
+	}
+      return gen_rtx_UNSPEC (CCmode, gen_rtvec (2, op11, op12),
+			     UNSPEC_PTEST);
     }
   else
     {
       convert_op (&op1, insn);
       src = op1;
     }
-  emit_insn_before (gen_rtx_SET (tmp, src), insn);
+
+  if (!REG_P (src))
+    {
+      tmp = gen_reg_rtx (vmode);
+      emit_insn_before (gen_rtx_SET (tmp, src), insn);
+      src = tmp;
+    }
 
   if (vmode == V2DImode)
-    emit_insn_before (gen_vec_interleave_lowv2di (copy_rtx_if_shared (tmp),
-						  copy_rtx_if_shared (tmp),
-						  copy_rtx_if_shared (tmp)),
-		      insn);
+    {
+      tmp = gen_reg_rtx (vmode);
+      emit_insn_before (gen_vec_interleave_lowv2di (tmp, src, src), insn);
+      src = tmp;
+    }
   else if (vmode == V4SImode)
-    emit_insn_before (gen_sse2_pshufd (copy_rtx_if_shared (tmp),
-				       copy_rtx_if_shared (tmp),
-				       const0_rtx),
-		      insn);
+    {
+      tmp = gen_reg_rtx (vmode);
+      emit_insn_before (gen_sse2_pshufd (tmp, src, const0_rtx), insn);
+      src = tmp;
+    }
 
-  return gen_rtx_UNSPEC (CCmode, gen_rtvec (2, copy_rtx_if_shared (tmp),
-					       copy_rtx_if_shared (tmp)),
-			 UNSPEC_PTEST);
+  return gen_rtx_UNSPEC (CCmode, gen_rtvec (2, src, src), UNSPEC_PTEST);
 }
 
 /* Helper function for converting INSN to vector mode.  */
@@ -1187,6 +1209,8 @@ timode_scalar_chain::compute_convert_gain ()
       rtx def_set = single_set (insn);
       rtx src = SET_SRC (def_set);
       rtx dst = SET_DEST (def_set);
+      HOST_WIDE_INT op1val;
+      int scost, vcost;
       int igain = 0;
 
       switch (GET_CODE (src))
@@ -1223,9 +1247,157 @@ timode_scalar_chain::compute_convert_gain ()
 
 	case ASHIFT:
 	case LSHIFTRT:
-	  /* For logical shifts by constant multiples of 8. */
-	  igain = optimize_insn_for_size_p () ? COSTS_N_BYTES (4)
-					      : COSTS_N_INSNS (1);
+	  /* See ix86_expand_v1ti_shift.  */
+	  op1val = INTVAL (XEXP (src, 1));
+	  if (optimize_insn_for_size_p ())
+	    {
+	      if (op1val == 64 || op1val == 65)
+		scost = COSTS_N_BYTES (5);
+	      else if (op1val >= 66)
+		scost = COSTS_N_BYTES (6);
+	      else if (op1val == 1)
+		scost = COSTS_N_BYTES (8);
+	      else
+		scost = COSTS_N_BYTES (9);
+
+	      if ((op1val & 7) == 0)
+		vcost = COSTS_N_BYTES (5);
+	      else if (op1val > 64)
+		vcost = COSTS_N_BYTES (10);
+	      else
+		vcost = TARGET_AVX ? COSTS_N_BYTES (19) : COSTS_N_BYTES (23);
+	    }
+	  else
+	    {
+	      scost = COSTS_N_INSNS (2);
+	      if ((op1val & 7) == 0)
+		vcost = COSTS_N_INSNS (1);
+	      else if (op1val > 64)
+		vcost = COSTS_N_INSNS (2);
+	      else
+		vcost = TARGET_AVX ? COSTS_N_INSNS (4) : COSTS_N_INSNS (5);
+	    }
+	  igain = scost - vcost;
+	  break;
+
+	case ASHIFTRT:
+	  /* See ix86_expand_v1ti_ashiftrt.  */
+	  op1val = INTVAL (XEXP (src, 1));
+	  if (optimize_insn_for_size_p ())
+	    {
+	      if (op1val == 64 || op1val == 127)
+		scost = COSTS_N_BYTES (7);
+	      else if (op1val == 1)
+		scost = COSTS_N_BYTES (8);
+	      else if (op1val == 65)
+		scost = COSTS_N_BYTES (10);
+	      else if (op1val >= 66)
+		scost = COSTS_N_BYTES (11);
+	      else
+		scost = COSTS_N_BYTES (9);
+
+	      if (op1val == 127)
+		vcost = COSTS_N_BYTES (10);
+	      else if (op1val == 64)
+		vcost = COSTS_N_BYTES (14);
+	      else if (op1val == 96)
+		vcost = COSTS_N_BYTES (18);
+	      else if (op1val >= 111)
+		vcost = COSTS_N_BYTES (15);
+	      else if (TARGET_AVX2 && op1val == 32)
+		vcost = COSTS_N_BYTES (16);
+	      else if (TARGET_SSE4_1 && op1val == 32)
+		vcost = COSTS_N_BYTES (20);
+	      else if (op1val >= 96)
+		vcost = COSTS_N_BYTES (23);
+	      else if ((op1val & 7) == 0)
+		vcost = COSTS_N_BYTES (28);
+	      else if (TARGET_AVX2 && op1val < 32)
+		vcost = COSTS_N_BYTES (30);
+	      else if (op1val == 1 || op1val >= 64)
+		vcost = COSTS_N_BYTES (42);
+	      else
+		vcost = COSTS_N_BYTES (47);
+	    }
+	  else
+	    {
+	      if (op1val >= 65 && op1val <= 126)
+		scost = COSTS_N_INSNS (3);
+	      else
+		scost = COSTS_N_INSNS (2);
+
+	      if (op1val == 127)
+		vcost = COSTS_N_INSNS (2);
+	      else if (op1val == 64)
+		vcost = COSTS_N_INSNS (3);
+	      else if (op1val == 96)
+		vcost = COSTS_N_INSNS (4);
+	      else if (op1val >= 111)
+		vcost = COSTS_N_INSNS (3);
+	      else if (TARGET_AVX2 && op1val == 32)
+		vcost = COSTS_N_INSNS (3);
+	      else if (TARGET_SSE4_1 && op1val == 32)
+		vcost = COSTS_N_INSNS (4);
+	      else if (op1val >= 96)
+		vcost = COSTS_N_INSNS (5);
+	      else if ((op1val & 7) == 0)
+		vcost = COSTS_N_INSNS (6);
+	      else if (TARGET_AVX2 && op1val < 32)
+		vcost = COSTS_N_INSNS (6);
+	      else if (op1val == 1 || op1val >= 64)
+		vcost = COSTS_N_INSNS (9);
+	      else
+		vcost = COSTS_N_INSNS (10);
+	    }
+	  igain = scost - vcost;
+	  break;
+
+	case ROTATE:
+	case ROTATERT:
+	  /* See ix86_expand_v1ti_rotate.  */
+	  op1val = INTVAL (XEXP (src, 1));
+	  if (optimize_insn_for_size_p ())
+	    {
+	      scost = COSTS_N_BYTES (13);
+	      if ((op1val & 31) == 0)
+		vcost = COSTS_N_BYTES (5);
+	      else if ((op1val & 7) == 0)
+		vcost = TARGET_AVX ? COSTS_N_BYTES (13) : COSTS_N_BYTES (18);
+	      else if (op1val > 32 && op1val < 96)
+		vcost = COSTS_N_BYTES (24);
+	      else
+		vcost = COSTS_N_BYTES (19);
+	    }
+	  else
+	    {
+	      scost = COSTS_N_INSNS (3);
+	      if ((op1val & 31) == 0)
+		vcost = COSTS_N_INSNS (1);
+	      else if ((op1val & 7) == 0)
+		vcost = TARGET_AVX ? COSTS_N_INSNS (3) : COSTS_N_INSNS (4);
+	      else if (op1val > 32 && op1val < 96)
+		vcost = COSTS_N_INSNS (5);
+	      else
+		vcost = COSTS_N_INSNS (1);
+	    }
+	  igain = scost - vcost;
+	  break;
+
+	case COMPARE:
+	  if (XEXP (src, 1) == const0_rtx)
+	    {
+	      if (GET_CODE (XEXP (src, 0)) == AND)
+		/* and;and;or (9 bytes) vs. ptest (5 bytes).  */
+		igain = optimize_insn_for_size_p() ? COSTS_N_BYTES (4)
+						   : COSTS_N_INSNS (2);
+	      /* or (3 bytes) vs. ptest (5 bytes).  */
+	      else if (optimize_insn_for_size_p ())
+		igain = -COSTS_N_BYTES (2);
+	    }
+	  else if (XEXP (src, 1) == const1_rtx)
+	    /* and;cmp -1 (7 bytes) vs. pcmpeqd;pxor;ptest (13 bytes).  */
+	    igain = optimize_insn_for_size_p() ? -COSTS_N_BYTES (6)
+					       : -COSTS_N_INSNS (1);
 	  break;
 
 	default:
@@ -1289,6 +1461,9 @@ timode_scalar_chain::fix_debug_reg_uses (rtx reg)
 void
 timode_scalar_chain::convert_op (rtx *op, rtx_insn *insn)
 {
+  if (GET_MODE (*op) == V1TImode)
+    return;
+
   *op = copy_rtx_if_shared (*op);
 
   if (REG_P (*op))
@@ -1296,19 +1471,19 @@ timode_scalar_chain::convert_op (rtx *op, rtx_insn *insn)
   else if (MEM_P (*op))
     {
       rtx tmp = gen_reg_rtx (V1TImode);
-      emit_insn_before (gen_rtx_SET (gen_rtx_SUBREG (V1TImode, tmp, 0),
+      emit_insn_before (gen_rtx_SET (tmp,
 				     gen_gpr_to_xmm_move_src (V1TImode, *op)),
 			insn);
-      *op = gen_rtx_SUBREG (V1TImode, tmp, 0);
+      *op = tmp;
 
       if (dump_file)
 	fprintf (dump_file, "  Preloading operand for insn %d into r%d\n",
 		 INSN_UID (insn), REGNO (tmp));
     }
-  else if (CONST_INT_P (*op))
+  else if (CONST_SCALAR_INT_P (*op))
     {
       rtx vec_cst;
-      rtx tmp = gen_rtx_SUBREG (V1TImode, gen_reg_rtx (TImode), 0);
+      rtx tmp = gen_reg_rtx (V1TImode);
 
       /* Prefer all ones vector in case of -1.  */
       if (constm1_operand (*op, TImode))
@@ -1329,7 +1504,7 @@ timode_scalar_chain::convert_op (rtx *op, rtx_insn *insn)
 	  emit_insn_before (seq, insn);
 	}
 
-      emit_insn_before (gen_move_insn (copy_rtx (tmp), vec_cst), insn);
+      emit_insn_before (gen_move_insn (tmp, vec_cst), insn);
       *op = tmp;
     }
   else
@@ -1478,6 +1653,9 @@ timode_scalar_chain::convert_insn (rtx_insn *insn)
 
     case ASHIFT:
     case LSHIFTRT:
+    case ASHIFTRT:
+    case ROTATERT:
+    case ROTATE:
       convert_op (&XEXP (src, 0), insn);
       PUT_MODE (src, V1TImode);
       break;
@@ -1609,13 +1787,25 @@ convertible_comparison_p (rtx_insn *insn, enum machine_mode mode)
   rtx op2 = XEXP (src, 1);
 
   /* *cmp<dwi>_doubleword.  */
-  if ((CONST_INT_P (op1)
+  if ((CONST_SCALAR_INT_P (op1)
        || ((REG_P (op1) || MEM_P (op1))
 	   && GET_MODE (op1) == mode))
-      && (CONST_INT_P (op2)
+      && (CONST_SCALAR_INT_P (op2)
 	  || ((REG_P (op2) || MEM_P (op2))
 	      && GET_MODE (op2) == mode)))
     return true;
+
+  /* *testti_doubleword.  */
+  if (op2 == const0_rtx
+      && GET_CODE (op1) == AND
+      && REG_P (XEXP (op1, 0)))
+    {
+      rtx op12 = XEXP (op1, 1);
+      return GET_MODE (XEXP (op1, 0)) == TImode
+	     && (CONST_SCALAR_INT_P (op12)
+		 || ((REG_P (op12) || MEM_P (op12))
+		     && GET_MODE (op12) == TImode));
+    }
 
   /* *test<dwi>_not_doubleword.  */
   if (op2 == const0_rtx
@@ -1803,26 +1993,34 @@ timode_scalar_to_vector_candidate_p (rtx_insn *insn)
       if (!MEM_P (dst)
 	  && GET_CODE (XEXP (src, 0)) == NOT
 	  && REG_P (XEXP (XEXP (src, 0), 0))
-	  && (REG_P (XEXP (src, 1)) || timode_mem_p (XEXP (src, 1))))
+	  && (REG_P (XEXP (src, 1))
+	      || CONST_SCALAR_INT_P (XEXP (src, 1))
+	      || timode_mem_p (XEXP (src, 1))))
 	return true;
       return REG_P (XEXP (src, 0))
-	     && (REG_P (XEXP (src, 1)) || timode_mem_p (XEXP (src, 1)));
+	     && (REG_P (XEXP (src, 1))
+		 || CONST_SCALAR_INT_P (XEXP (src, 1))
+		 || timode_mem_p (XEXP (src, 1)));
 
     case IOR:
     case XOR:
       return REG_P (XEXP (src, 0))
-	     && (REG_P (XEXP (src, 1)) || timode_mem_p (XEXP (src, 1)));
+	     && (REG_P (XEXP (src, 1))
+		 || CONST_SCALAR_INT_P (XEXP (src, 1))
+		 || timode_mem_p (XEXP (src, 1)));
 
     case NOT:
       return REG_P (XEXP (src, 0)) || timode_mem_p (XEXP (src, 0));
 
     case ASHIFT:
     case LSHIFTRT:
-      /* Handle logical shifts by integer constants between 0 and 120
-	 that are multiples of 8.  */
+    case ASHIFTRT:
+    case ROTATERT:
+    case ROTATE:
+      /* Handle shifts/rotates by integer constants between 0 and 127.  */
       return REG_P (XEXP (src, 0))
 	     && CONST_INT_P (XEXP (src, 1))
-	     && (INTVAL (XEXP (src, 1)) & ~0x78) == 0;
+	     && (INTVAL (XEXP (src, 1)) & ~0x7f) == 0;
 
     default:
       return false;
