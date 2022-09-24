@@ -27,10 +27,6 @@ along with GCC; see the file COPYING3.  If not see
 /* Target CPU builtins.  */
 #define TARGET_CPU_CPP_BUILTINS() riscv_cpu_cpp_builtins (pfile)
 
-/* Target hooks for D language.  */
-#define TARGET_D_CPU_VERSIONS riscv_d_target_versions
-#define TARGET_D_REGISTER_CPU_TARGET_INFO riscv_d_register_target_info
-
 #ifdef TARGET_BIG_ENDIAN_DEFAULT
 #define DEFAULT_ENDIAN_SPEC    "b"
 #else
@@ -50,11 +46,13 @@ along with GCC; see the file COPYING3.  If not see
 extern const char *riscv_expand_arch (int argc, const char **argv);
 extern const char *riscv_expand_arch_from_cpu (int argc, const char **argv);
 extern const char *riscv_default_mtune (int argc, const char **argv);
+extern const char *riscv_multi_lib_check (int argc, const char **argv);
 
 # define EXTRA_SPEC_FUNCTIONS						\
   { "riscv_expand_arch", riscv_expand_arch },				\
   { "riscv_expand_arch_from_cpu", riscv_expand_arch_from_cpu },		\
-  { "riscv_default_mtune", riscv_default_mtune },
+  { "riscv_default_mtune", riscv_default_mtune },			\
+  { "riscv_multi_lib_check", riscv_multi_lib_check },
 
 /* Support for a compile-time default CPU, et cetera.  The rules are:
    --with-arch is ignored if -march or -mcpu is specified.
@@ -160,7 +158,7 @@ ASM_MISA_SPEC
 
 /* The `Q' extension is not yet supported.  */
 #define UNITS_PER_FP_REG (TARGET_DOUBLE_FLOAT ? 8 : 4)
-/* Size per vector register. For zve32*, size = poly (4, 4). Otherwise, size = poly (8, 8). */
+/* Size per vector register. For VLEN = 32, size = poly (4, 4). Otherwise, size = poly (8, 8). */
 #define UNITS_PER_V_REG (riscv_vector_chunks * riscv_bytes_per_vector_chunk)
 
 /* The largest type that can be passed in floating-point registers.  */
@@ -462,7 +460,7 @@ enum reg_class
   FP_REGS,			/* floating-point registers */
   FRAME_REGS,			/* arg pointer and frame pointer */
   VL_REGS,			/* vl register */
-  VTYPE_REGS,			/* vype register */
+  VTYPE_REGS,			/* vtype register */
   VM_REGS,			/* v0.t registers */
   VD_REGS,			/* vector registers except v0.t */
   V_REGS,			/* vector registers */
@@ -751,18 +749,19 @@ typedef struct {
 #define CASE_VECTOR_MODE SImode
 #define CASE_VECTOR_PC_RELATIVE (riscv_cmodel != CM_MEDLOW)
 
+#define LOCAL_SYM_P(sym)						\
+     ((SYMBOL_REF_P (sym) && SYMBOL_REF_LOCAL_P (sym))			\
+	 || ((GET_CODE (sym) == CONST)					\
+	     && SYMBOL_REF_P (XEXP (XEXP (sym, 0),0))			\
+	     && SYMBOL_REF_LOCAL_P (XEXP (XEXP (sym, 0),0))))
+
 /* The load-address macro is used for PC-relative addressing of symbols
    that bind locally.  Don't use it for symbols that should be addressed
    via the GOT.  Also, avoid it for CM_MEDLOW, where LUI addressing
    currently results in more opportunities for linker relaxation.  */
 #define USE_LOAD_ADDRESS_MACRO(sym)					\
   (!TARGET_EXPLICIT_RELOCS &&						\
-   ((flag_pic								\
-     && ((SYMBOL_REF_P (sym) && SYMBOL_REF_LOCAL_P (sym))		\
-	 || ((GET_CODE (sym) == CONST)					\
-	     && SYMBOL_REF_P (XEXP (XEXP (sym, 0),0))			\
-	     && SYMBOL_REF_LOCAL_P (XEXP (XEXP (sym, 0),0)))))		\
-     || riscv_cmodel == CM_MEDANY))
+   ((flag_pic && LOCAL_SYM_P (sym)) || riscv_cmodel == CM_MEDANY))
 
 /* Define this as 1 if `char' should by default be signed; else as 0.  */
 #define DEFAULT_SIGNED_CHAR 0

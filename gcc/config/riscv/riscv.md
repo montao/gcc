@@ -148,7 +148,7 @@
 ;; scheduling type to be "multi" instead.
 (define_attr "move_type"
   "unknown,load,fpload,store,fpstore,mtc,mfc,move,fmove,
-   const,logical,arith,andi,shift_shift"
+   const,logical,arith,andi,shift_shift,rdvlenb"
   (const_string "unknown"))
 
 ;; Main data type used by the insn
@@ -165,6 +165,35 @@
 	      (ne (symbol_ref "TARGET_64BIT") (const_int 0)))
 	 (const_string "yes")]
 	(const_string "no")))
+
+;; ISA attributes.
+(define_attr "ext" "base,f,d,vector"
+  (const_string "base"))
+
+;; True if the extension is enabled.
+(define_attr "ext_enabled" "no,yes"
+  (cond [(eq_attr "ext" "base")
+	 (const_string "yes")
+	
+	 (and (eq_attr "ext" "f")
+	      (match_test "TARGET_HARD_FLOAT"))
+	 (const_string "yes")
+
+	 (and (eq_attr "ext" "d")
+	      (match_test "TARGET_DOUBLE_FLOAT"))
+	 (const_string "yes")
+
+	 (and (eq_attr "ext" "vector")
+	      (match_test "TARGET_VECTOR"))
+	 (const_string "yes")
+	]
+	(const_string "no")))
+
+;; Attribute to control enable or disable instructions.
+(define_attr "enabled" "no,yes"
+  (cond [(eq_attr "ext_enabled" "no")
+	 (const_string "no")]
+	(const_string "yes")))
 
 ;; Classification of each insn.
 ;; branch	conditional branch
@@ -326,7 +355,8 @@
 	      (eq_attr "dword_mode" "yes"))
 	   (const_string "multi")
 	 (eq_attr "move_type" "move") (const_string "move")
-	 (eq_attr "move_type" "const") (const_string "const")]
+	 (eq_attr "move_type" "const") (const_string "const")
+	 (eq_attr "move_type" "rdvlenb") (const_string "rdvlenb")]
 	(const_string "unknown")))
 
 ;; Length of instruction in bytes.
@@ -713,7 +743,7 @@
   [(set (match_operand:SI          0 "register_operand" "=r")
 	(mult:SI (match_operand:SI 1 "register_operand" " r")
 		 (match_operand:SI 2 "register_operand" " r")))]
-  "TARGET_MUL"
+  "TARGET_ZMMUL || TARGET_MUL"
   "mul%~\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -722,7 +752,7 @@
   [(set (match_operand:DI          0 "register_operand" "=r")
 	(mult:DI (match_operand:DI 1 "register_operand" " r")
 		 (match_operand:DI 2 "register_operand" " r")))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mul\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -732,7 +762,7 @@
 	(mult:GPR (match_operand:GPR 1 "register_operand" " r")
 		  (match_operand:GPR 2 "register_operand" " r")))
    (label_ref (match_operand 3 "" ""))]
-  "TARGET_MUL"
+  "TARGET_ZMMUL || TARGET_MUL"
 {
   if (TARGET_64BIT && <MODE>mode == SImode)
     {
@@ -777,7 +807,7 @@
 	(mult:GPR (match_operand:GPR 1 "register_operand" " r")
 		  (match_operand:GPR 2 "register_operand" " r")))
    (label_ref (match_operand 3 "" ""))]
-  "TARGET_MUL"
+  "TARGET_ZMMUL || TARGET_MUL"
 {
   if (TARGET_64BIT && <MODE>mode == SImode)
     {
@@ -823,7 +853,7 @@
 	(sign_extend:DI
 	    (mult:SI (match_operand:SI 1 "register_operand" " r")
 		     (match_operand:SI 2 "register_operand" " r"))))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulw\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -834,7 +864,7 @@
 	  (match_operator:SI 3 "subreg_lowpart_operator"
 	    [(mult:DI (match_operand:DI 1 "register_operand" " r")
 		      (match_operand:DI 2 "register_operand" " r"))])))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulw\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -852,7 +882,7 @@
   [(set (match_operand:TI                         0 "register_operand")
 	(mult:TI (any_extend:TI (match_operand:DI 1 "register_operand"))
 		 (any_extend:TI (match_operand:DI 2 "register_operand"))))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
 {
   rtx low = gen_reg_rtx (DImode);
   emit_insn (gen_muldi3 (low, operands[1], operands[2]));
@@ -874,7 +904,7 @@
 		     (any_extend:TI
 		       (match_operand:DI 2 "register_operand" " r")))
 	    (const_int 64))))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -883,7 +913,7 @@
   [(set (match_operand:TI                          0 "register_operand")
 	(mult:TI (zero_extend:TI (match_operand:DI 1 "register_operand"))
 		 (sign_extend:TI (match_operand:DI 2 "register_operand"))))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
 {
   rtx low = gen_reg_rtx (DImode);
   emit_insn (gen_muldi3 (low, operands[1], operands[2]));
@@ -905,7 +935,7 @@
 		     (sign_extend:TI
 		       (match_operand:DI 2 "register_operand" " r")))
 	    (const_int 64))))]
-  "TARGET_MUL && TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -916,7 +946,7 @@
 		   (match_operand:SI 1 "register_operand" " r"))
 		 (any_extend:DI
 		   (match_operand:SI 2 "register_operand" " r"))))]
-  "TARGET_MUL && !TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
 {
   rtx temp = gen_reg_rtx (SImode);
   emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
@@ -935,7 +965,7 @@
 		     (any_extend:DI
 		       (match_operand:SI 2 "register_operand" " r")))
 	    (const_int 32))))]
-  "TARGET_MUL && !TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -947,7 +977,7 @@
 		   (match_operand:SI 1 "register_operand" " r"))
 		 (sign_extend:DI
 		   (match_operand:SI 2 "register_operand" " r"))))]
-  "TARGET_MUL && !TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
 {
   rtx temp = gen_reg_rtx (SImode);
   emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
@@ -966,7 +996,7 @@
 		     (sign_extend:DI
 		       (match_operand:SI 2 "register_operand" " r")))
 	    (const_int 32))))]
-  "TARGET_MUL && !TARGET_64BIT"
+  "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -1633,24 +1663,26 @@
 })
 
 (define_insn "*movdi_32bit"
-  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r,m,  *f,*f,*r,*f,*m")
-	(match_operand:DI 1 "move_operand"         " r,i,m,r,*J*r,*m,*f,*f,*f"))]
+  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r,m,  *f,*f,*r,*f,*m,r")
+	(match_operand:DI 1 "move_operand"         " r,i,m,r,*J*r,*m,*f,*f,*f,vp"))]
   "!TARGET_64BIT
    && (register_operand (operands[0], DImode)
        || reg_or_0_operand (operands[1], DImode))"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fmove,fpstore")
-   (set_attr "mode" "DI")])
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fmove,fpstore,rdvlenb")
+   (set_attr "mode" "DI")
+   (set_attr "ext" "base,base,base,base,d,d,d,d,d,vector")])
 
 (define_insn "*movdi_64bit"
-  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*f,*m")
-	(match_operand:DI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,*f"))]
+  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*f,*m,r")
+	(match_operand:DI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,*f,vp"))]
   "TARGET_64BIT
    && (register_operand (operands[0], DImode)
        || reg_or_0_operand (operands[1], DImode))"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fmove,fpstore")
-   (set_attr "mode" "DI")])
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fmove,fpstore,rdvlenb")
+   (set_attr "mode" "DI")
+   (set_attr "ext" "base,base,base,base,d,d,d,d,d,vector")])
 
 ;; 32-bit Integer moves
 
@@ -1664,13 +1696,14 @@
 })
 
 (define_insn "*movsi_internal"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*m")
-	(match_operand:SI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f"))]
+  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*m,r")
+	(match_operand:SI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,vp"))]
   "(register_operand (operands[0], SImode)
     || reg_or_0_operand (operands[1], SImode))"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore")
-   (set_attr "mode" "SI")])
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore,rdvlenb")
+   (set_attr "mode" "SI")
+   (set_attr "ext" "base,base,base,base,f,f,f,f,vector")])
 
 ;; 16-bit Integer moves
 
@@ -1689,13 +1722,14 @@
 })
 
 (define_insn "*movhi_internal"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r")
-	(match_operand:HI 1 "move_operand"	   " r,T,m,rJ,*r*J,*f"))]
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
+	(match_operand:HI 1 "move_operand"	   " r,T,m,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], HImode)
     || reg_or_0_operand (operands[1], HImode))"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,mfc")
-   (set_attr "mode" "HI")])
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "HI")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
 
 ;; HImode constant generation; see riscv_move_integer for details.
 ;; si+si->hi without truncation is legal because of
@@ -1731,13 +1765,14 @@
 })
 
 (define_insn "*movqi_internal"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r")
-	(match_operand:QI 1 "move_operand"         " r,I,m,rJ,*r*J,*f"))]
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
+	(match_operand:QI 1 "move_operand"         " r,I,m,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], QImode)
     || reg_or_0_operand (operands[1], QImode))"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,mfc")
-   (set_attr "mode" "QI")])
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "QI")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
 
 ;; 32-bit floating point moves
 
