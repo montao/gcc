@@ -39,6 +39,13 @@ jobs:
           cd /home/runner/work/gccbuild
           CXX=clang++ CC=clang /home/runner/work/gcc/gcc/configure --host=x86_64-linux-gnu --prefix /home/runner/work/gccbuild --disable-multilib
           make -j 4
+          pwd
+          ls
+          echo "int main(void){return 0;}" > testfile.c
+          ls
+          ./gcc testfile.c
+          ./gcc --version
+          echo "DONE"
           # make clean
           # /home/runner/work/gcc/gcc/configure --host=x86_64-linux-gnu --prefix /home/runner/work/gccbuild --disable-multilib
           # make -j 8
