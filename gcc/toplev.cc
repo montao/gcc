@@ -2046,6 +2046,8 @@ standard_type_bitsize (int bitsize)
 static void
 do_compile (bool no_backend)
 {
+	//	fprintf (stderr, "%s ",
+	//	 identifier_to_locale (IDENTIFIER_POINTER (DECL_NAME (decl))));
   /* Don't do any more if an error has already occurred.  */
   if (!seen_error ())
     {
