@@ -440,7 +440,7 @@ const struct c_common_resword c_common_reswords[] =
   { "class",		RID_CLASS,	D_CXX_OBJC | D_CXXWARN },
   { "const",		RID_CONST,	0 },
   { "consteval",	RID_CONSTEVAL,	D_CXXONLY | D_CXX20 | D_CXXWARN },
-  { "constexpr",	RID_CONSTEXPR,	D_CXXONLY | D_CXX11 | D_CXXWARN },
+  { "constexpr",	RID_CONSTEXPR,	D_C2X | D_CXX11 | D_CXXWARN },
   { "constinit",	RID_CONSTINIT,	D_CXXONLY | D_CXX20 | D_CXXWARN },
   { "const_cast",	RID_CONSTCAST,	D_CXXONLY | D_CXXWARN },
   { "continue",		RID_CONTINUE,	0 },
@@ -494,7 +494,8 @@ const struct c_common_resword c_common_reswords[] =
   { "typedef",		RID_TYPEDEF,	0 },
   { "typename",		RID_TYPENAME,	D_CXXONLY | D_CXXWARN },
   { "typeid",		RID_TYPEID,	D_CXXONLY | D_CXXWARN },
-  { "typeof",		RID_TYPEOF,	D_ASM | D_EXT },
+  { "typeof",		RID_TYPEOF,	D_EXT11 },
+  { "typeof_unqual",	RID_TYPEOF_UNQUAL,	D_CONLY | D_C2X },
   { "union",		RID_UNION,	0 },
   { "unsigned",		RID_UNSIGNED,	0 },
   { "using",		RID_USING,	D_CXXONLY | D_CXXWARN },
@@ -2297,6 +2298,10 @@ c_common_type_for_size (unsigned int bits, int unsignedp)
   if (bits <= TYPE_PRECISION (intDI_type_node))
     return unsignedp ? unsigned_intDI_type_node : intDI_type_node;
 
+  if (bits <= TYPE_PRECISION (widest_integer_literal_type_node))
+    return (unsignedp ? widest_unsigned_literal_type_node
+	    : widest_integer_literal_type_node);
+
   return NULL_TREE;
 }
 
@@ -4059,7 +4064,8 @@ static tree builtin_types[(int) BT_LAST + 1];
 
 /* A helper function for c_common_nodes_and_builtins.  Build function type
    for DEF with return type RET and N arguments.  If VAR is true, then the
-   function should be variadic after those N arguments.
+   function should be variadic after those N arguments, or, if N is zero,
+   unprototyped.
 
    Takes special care not to ICE if any of the types involved are
    error_mark_node, which indicates that said type is not in fact available
@@ -4088,7 +4094,10 @@ def_fn_type (builtin_type def, builtin_type ret, bool var, int n, ...)
   if (t == error_mark_node)
     goto egress;
   if (var)
-    t = build_varargs_function_type_array (t, n, args);
+    if (n == 0)
+      t = build_function_type (t, NULL_TREE);
+    else
+      t = build_varargs_function_type_array (t, n, args);
   else
     t = build_function_type_array (t, n, args);
 
@@ -4656,8 +4665,7 @@ c_common_nodes_and_builtins (void)
     uintptr_type_node =
       TREE_TYPE (identifier_global_value (c_get_ident (UINTPTR_TYPE)));
 
-  default_function_type
-    = build_varargs_function_type_list (integer_type_node, NULL_TREE);
+  default_function_type = build_function_type (integer_type_node, NULL_TREE);
   unsigned_ptrdiff_type_node = c_common_unsigned_type (ptrdiff_type_node);
 
   lang_hooks.decls.pushdecl
@@ -6007,12 +6015,12 @@ attribute_fallthrough_p (tree attr)
 {
   if (attr == error_mark_node)
    return false;
-  tree t = lookup_attribute ("fallthrough", attr);
+  tree t = lookup_attribute ("", "fallthrough", attr);
   if (t == NULL_TREE)
     return false;
   /* It is no longer true that "this attribute shall appear at most once in
      each attribute-list", but we still give a warning.  */
-  if (lookup_attribute ("fallthrough", TREE_CHAIN (t)))
+  if (lookup_attribute ("", "fallthrough", TREE_CHAIN (t)))
     warning (OPT_Wattributes, "attribute %<fallthrough%> specified multiple "
 	     "times");
   /* No attribute-argument-clause shall be present.  */
@@ -6023,7 +6031,8 @@ attribute_fallthrough_p (tree attr)
   for (t = attr; t != NULL_TREE; t = TREE_CHAIN (t))
     {
       tree name = get_attribute_name (t);
-      if (!is_attribute_p ("fallthrough", name))
+      if (!is_attribute_p ("fallthrough", name)
+	  || !is_attribute_namespace_p ("", t))
 	{
 	  if (!c_dialect_cxx () && get_attribute_namespace (t) == NULL_TREE)
 	    /* The specifications of standard attributes in C mean
@@ -6802,7 +6811,7 @@ fold_offsetof (tree expr, tree type, enum tree_code ctx)
 		     definition thereof.  */
 		  if (TREE_CODE (v) == ARRAY_REF
 		      || TREE_CODE (v) == COMPONENT_REF)
-		    warning (OPT_Warray_bounds,
+		    warning (OPT_Warray_bounds_,
 			     "index %E denotes an offset "
 			     "greater than size of %qT",
 			     t, TREE_TYPE (TREE_OPERAND (expr, 0)));
@@ -8488,6 +8497,8 @@ c_common_init_ts (void)
   MARK_TS_EXP (FOR_STMT);
   MARK_TS_EXP (SWITCH_STMT);
   MARK_TS_EXP (WHILE_STMT);
+
+  MARK_TS_DECL_COMMON (CONCEPT_DECL);
 }
 
 /* Build a user-defined numeric literal out of an integer constant type VALUE
@@ -8523,7 +8534,7 @@ convert_vector_to_array_for_subscript (location_t loc,
       if (TREE_CODE (index) == INTEGER_CST)
         if (!tree_fits_uhwi_p (index)
 	    || maybe_ge (tree_to_uhwi (index), TYPE_VECTOR_SUBPARTS (type)))
-          warning_at (loc, OPT_Warray_bounds, "index value is out of bound");
+	  warning_at (loc, OPT_Warray_bounds_, "index value is out of bound");
 
       /* We are building an ARRAY_REF so mark the vector as addressable
          to not run into the gimplifiers premature setting of DECL_GIMPLE_REG_P

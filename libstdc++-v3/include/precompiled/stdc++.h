@@ -210,6 +210,7 @@
 #include <bit>
 #include <compare>
 #include <concepts>
+#include <format>
 #include <latch>
 #include <numbers>
 #include <ranges>
@@ -228,6 +229,7 @@
 # include <stacktrace>
 #endif
 #include <stdatomic.h>
+#include <stdfloat>
 #endif
 
 #endif // HOSTED

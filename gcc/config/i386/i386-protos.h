@@ -109,7 +109,7 @@ extern void ix86_expand_binary_operator (enum rtx_code,
 					 machine_mode, rtx[]);
 extern void ix86_expand_vector_logical_operator (enum rtx_code,
 						 machine_mode, rtx[]);
-extern bool ix86_binary_operator_ok (enum rtx_code, machine_mode, rtx[]);
+extern bool ix86_binary_operator_ok (enum rtx_code, machine_mode, rtx[3]);
 extern bool ix86_avoid_lea_for_add (rtx_insn *, rtx[]);
 extern bool ix86_use_lea_for_mov (rtx_insn *, rtx[]);
 extern bool ix86_avoid_lea_for_addr (rtx_insn *, rtx[]);
@@ -140,7 +140,7 @@ extern void ix86_split_fp_absneg_operator (enum rtx_code, machine_mode,
 					   rtx[]);
 extern void ix86_expand_copysign (rtx []);
 extern void ix86_expand_xorsign (rtx []);
-extern bool ix86_unary_operator_ok (enum rtx_code, machine_mode, rtx[]);
+extern bool ix86_unary_operator_ok (enum rtx_code, machine_mode, rtx[2]);
 extern bool ix86_match_ccmode (rtx, machine_mode);
 extern void ix86_expand_branch (enum rtx_code, rtx, rtx, rtx);
 extern void ix86_expand_setcc (rtx, enum rtx_code, rtx, rtx);
@@ -227,6 +227,9 @@ extern void ix86_expand_atomic_fetch_op_loop (rtx, rtx, rtx, enum rtx_code,
 					      bool, bool);
 extern void ix86_expand_cmpxchg_loop (rtx *, rtx, rtx, rtx, rtx, rtx,
 				      bool, rtx_code_label *);
+extern rtx ix86_expand_fast_convert_bf_to_sf (rtx);
+extern rtx ix86_memtag_untagged_pointer (rtx, rtx);
+extern bool ix86_memtag_can_tag_addresses (void);
 
 #ifdef TREE_CODE
 extern void init_cumulative_args (CUMULATIVE_ARGS *, tree, rtx, tree, int);

@@ -1771,14 +1771,12 @@ gimple_add_init_for_auto_var (tree decl,
   tree decl_name = NULL_TREE;
   if (DECL_NAME (decl))
 
-    decl_name = build_string_literal (IDENTIFIER_LENGTH (DECL_NAME (decl)) + 1,
-				      IDENTIFIER_POINTER (DECL_NAME (decl)));
+    decl_name = build_string_literal (DECL_NAME (decl));
 
   else
     {
       char *decl_name_anonymous = xasprintf ("D.%u", DECL_UID (decl));
-      decl_name = build_string_literal (strlen (decl_name_anonymous) + 1,
-					decl_name_anonymous);
+      decl_name = build_string_literal (decl_name_anonymous);
       free (decl_name_anonymous);
     }
 
@@ -3274,6 +3272,8 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
   tret = gimplify_expr (p, pre_p, post_p, is_gimple_min_lval,
 			fallback | fb_lvalue);
   ret = MIN (ret, tret);
+  if (ret == GS_ERROR)
+    return GS_ERROR;
 
   /* Step 2a: if we have component references we do not support on
      registers then make sure the base isn't a register.  Of course
@@ -3554,6 +3554,51 @@ gimplify_call_expr (tree *expr_p, gimple_seq *pre_p, bool want_value)
       enum internal_fn ifn = CALL_EXPR_IFN (*expr_p);
       auto_vec<tree> vargs (nargs);
 
+      if (ifn == IFN_ASSUME)
+	{
+	  if (simple_condition_p (CALL_EXPR_ARG (*expr_p, 0)))
+	    {
+	      /* If the [[assume (cond)]]; condition is simple
+		 enough and can be evaluated unconditionally
+		 without side-effects, expand it as
+		 if (!cond) __builtin_unreachable ();  */
+	      tree fndecl = builtin_decl_explicit (BUILT_IN_UNREACHABLE);
+	      *expr_p = build3 (COND_EXPR, void_type_node,
+				CALL_EXPR_ARG (*expr_p, 0), void_node,
+				build_call_expr_loc (EXPR_LOCATION (*expr_p),
+						     fndecl, 0));
+	      return GS_OK;
+	    }
+	  /* If not optimizing, ignore the assumptions.  */
+	  if (!optimize || seen_error ())
+	    {
+	      *expr_p = NULL_TREE;
+	      return GS_ALL_DONE;
+	    }
+	  /* Temporarily, until gimple lowering, transform
+	     .ASSUME (cond);
+	     into:
+	     [[assume (guard)]]
+	     {
+	       guard = cond;
+	     }
+	     such that gimple lowering can outline the condition into
+	     a separate function easily.  */
+	  tree guard = create_tmp_var (boolean_type_node);
+	  *expr_p = build2 (MODIFY_EXPR, void_type_node, guard,
+			    gimple_boolify (CALL_EXPR_ARG (*expr_p, 0)));
+	  *expr_p = build3 (BIND_EXPR, void_type_node, NULL, *expr_p, NULL);
+	  push_gimplify_context ();
+	  gimple_seq body = NULL;
+	  gimple *g = gimplify_and_return_first (*expr_p, &body);
+	  pop_gimplify_context (g);
+	  g = gimple_build_assume (guard, body);
+	  gimple_set_location (g, loc);
+	  gimplify_seq_add_stmt (pre_p, g);
+	  *expr_p = NULL_TREE;
+	  return GS_ALL_DONE;
+	}
+
       for (i = 0; i < nargs; i++)
 	{
 	  gimplify_arg (&CALL_EXPR_ARG (*expr_p, i), pre_p,
@@ -3665,6 +3710,9 @@ gimplify_call_expr (tree *expr_p, gimple_seq *pre_p, bool want_value)
      gimplify_expr to use an internal post queue.  */
   ret = gimplify_expr (&CALL_EXPR_FN (*expr_p), pre_p, NULL,
 		       is_gimple_call_addr, fb_rvalue);
+
+  if (ret == GS_ERROR)
+    return GS_ERROR;
 
   nargs = call_expr_nargs (*expr_p);
 
@@ -4227,7 +4275,7 @@ gimple_boolify (tree expr)
     default:
       if (COMPARISON_CLASS_P (expr))
 	{
-	  /* There expressions always prduce boolean results.  */
+	  /* These expressions always produce boolean results.  */
 	  if (TREE_CODE (type) != BOOLEAN_TYPE)
 	    TREE_TYPE (expr) = boolean_type_node;
 	  return expr;
@@ -5601,7 +5649,7 @@ gimplify_modify_expr_rhs (tree *expr_p, tree *from_p, tree *to_p,
 	    }
 	  break;
 	case INDIRECT_REF:
-	  {
+	  if (!TREE_ADDRESSABLE (TREE_TYPE (*from_p)))
 	    /* If we have code like
 
 	     *(const A*)(A*)&x
@@ -5610,11 +5658,13 @@ gimplify_modify_expr_rhs (tree *expr_p, tree *from_p, tree *to_p,
 	     of "A"), treat the entire expression as identical to "x".
 	     This kind of code arises in C++ when an object is bound
 	     to a const reference, and if "x" is a TARGET_EXPR we want
-	     to take advantage of the optimization below.  */
-	    bool volatile_p = TREE_THIS_VOLATILE (*from_p);
-	    tree t = gimple_fold_indirect_ref_rhs (TREE_OPERAND (*from_p, 0));
-	    if (t)
+	     to take advantage of the optimization below.  But not if
+	     the type is TREE_ADDRESSABLE; then C++17 says that the
+	     TARGET_EXPR needs to be a temporary.  */
+	    if (tree t
+		= gimple_fold_indirect_ref_rhs (TREE_OPERAND (*from_p, 0)))
 	      {
+		bool volatile_p = TREE_THIS_VOLATILE (*from_p);
 		if (TREE_THIS_VOLATILE (t) != volatile_p)
 		  {
 		    if (DECL_P (t))
@@ -5627,8 +5677,7 @@ gimplify_modify_expr_rhs (tree *expr_p, tree *from_p, tree *to_p,
 		ret = GS_OK;
 		changed = true;
 	      }
-	    break;
-	  }
+	  break;
 
 	case TARGET_EXPR:
 	  {
@@ -6004,6 +6053,9 @@ gimplify_modify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
   gimple *assign;
   location_t loc = EXPR_LOCATION (*expr_p);
   gimple_stmt_iterator gsi;
+
+  if (error_operand_p (*from_p) || error_operand_p (*to_p))
+    return GS_ERROR;
 
   gcc_assert (TREE_CODE (*expr_p) == MODIFY_EXPR
 	      || TREE_CODE (*expr_p) == INIT_EXPR);
@@ -15181,6 +15233,7 @@ computable_teams_clause (tree *tp, int *walk_subtrees, void *)
    0 stands for clause not specified at all, use implementation default
    -1 stands for value that can't be determined easily before entering
       the target construct.
+   -2 means that no explicit teams construct was specified
    If teams construct is not present at all, use 1 for num_teams
    and 0 for thread_limit (only one team is involved, and the thread
    limit is implementation defined.  */
@@ -15199,7 +15252,7 @@ optimize_target_teams (tree target, gimple_seq *pre_p)
   struct gimplify_omp_ctx *target_ctx = gimplify_omp_ctxp;
 
   if (teams == NULL_TREE)
-    num_teams_upper = integer_one_node;
+    num_teams_upper = build_int_cst (integer_type_node, -2);
   else
     for (c = OMP_TEAMS_CLAUSES (teams); c; c = OMP_CLAUSE_CHAIN (c))
       {

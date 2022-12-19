@@ -1290,6 +1290,18 @@ gimple_build_omp_atomic_store (tree val, enum omp_memory_order mo)
   return p;
 }
 
+/* Build a GIMPLE_ASSUME statement.  */
+
+gimple *
+gimple_build_assume (tree guard, gimple_seq body)
+{
+  gimple_statement_assume *p
+    = as_a <gimple_statement_assume *> (gimple_alloc (GIMPLE_ASSUME, 0));
+  gimple_assume_set_guard (p, guard);
+  *gimple_assume_body_ptr (p) = body;
+  return p;
+}
+
 /* Build a GIMPLE_TRANSACTION statement.  */
 
 gtransaction *
@@ -2135,6 +2147,13 @@ gimple_copy (gimple *stmt)
 	  gimple_omp_masked_set_clauses (copy, t);
 	  goto copy_omp_body;
 
+	case GIMPLE_ASSUME:
+	  new_seq = gimple_seq_copy (gimple_assume_body (stmt));
+	  *gimple_assume_body_ptr (copy) = new_seq;
+	  gimple_assume_set_guard (copy,
+				   unshare_expr (gimple_assume_guard (stmt)));
+	  break;
+
 	case GIMPLE_TRANSACTION:
 	  new_seq = gimple_seq_copy (gimple_transaction_body (
 				       as_a <gtransaction *> (stmt)));
@@ -2389,7 +2408,6 @@ get_gimple_rhs_num_ops (enum tree_code code)
       || (SYM) == BIT_INSERT_EXPR) ? GIMPLE_TERNARY_RHS			    \
    : ((SYM) == CONSTRUCTOR						    \
       || (SYM) == OBJ_TYPE_REF						    \
-      || (SYM) == ASSERT_EXPR						    \
       || (SYM) == ADDR_EXPR						    \
       || (SYM) == WITH_SIZE_EXPR					    \
       || (SYM) == SSA_NAME) ? GIMPLE_SINGLE_RHS				    \

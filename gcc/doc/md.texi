@@ -3267,9 +3267,6 @@ Like @code{b}, if @option{-mpowerpc64} is used; otherwise, @code{NO_REGS}.
 @item wB
 Signed 5-bit constant integer that can be loaded into an Altivec register.
 
-@item wD
-Int constant that is the element number of the 64-bit scalar in a vector.
-
 @item wE
 Vector constant that can be loaded with the XXSPLTIB instruction.
 
@@ -6966,6 +6963,13 @@ to convert a positive result from @code{STORE_FLAG_VALUE} to 1; in this
 case, you can and should make operand 1's predicate reject some operators
 in the @samp{cstore@var{mode}4} pattern, or remove the pattern altogether
 from the machine description.
+
+@cindex @code{tbranch_@var{op}@var{mode}3} instruction pattern
+@item @samp{tbranch_@var{op}@var{mode}3}
+Conditional branch instruction combined with a bit test-and-compare
+instruction. Operand 0 is the operand of the comparison.  Operand 1 is the bit
+position of Operand 1 to test.  Operand 3 is the @code{code_label} to jump to.
+@var{op} is one of @var{eq} or @var{ne}.
 
 @cindex @code{cbranch@var{mode}4} instruction pattern
 @item @samp{cbranch@var{mode}4}

@@ -36,6 +36,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "internal-fn.h"
 #include "gcc-rich-location.h"
 #include "cp-name-hint.h"
+#include "attribs.h"
 
 #define pp_separate_with_comma(PP) pp_cxx_separate_with (PP, ',')
 #define pp_separate_with_semicolon(PP) pp_cxx_separate_with (PP, ';')
@@ -566,7 +567,8 @@ dump_type (cxx_pretty_printer *pp, tree t, int flags)
       else
 	{
 	  pp_cxx_cv_qualifier_seq (pp, t);
-	  pp_cxx_tree_identifier (pp, TYPE_IDENTIFIER (t));
+	  if (tree id = TYPE_IDENTIFIER (t))
+	    pp_cxx_tree_identifier (pp, id);
 	}
       break;
 
@@ -897,7 +899,12 @@ dump_type_prefix (cxx_pretty_printer *pp, tree t, int flags)
 	  {
 	    pp_cxx_whitespace (pp);
 	    pp_cxx_left_paren (pp);
-	    pp_c_attributes_display (pp, TYPE_ATTRIBUTES (sub));
+	    /* If we're dealing with the GNU form of attributes, print this:
+		 void (__attribute__((noreturn)) *f) ();
+	       If it is the standard [[]] attribute, we'll print the attribute
+	       in dump_type_suffix.  */
+	    if (!cxx11_attribute_p (TYPE_ATTRIBUTES (sub)))
+	      pp_c_attributes_display (pp, TYPE_ATTRIBUTES (sub));
 	  }
 	if (TYPE_PTR_P (t))
 	  pp_star (pp);
@@ -1030,6 +1037,14 @@ dump_type_suffix (cxx_pretty_printer *pp, tree t, int flags)
 	if (tx_safe_fn_type_p (t))
 	  pp_cxx_ws_string (pp, "transaction_safe");
 	dump_exception_spec (pp, TYPE_RAISES_EXCEPTIONS (t), flags);
+	/* If this is the standard [[]] attribute, print
+	     void (*)() [[noreturn]];  */
+	if (cxx11_attribute_p (TYPE_ATTRIBUTES (t)))
+	  {
+	    pp_space (pp);
+	    pp_c_attributes_display (pp, TYPE_ATTRIBUTES (t));
+	    pp->padding = pp_before;
+	  }
 	dump_type_suffix (pp, TREE_TYPE (t), flags);
 	break;
       }
@@ -1462,9 +1477,18 @@ dump_decl (cxx_pretty_printer *pp, tree t, int flags)
 	if (!(flags & TFF_UNQUALIFIED_NAME))
 	  {
 	    tree scope = USING_DECL_SCOPE (t);
+	    tree name = DECL_NAME (t);
 	    if (PACK_EXPANSION_P (scope))
 	      {
 		scope = PACK_EXPANSION_PATTERN (scope);
+		variadic = true;
+	      }
+	    if (identifier_p (name)
+		&& IDENTIFIER_CONV_OP_P (name)
+		&& PACK_EXPANSION_P (TREE_TYPE (name)))
+	      {
+		name = make_conv_op_name (PACK_EXPANSION_PATTERN
+					  (TREE_TYPE (name)));
 		variadic = true;
 	      }
 	    dump_type (pp, scope, flags);

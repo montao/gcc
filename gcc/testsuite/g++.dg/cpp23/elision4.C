@@ -1,5 +1,6 @@
 // PR c++/101165 - P2266R1 - Simpler implicit move
 // { dg-do compile { target c++23 } }
+// { dg-options "-Wdangling-reference" }
 // Test from P2266R1, $ 5.2. LibreOffice OString constructor.
 
 struct X {

@@ -6260,6 +6260,15 @@ vectorizable_operation (vec_info *vinfo,
 	}
       target_support_p = (optab_handler (optab, vec_mode)
 			  != CODE_FOR_nothing);
+      tree cst;
+      if (!target_support_p
+	  && op1
+	  && (cst = uniform_integer_cst_p (op1)))
+	target_support_p
+	  = targetm.vectorize.can_special_div_by_const (code, vectype,
+							wi::to_wide (cst),
+							NULL, NULL_RTX,
+							NULL_RTX);
     }
 
   bool using_emulated_vectors_p = vect_emulated_vector_p (vectype);
@@ -11176,6 +11185,7 @@ vect_analyze_stmt (vec_info *vinfo,
          break;
 
       case vect_induction_def:
+      case vect_first_order_recurrence:
 	gcc_assert (!bb_vinfo);
 	break;
 
@@ -11234,7 +11244,9 @@ vect_analyze_stmt (vec_info *vinfo,
 	  || vectorizable_comparison (vinfo, stmt_info, NULL, NULL, node,
 				      cost_vec)
 	  || vectorizable_lc_phi (as_a <loop_vec_info> (vinfo),
-				  stmt_info, NULL, node));
+				  stmt_info, NULL, node)
+	  || vectorizable_recurr (as_a <loop_vec_info> (vinfo),
+				   stmt_info, NULL, node, cost_vec));
   else
     {
       if (bb_vinfo)
@@ -11401,6 +11413,12 @@ vect_transform_stmt (vec_info *vinfo,
     case lc_phi_info_type:
       done = vectorizable_lc_phi (as_a <loop_vec_info> (vinfo),
 				  stmt_info, &vec_stmt, slp_node);
+      gcc_assert (done);
+      break;
+
+    case recurr_info_type:
+      done = vectorizable_recurr (as_a <loop_vec_info> (vinfo),
+				  stmt_info, &vec_stmt, slp_node, NULL);
       gcc_assert (done);
       break;
 
@@ -11804,6 +11822,9 @@ vect_is_simple_use (tree operand, vec_info *vinfo, enum vect_def_type *dt,
 	case vect_nested_cycle:
 	  dump_printf (MSG_NOTE, "nested cycle\n");
 	  break;
+	case vect_first_order_recurrence:
+	  dump_printf (MSG_NOTE, "first order recurrence\n");
+	  break;
 	case vect_unknown_def_type:
 	  dump_printf (MSG_NOTE, "unknown\n");
 	  break;
@@ -11852,7 +11873,8 @@ vect_is_simple_use (tree operand, vec_info *vinfo, enum vect_def_type *dt,
       || *dt == vect_induction_def
       || *dt == vect_reduction_def
       || *dt == vect_double_reduction_def
-      || *dt == vect_nested_cycle)
+      || *dt == vect_nested_cycle
+      || *dt == vect_first_order_recurrence)
     {
       *vectype = STMT_VINFO_VECTYPE (def_stmt_info);
       gcc_assert (*vectype != NULL_TREE);
@@ -12172,6 +12194,15 @@ supportable_widening_operation (vec_info *vinfo,
       if (VECTOR_BOOLEAN_TYPE_P (prev_type))
 	intermediate_type
 	  = vect_halve_mask_nunits (prev_type, intermediate_mode);
+      else if (VECTOR_MODE_P (intermediate_mode))
+	{
+	  tree intermediate_element_type
+	    = lang_hooks.types.type_for_mode (GET_MODE_INNER (intermediate_mode),
+					      TYPE_UNSIGNED (prev_type));
+	  intermediate_type
+	    = build_vector_type_for_mode (intermediate_element_type,
+					  intermediate_mode);
+	}
       else
 	intermediate_type
 	  = lang_hooks.types.type_for_mode (intermediate_mode,

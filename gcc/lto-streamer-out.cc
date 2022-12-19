@@ -2278,6 +2278,7 @@ output_struct_function_base (struct output_block *ob, struct function *fn)
   bp_pack_value (&bp, fn->calls_eh_return, 1);
   bp_pack_value (&bp, fn->has_force_vectorize_loops, 1);
   bp_pack_value (&bp, fn->has_simduid_loops, 1);
+  bp_pack_value (&bp, fn->assume_function, 1);
   bp_pack_value (&bp, fn->va_list_fpr_size, 8);
   bp_pack_value (&bp, fn->va_list_gpr_size, 8);
   bp_pack_value (&bp, fn->last_clique, sizeof (short) * 8);
@@ -2751,7 +2752,8 @@ lto_output (void)
 	continue;
       if (cgraph_node *node = dyn_cast <cgraph_node *> (snode))
 	{
-	  if (lto_symtab_encoder_encode_body_p (encoder, node))
+	  if (lto_symtab_encoder_encode_body_p (encoder, node)
+	      && !node->clone_of)
 	    symbols_to_copy.safe_push (node);
 	}
       else if (varpool_node *node = dyn_cast <varpool_node *> (snode))

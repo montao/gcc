@@ -195,6 +195,8 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
       builtin_define_with_int_value ("__ARM_FEATURE_PAC_DEFAULT", v);
     }
 
+  aarch64_def_or_undef (TARGET_PAUTH, "__ARM_FEATURE_PAUTH", pfile);
+  aarch64_def_or_undef (TARGET_BTI, "__ARM_FEATURE_BTI", pfile);
   aarch64_def_or_undef (TARGET_I8MM, "__ARM_FEATURE_MATMUL_INT8", pfile);
   aarch64_def_or_undef (TARGET_BF16_SIMD,
 			"__ARM_FEATURE_BF16_VECTOR_ARITHMETIC", pfile);
@@ -202,6 +204,7 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 			"__ARM_FEATURE_BF16_SCALAR_ARITHMETIC", pfile);
   aarch64_def_or_undef (TARGET_LS64,
 			"__ARM_FEATURE_LS64", pfile);
+  aarch64_def_or_undef (AARCH64_ISA_RCPC, "__ARM_FEATURE_RCPC", pfile);
 
   /* Not for ACLE, but required to keep "float.h" correct if we switch
      target between implementations that do or do not support ARMv8.2-A

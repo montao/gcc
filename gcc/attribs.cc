@@ -251,6 +251,7 @@ handle_ignored_attributes_option (vec<char *> *v)
       /* We don't accept '::attr'.  */
       if (cln == nullptr || cln == opt)
 	{
+	  auto_diagnostic_group d;
 	  error ("wrong argument to ignored attributes");
 	  inform (input_location, "valid format is %<ns::attr%> or %<ns::%>");
 	  continue;
@@ -732,6 +733,7 @@ decl_attributes (tree *node, tree attributes, int flags,
 	      || (spec->max_length >= 0
 		  && nargs > spec->max_length))
 	    {
+	      auto_diagnostic_group d;
 	      error ("wrong number of arguments specified for %qE attribute",
 		     name);
 	      if (spec->max_length < 0)
@@ -1167,6 +1169,7 @@ common_function_versions (tree fn1, tree fn2)
 	      std::swap (fn1, fn2);
 	      attr1 = attr2;
 	    }
+	  auto_diagnostic_group d;
 	  error_at (DECL_SOURCE_LOCATION (fn2),
 		    "missing %<target%> attribute for multi-versioned %qD",
 		    fn2);
@@ -1642,6 +1645,33 @@ remove_attribute (const char *attr_name, tree list)
   return list;
 }
 
+/* Similarly but also match namespace on the removed attributes.
+   ATTR_NS "" stands for NULL or "gnu" namespace.  */
+
+tree
+remove_attribute (const char *attr_ns, const char *attr_name, tree list)
+{
+  tree *p;
+  gcc_checking_assert (attr_name[0] != '_');
+  gcc_checking_assert (attr_ns == NULL || attr_ns[0] != '_');
+
+  for (p = &list; *p;)
+    {
+      tree l = *p;
+
+      tree attr = get_attribute_name (l);
+      if (is_attribute_p (attr_name, attr)
+	  && is_attribute_namespace_p (attr_ns, l))
+	{
+	  *p = TREE_CHAIN (l);
+	  continue;
+	}
+      p = &TREE_CHAIN (l);
+    }
+
+  return list;
+}
+
 /* Return an attribute list that is the union of a1 and a2.  */
 
 tree
@@ -2039,6 +2069,45 @@ private_lookup_attribute (const char *attr_name, size_t attr_len, tree list)
   return list;
 }
 
+/* Similarly but with also attribute namespace.  */
+
+tree
+private_lookup_attribute (const char *attr_ns, const char *attr_name,
+			  size_t attr_ns_len, size_t attr_len, tree list)
+{
+  while (list)
+    {
+      tree attr = get_attribute_name (list);
+      size_t ident_len = IDENTIFIER_LENGTH (attr);
+      if (cmp_attribs (attr_name, attr_len, IDENTIFIER_POINTER (attr),
+		       ident_len))
+	{
+	  tree ns = get_attribute_namespace (list);
+	  if (ns == NULL_TREE)
+	    {
+	      if (attr_ns_len == 0)
+		break;
+	    }
+	  else if (attr_ns)
+	    {
+	      ident_len = IDENTIFIER_LENGTH (ns);
+	      if (attr_ns_len == 0)
+		{
+		  if (cmp_attribs ("gnu", strlen ("gnu"),
+				   IDENTIFIER_POINTER (ns), ident_len))
+		    break;
+		}
+	      else if (cmp_attribs (attr_ns, attr_ns_len,
+				    IDENTIFIER_POINTER (ns), ident_len))
+		break;
+	    }
+	}
+      list = TREE_CHAIN (list);
+    }
+
+  return list;
+}
+
 /* Return true if the function decl or type NODE has been declared
    with attribute ANAME among attributes ATTRS.  */
 
@@ -2386,6 +2455,36 @@ init_attr_rdwr_indices (rdwr_map *rwm, tree attrs)
 	}
     }
 }
+
+/* Get the LEVEL of the strict_flex_array for the ARRAY_FIELD based on the
+   values of attribute strict_flex_array and the flag_strict_flex_arrays.  */
+unsigned int
+strict_flex_array_level_of (tree array_field)
+{
+  gcc_assert (TREE_CODE (array_field) == FIELD_DECL);
+  unsigned int strict_flex_array_level = flag_strict_flex_arrays;
+
+  tree attr_strict_flex_array
+    = lookup_attribute ("strict_flex_array", DECL_ATTRIBUTES (array_field));
+  /* If there is a strict_flex_array attribute attached to the field,
+     override the flag_strict_flex_arrays.  */
+  if (attr_strict_flex_array)
+    {
+      /* Get the value of the level first from the attribute.  */
+      unsigned HOST_WIDE_INT attr_strict_flex_array_level = 0;
+      gcc_assert (TREE_VALUE (attr_strict_flex_array) != NULL_TREE);
+      attr_strict_flex_array = TREE_VALUE (attr_strict_flex_array);
+      gcc_assert (TREE_VALUE (attr_strict_flex_array) != NULL_TREE);
+      attr_strict_flex_array = TREE_VALUE (attr_strict_flex_array);
+      gcc_assert (tree_fits_uhwi_p (attr_strict_flex_array));
+      attr_strict_flex_array_level = tree_to_uhwi (attr_strict_flex_array);
+
+      /* The attribute has higher priority than flag_struct_flex_array.  */
+      strict_flex_array_level = attr_strict_flex_array_level;
+    }
+  return strict_flex_array_level;
+}
+
 
 /* Return the access specification for a function parameter PARM
    or null if the current function has no such specification.  */

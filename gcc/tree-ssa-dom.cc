@@ -673,10 +673,10 @@ record_edge_info (basic_block bb)
 		{
 		  /* At this point we know the exit condition is loop
 		     invariant.  The only way to get out of the loop is
-		     if never traverses the backedge to begin with.  This
-		     implies that any PHI nodes create equivalances we can
-		     attach to the loop exit edge.  */
-		  int alternative
+		     if it never traverses the backedge to begin with.  This
+		     implies that any PHI nodes create equivalances that we
+		     can attach to the loop exit edge.  */
+		  bool alternative
 		    = (EDGE_PRED (bb, 0)->flags & EDGE_DFS_BACK) ? 1 : 0;
 
 		  gphi_iterator gsi;
@@ -1367,7 +1367,11 @@ dom_opt_dom_walker::set_global_ranges_from_unreachable_edges (basic_block bb)
   tree name;
   gori_compute &gori = m_ranger->gori ();
   FOR_EACH_GORI_EXPORT_NAME (gori, pred_e->src, name)
-    if (all_uses_feed_or_dominated_by_stmt (name, stmt))
+    if (all_uses_feed_or_dominated_by_stmt (name, stmt)
+	// The condition must post-dominate the definition point.
+	&& (SSA_NAME_IS_DEFAULT_DEF (name)
+	    || (gimple_bb (SSA_NAME_DEF_STMT (name))
+		== pred_e->src)))
       {
 	Value_Range r (TREE_TYPE (name));
 

@@ -75,10 +75,13 @@ extern bool riscv_store_data_bypass_p (rtx_insn *, rtx_insn *);
 extern rtx riscv_gen_gpr_save_insn (struct riscv_frame_info *);
 extern bool riscv_gpr_save_operation_p (rtx);
 extern void riscv_reinit (void);
-extern bool riscv_v_ext_enabled_vector_mode_p (machine_mode);
+extern poly_uint64 riscv_regmode_natural_size (machine_mode);
+extern bool riscv_v_ext_vector_mode_p (machine_mode);
+extern bool riscv_shamt_matches_mask_p (int, HOST_WIDE_INT);
 
 /* Routines implemented in riscv-c.cc.  */
 void riscv_cpu_cpp_builtins (cpp_reader *);
+void riscv_register_pragmas (void);
 
 /* Routines implemented in riscv-builtins.cc.  */
 extern void riscv_atomic_assign_expand_fenv (tree *, tree *, tree *);
@@ -114,5 +117,60 @@ namespace selftest {
 extern void riscv_run_selftests (void);
 } // namespace selftest
 #endif
+
+namespace riscv_vector {
+#define RVV_VLMAX gen_rtx_REG (Pmode, X0_REGNUM)
+enum vlmul_type
+{
+  LMUL_1 = 0,
+  LMUL_2 = 1,
+  LMUL_4 = 2,
+  LMUL_8 = 3,
+  LMUL_RESERVED = 4,
+  LMUL_F8 = 5,
+  LMUL_F4 = 6,
+  LMUL_F2 = 7,
+};
+/* Routines implemented in riscv-vector-builtins.cc.  */
+extern void init_builtins (void);
+extern const char *mangle_builtin_type (const_tree);
+#ifdef GCC_TARGET_H
+extern bool verify_type_context (location_t, type_context_kind, const_tree, bool);
+#endif
+extern void handle_pragma_vector (void);
+extern tree builtin_decl (unsigned, bool);
+extern rtx expand_builtin (unsigned int, tree, rtx);
+extern bool const_vec_all_same_in_range_p (rtx, HOST_WIDE_INT, HOST_WIDE_INT);
+extern bool legitimize_move (rtx, rtx, machine_mode);
+extern void emit_pred_op (unsigned, rtx, rtx, machine_mode);
+extern enum vlmul_type get_vlmul (machine_mode);
+extern unsigned int get_ratio (machine_mode);
+enum tail_policy
+{
+  TAIL_UNDISTURBED = 0,
+  TAIL_AGNOSTIC = 1,
+};
+
+enum mask_policy
+{
+  MASK_UNDISTURBED = 0,
+  MASK_AGNOSTIC = 1,
+};
+}
+
+/* We classify builtin types into two classes:
+   1. General builtin class which is defined in riscv_builtins.
+   2. Vector builtin class which is a special builtin architecture
+      that implement intrinsic short into "pragma".  */
+enum riscv_builtin_class
+{
+  RISCV_BUILTIN_GENERAL,
+  RISCV_BUILTIN_VECTOR
+};
+
+const unsigned int RISCV_BUILTIN_SHIFT = 1;
+
+/* Mask that selects the riscv_builtin_class part of a function code.  */
+const unsigned int RISCV_BUILTIN_CLASS = (1 << RISCV_BUILTIN_SHIFT) - 1;
 
 #endif /* ! GCC_RISCV_PROTOS_H */

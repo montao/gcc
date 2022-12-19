@@ -305,7 +305,6 @@ static bool aarch64_builtin_support_vector_misalignment (machine_mode mode,
 static machine_mode aarch64_simd_container_mode (scalar_mode, poly_int64);
 static bool aarch64_print_address_internal (FILE*, machine_mode, rtx,
 					    aarch64_addr_query_type);
-static HOST_WIDE_INT aarch64_clamp_to_uimm12_shift (HOST_WIDE_INT val);
 
 /* The processor for which instructions should be scheduled.  */
 enum aarch64_processor aarch64_tune = cortexa53;
@@ -1347,6 +1346,7 @@ static const struct tune_params generic_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1383,6 +1383,7 @@ static const struct tune_params cortexa35_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1416,6 +1417,7 @@ static const struct tune_params cortexa53_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1449,6 +1451,7 @@ static const struct tune_params cortexa57_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1482,6 +1485,7 @@ static const struct tune_params cortexa72_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1515,6 +1519,7 @@ static const struct tune_params cortexa73_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1549,6 +1554,7 @@ static const struct tune_params exynosm1_tunings =
   "4",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1581,6 +1587,7 @@ static const struct tune_params thunderxt88_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1613,6 +1620,7 @@ static const struct tune_params thunderx_tunings =
   "8",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1647,6 +1655,7 @@ static const struct tune_params tsv110_tunings =
   "8",  /* loop_align.  */
   2,    /* int_reassoc_width.  */
   4,    /* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,    /* vec_reassoc_width.  */
   2,    /* min_div_recip_mul_sf.  */
   2,    /* min_div_recip_mul_df.  */
@@ -1679,6 +1688,7 @@ static const struct tune_params xgene1_tunings =
   "16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1711,6 +1721,7 @@ static const struct tune_params emag_tunings =
   "16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1744,6 +1755,7 @@ static const struct tune_params qdf24xx_tunings =
   "16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1779,6 +1791,7 @@ static const struct tune_params saphira_tunings =
   "16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   1,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1812,6 +1825,7 @@ static const struct tune_params thunderx2t99_tunings =
   "16",	/* loop_align.  */
   3,	/* int_reassoc_width.  */
   2,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1845,6 +1859,7 @@ static const struct tune_params thunderx3t110_tunings =
   "16",	/* loop_align.  */
   3,	/* int_reassoc_width.  */
   2,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1877,6 +1892,7 @@ static const struct tune_params neoversen1_tunings =
   "32:16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -1913,6 +1929,45 @@ static const struct tune_params ampere1_tunings =
   "32:16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
+  2,	/* vec_reassoc_width.  */
+  2,	/* min_div_recip_mul_sf.  */
+  2,	/* min_div_recip_mul_df.  */
+  0,	/* max_case_values.  */
+  tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+  (AARCH64_EXTRA_TUNE_NONE),		/* tune_flags.  */
+  &ampere1_prefetch_tune
+};
+
+static const struct tune_params ampere1a_tunings =
+{
+  &ampere1a_extra_costs,
+  &generic_addrcost_table,
+  &generic_regmove_cost,
+  &ampere1_vector_cost,
+  &generic_branch_cost,
+  &generic_approx_modes,
+  SVE_NOT_IMPLEMENTED, /* sve_width  */
+  { 4, /* load_int.  */
+    4, /* store_int.  */
+    4, /* load_fp.  */
+    4, /* store_fp.  */
+    4, /* load_pred.  */
+    4 /* store_pred.  */
+  }, /* memmov_cost.  */
+  4, /* issue_rate  */
+  (AARCH64_FUSE_ADRP_ADD | AARCH64_FUSE_AES_AESMC |
+   AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_MOVK_MOVK |
+   AARCH64_FUSE_ALU_BRANCH /* adds, ands, bics, ccmp, ccmn */ |
+   AARCH64_FUSE_CMP_BRANCH | AARCH64_FUSE_ALU_CBZ |
+   AARCH64_FUSE_ADDSUB_2REG_CONST1),
+  /* fusible_ops  */
+  "32",		/* function_align.  */
+  "4",		/* jump_align.  */
+  "32:16",	/* loop_align.  */
+  2,	/* int_reassoc_width.  */
+  4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2090,6 +2145,7 @@ static const struct tune_params neoversev1_tunings =
   "32:16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  4,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2227,6 +2283,7 @@ static const struct tune_params neoverse512tvb_tunings =
   "32:16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  4,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2415,6 +2472,7 @@ static const struct tune_params neoversen2_tunings =
   "32:16",	/* loop_align.  */
   2,	/* int_reassoc_width.  */
   4,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2604,6 +2662,7 @@ static const struct tune_params neoversev2_tunings =
   "32:16",	/* loop_align.  */
   3,	/* int_reassoc_width.  */
   6,	/* fp_reassoc_width.  */
+  4,	/* fma_reassoc_width.  */
   3,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2639,6 +2698,7 @@ static const struct tune_params a64fx_tunings =
   "32",	/* loop_align.  */
   4,	/* int_reassoc_width.  */
   2,	/* fp_reassoc_width.  */
+  1,	/* fma_reassoc_width.  */
   2,	/* vec_reassoc_width.  */
   2,	/* min_div_recip_mul_sf.  */
   2,	/* min_div_recip_mul_df.  */
@@ -2680,7 +2740,7 @@ struct processor
 };
 
 /* Architectures implementing AArch64.  */
-static constexpr processor all_architectures[] =
+static CONSTEXPR const processor all_architectures[] =
 {
 #define AARCH64_ARCH(NAME, CORE, ARCH_IDENT, D, E) \
   {NAME, CORE, CORE, AARCH64_ARCH_##ARCH_IDENT, \
@@ -3351,9 +3411,15 @@ aarch64_reassociation_width (unsigned opc, machine_mode mode)
     return aarch64_tune_params.vec_reassoc_width;
   if (INTEGRAL_MODE_P (mode))
     return aarch64_tune_params.int_reassoc_width;
-  /* Avoid reassociating floating point addition so we emit more FMAs.  */
-  if (FLOAT_MODE_P (mode) && opc != PLUS_EXPR)
-    return aarch64_tune_params.fp_reassoc_width;
+  /* Reassociation reduces the number of FMAs which may result in worse
+     performance.  Use a per-CPU setting for FMA reassociation which allows
+     narrow CPUs with few FP pipes to switch it off (value of 1), and wider
+     CPUs with many FP pipes to enable reassociation.
+     Since the reassociation pass doesn't understand FMA at all, assume
+     that any FP addition might turn into FMA.  */
+  if (FLOAT_MODE_P (mode))
+    return opc == PLUS_EXPR ? aarch64_tune_params.fma_reassoc_width
+			    : aarch64_tune_params.fp_reassoc_width;
   return 1;
 }
 
@@ -3568,6 +3634,7 @@ aarch64_classify_vector_mode (machine_mode mode)
     case E_V8BFmode:
     case E_V4SFmode:
     case E_V2DFmode:
+    case E_V2HFmode:
       return TARGET_FLOAT ? VEC_ADVSIMD : 0;
 
     default:
@@ -5502,14 +5569,153 @@ aarch64_output_sve_vector_inc_dec (const char *operands, rtx x)
 					     factor, nelts_per_vq);
 }
 
+/* Multipliers for repeating bitmasks of width 32, 16, 8, 4, and 2.  */
+
+static const unsigned HOST_WIDE_INT bitmask_imm_mul[] =
+  {
+    0x0000000100000001ull,
+    0x0001000100010001ull,
+    0x0101010101010101ull,
+    0x1111111111111111ull,
+    0x5555555555555555ull,
+  };
+
+
+
+/* Return true if 64-bit VAL is a valid bitmask immediate.  */
+static bool
+aarch64_bitmask_imm (unsigned HOST_WIDE_INT val)
+{
+  unsigned HOST_WIDE_INT tmp, mask, first_one, next_one;
+  int bits;
+
+  /* Check for a single sequence of one bits and return quickly if so.
+     The special cases of all ones and all zeroes returns false.  */
+  tmp = val + (val & -val);
+
+  if (tmp == (tmp & -tmp))
+    return (val + 1) > 1;
+
+  /* Invert if the immediate doesn't start with a zero bit - this means we
+     only need to search for sequences of one bits.  */
+  if (val & 1)
+    val = ~val;
+
+  /* Find the first set bit and set tmp to val with the first sequence of one
+     bits removed.  Return success if there is a single sequence of ones.  */
+  first_one = val & -val;
+  tmp = val & (val + first_one);
+
+  if (tmp == 0)
+    return true;
+
+  /* Find the next set bit and compute the difference in bit position.  */
+  next_one = tmp & -tmp;
+  bits = clz_hwi (first_one) - clz_hwi (next_one);
+  mask = val ^ tmp;
+
+  /* Check the bit position difference is a power of 2, and that the first
+     sequence of one bits fits within 'bits' bits.  */
+  if ((mask >> bits) != 0 || bits != (bits & -bits))
+    return false;
+
+  /* Check the sequence of one bits is repeated 64/bits times.  */
+  return val == mask * bitmask_imm_mul[__builtin_clz (bits) - 26];
+}
+
+
+/* Return true if VAL is a valid bitmask immediate for MODE.  */
+bool
+aarch64_bitmask_imm (unsigned HOST_WIDE_INT val, machine_mode mode)
+{
+  if (mode == DImode)
+    return aarch64_bitmask_imm (val);
+
+  if (mode == SImode)
+    return aarch64_bitmask_imm ((val & 0xffffffff) | (val << 32));
+
+  /* Replicate small immediates to fit 64 bits.  */
+  int size = GET_MODE_UNIT_PRECISION (mode);
+  val &= (HOST_WIDE_INT_1U << size) - 1;
+  val *= bitmask_imm_mul[__builtin_clz (size) - 26];
+
+  return aarch64_bitmask_imm (val);
+}
+
+
+/* Return true if the immediate VAL can be a bitfield immediate
+   by changing the given MASK bits in VAL to zeroes, ones or bits
+   from the other half of VAL.  Return the new immediate in VAL2.  */
+static inline bool
+aarch64_check_bitmask (unsigned HOST_WIDE_INT val,
+		       unsigned HOST_WIDE_INT &val2,
+		       unsigned HOST_WIDE_INT mask)
+{
+  val2 = val & ~mask;
+  if (val2 != val && aarch64_bitmask_imm (val2))
+    return true;
+  val2 = val | mask;
+  if (val2 != val && aarch64_bitmask_imm (val2))
+    return true;
+  val = val & ~mask;
+  val2 = val | (((val >> 32) | (val << 32)) & mask);
+  if (val2 != val && aarch64_bitmask_imm (val2))
+    return true;
+  val2 = val | (((val >> 16) | (val << 48)) & mask);
+  if (val2 != val && aarch64_bitmask_imm (val2))
+    return true;
+  return false;
+}
+
+
+/* Return true if VAL is a valid MOVZ immediate.  */
+static inline bool
+aarch64_is_movz (unsigned HOST_WIDE_INT val)
+{
+  return (val >> (ctz_hwi (val) & 48)) < 65536;
+}
+
+
+/* Return true if immediate VAL can be created by a 64-bit MOVI/MOVN/MOVZ.  */
+bool
+aarch64_is_mov_xn_imm (unsigned HOST_WIDE_INT val)
+{
+  return aarch64_is_movz (val) || aarch64_is_movz (~val)
+    || aarch64_bitmask_imm (val);
+}
+
+
+/* Return true if VAL is an immediate that can be created by a single
+   MOV instruction.  */
+bool
+aarch64_move_imm (unsigned HOST_WIDE_INT val, machine_mode mode)
+{
+  gcc_assert (mode == SImode || mode == DImode);
+
+  if (val < 65536)
+    return true;
+
+  unsigned HOST_WIDE_INT mask =
+    (val >> 32) == 0 || mode == SImode ? 0xffffffff : HOST_WIDE_INT_M1U;
+
+  if (aarch64_is_movz (val & mask) || aarch64_is_movz (~val & mask))
+    return true;
+
+  val = (val & mask) | ((val << 32) & ~mask);
+  return aarch64_bitmask_imm (val);
+}
+
+
 static int
 aarch64_internal_mov_immediate (rtx dest, rtx imm, bool generate,
-				scalar_int_mode mode)
+				machine_mode mode)
 {
   int i;
   unsigned HOST_WIDE_INT val, val2, mask;
   int one_match, zero_match;
   int num_insns;
+
+  gcc_assert (mode == SImode || mode == DImode);
 
   val = INTVAL (imm);
 
@@ -5518,31 +5724,6 @@ aarch64_internal_mov_immediate (rtx dest, rtx imm, bool generate,
       if (generate)
 	emit_insn (gen_rtx_SET (dest, imm));
       return 1;
-    }
-
-  /* Check to see if the low 32 bits are either 0xffffXXXX or 0xXXXXffff
-     (with XXXX non-zero). In that case check to see if the move can be done in
-     a smaller mode.  */
-  val2 = val & 0xffffffff;
-  if (mode == DImode
-      && aarch64_move_imm (val2, SImode)
-      && (((val >> 32) & 0xffff) == 0 || (val >> 48) == 0))
-    {
-      if (generate)
-	emit_insn (gen_rtx_SET (dest, GEN_INT (val2)));
-
-      /* Check if we have to emit a second instruction by checking to see
-         if any of the upper 32 bits of the original DI mode value is set.  */
-      if (val == val2)
-	return 1;
-
-      i = (val >> 48) ? 48 : 32;
-
-      if (generate)
-	 emit_insn (gen_insv_immdi (dest, GEN_INT (i),
-				    GEN_INT ((val >> i) & 0xffff)));
-
-      return 2;
     }
 
   if ((val >> 32) == 0 || mode == SImode)
@@ -5568,26 +5749,21 @@ aarch64_internal_mov_immediate (rtx dest, rtx imm, bool generate,
   one_match = ((~val & mask) == 0) + ((~val & (mask << 16)) == 0) +
     ((~val & (mask << 32)) == 0) + ((~val & (mask << 48)) == 0);
 
-  if (zero_match != 2 && one_match != 2)
-    {
-      /* Try emitting a bitmask immediate with a movk replacing 16 bits.
-	 For a 64-bit bitmask try whether changing 16 bits to all ones or
-	 zeroes creates a valid bitmask.  To check any repeated bitmask,
-	 try using 16 bits from the other 32-bit half of val.  */
+  /* Try a bitmask immediate and a movk to generate the immediate
+     in 2 instructions.  */
 
-      for (i = 0; i < 64; i += 16, mask <<= 16)
+  if (zero_match < 2 && one_match < 2)
+    {
+      for (i = 0; i < 64; i += 16)
 	{
-	  val2 = val & ~mask;
-	  if (val2 != val && aarch64_bitmask_imm (val2, mode))
+	  if (aarch64_check_bitmask (val, val2, mask << i))
 	    break;
-	  val2 = val | mask;
-	  if (val2 != val && aarch64_bitmask_imm (val2, mode))
-	    break;
-	  val2 = val2 & ~mask;
-	  val2 = val2 | (((val2 >> 32) | (val2 << 32)) & mask);
-	  if (val2 != val && aarch64_bitmask_imm (val2, mode))
+
+	  val2 = val & ~(mask << i);
+	  if ((val2 >> 32) == 0 && aarch64_move_imm (val2, DImode))
 	    break;
 	}
+
       if (i != 64)
 	{
 	  if (generate)
@@ -5598,6 +5774,25 @@ aarch64_internal_mov_immediate (rtx dest, rtx imm, bool generate,
 	    }
 	  return 2;
 	}
+    }
+
+  /* Try a bitmask plus 2 movk to generate the immediate in 3 instructions.  */
+  if (zero_match + one_match == 0)
+    {
+      for (i = 0; i < 48; i += 16)
+	for (int j = i + 16; j < 64; j += 16)
+	  if (aarch64_check_bitmask (val, val2, (mask << i) | (mask << j)))
+	    {
+	      if (generate)
+		{
+		  emit_insn (gen_rtx_SET (dest, GEN_INT (val2)));
+		  emit_insn (gen_insv_immdi (dest, GEN_INT (i),
+					     GEN_INT ((val >> i) & 0xffff)));
+		  emit_insn (gen_insv_immdi (dest, GEN_INT (j),
+					       GEN_INT ((val >> j) & 0xffff)));
+		}
+	      return 3;
+	    }
     }
 
   /* Generate 2-4 instructions, skipping 16 bits of all zeroes or ones which
@@ -5643,6 +5838,97 @@ aarch64_mov128_immediate (rtx imm)
 	 + aarch64_internal_mov_immediate (NULL_RTX, hi, false, DImode) <= 4;
 }
 
+
+/* Return true if val can be encoded as a 12-bit unsigned immediate with
+   a left shift of 0 or 12 bits.  */
+bool
+aarch64_uimm12_shift (unsigned HOST_WIDE_INT val)
+{
+  return val < 4096 || (val & 0xfff000) == val;
+}
+
+/* Returns the nearest value to VAL that will fit as a 12-bit unsigned immediate
+   that can be created with a left shift of 0 or 12.  */
+static HOST_WIDE_INT
+aarch64_clamp_to_uimm12_shift (unsigned HOST_WIDE_INT val)
+{
+  /* Check to see if the value fits in 24 bits, as that is the maximum we can
+     handle correctly.  */
+  gcc_assert (val < 0x1000000);
+
+  if (val < 4096)
+    return val;
+
+  return val & 0xfff000;
+}
+
+
+/* Test whether:
+
+     X = (X & AND_VAL) | IOR_VAL;
+
+   can be implemented using:
+
+     MOVK X, #(IOR_VAL >> shift), LSL #shift
+
+   Return the shift if so, otherwise return -1.  */
+int
+aarch64_movk_shift (const wide_int_ref &and_val,
+		    const wide_int_ref &ior_val)
+{
+  unsigned int precision = and_val.get_precision ();
+  unsigned HOST_WIDE_INT mask = 0xffff;
+  for (unsigned int shift = 0; shift < precision; shift += 16)
+    {
+      if (and_val == ~mask && (ior_val & mask) == ior_val)
+	return shift;
+      mask <<= 16;
+    }
+  return -1;
+}
+
+/* Create mask of ones, covering the lowest to highest bits set in VAL_IN.
+   Assumed precondition: VAL_IN Is not zero.  */
+
+unsigned HOST_WIDE_INT
+aarch64_and_split_imm1 (HOST_WIDE_INT val_in)
+{
+  int lowest_bit_set = ctz_hwi (val_in);
+  int highest_bit_set = floor_log2 (val_in);
+  gcc_assert (val_in != 0);
+
+  return ((HOST_WIDE_INT_UC (2) << highest_bit_set) -
+	  (HOST_WIDE_INT_1U << lowest_bit_set));
+}
+
+/* Create constant where bits outside of lowest bit set to highest bit set
+   are set to 1.  */
+
+unsigned HOST_WIDE_INT
+aarch64_and_split_imm2 (HOST_WIDE_INT val_in)
+{
+  return val_in | ~aarch64_and_split_imm1 (val_in);
+}
+
+/* Return true if VAL_IN is a valid 'and' bitmask immediate.  */
+
+bool
+aarch64_and_bitmask_imm (unsigned HOST_WIDE_INT val_in, machine_mode mode)
+{
+  scalar_int_mode int_mode;
+  if (!is_a <scalar_int_mode> (mode, &int_mode))
+    return false;
+
+  if (aarch64_bitmask_imm (val_in, int_mode))
+    return false;
+
+  if (aarch64_move_imm (val_in, int_mode))
+    return false;
+
+  unsigned HOST_WIDE_INT imm2 = aarch64_and_split_imm2 (val_in);
+
+  return aarch64_bitmask_imm (imm2, int_mode);
+}
 
 /* Return the number of temporary registers that aarch64_add_offset_1
    would need to add OFFSET to a register.  */
@@ -6228,7 +6514,8 @@ aarch64_expand_sve_const_vector (rtx target, rtx src)
 	  /* If the integer can be moved into a general register by a
 	     single instruction, do that and duplicate the result.  */
 	  if (CONST_INT_P (elt_value)
-	      && aarch64_move_imm (INTVAL (elt_value), elt_mode))
+	      && aarch64_move_imm (INTVAL (elt_value),
+				   encoded_bits <= 32 ? SImode : DImode))
 	    {
 	      elt_value = force_reg (elt_mode, elt_value);
 	      return expand_vector_broadcast (mode, elt_value);
@@ -6721,8 +7008,7 @@ aarch64_expand_mov_immediate (rtx dest, rtx imm)
       return;
     }
 
-  aarch64_internal_mov_immediate (dest, imm, true,
-				  as_a <scalar_int_mode> (mode));
+  aarch64_internal_mov_immediate (dest, imm, true, mode);
 }
 
 /* Return the MEM rtx that provides the canary value that should be used
@@ -10099,207 +10385,6 @@ aarch64_tls_referenced_p (rtx x)
 }
 
 
-/* Return true if val can be encoded as a 12-bit unsigned immediate with
-   a left shift of 0 or 12 bits.  */
-bool
-aarch64_uimm12_shift (HOST_WIDE_INT val)
-{
-  return ((val & (((HOST_WIDE_INT) 0xfff) << 0)) == val
-	  || (val & (((HOST_WIDE_INT) 0xfff) << 12)) == val
-	  );
-}
-
-/* Returns the nearest value to VAL that will fit as a 12-bit unsigned immediate
-   that can be created with a left shift of 0 or 12.  */
-static HOST_WIDE_INT
-aarch64_clamp_to_uimm12_shift (HOST_WIDE_INT val)
-{
-  /* Check to see if the value fits in 24 bits, as that is the maximum we can
-     handle correctly.  */
-  gcc_assert ((val & 0xffffff) == val);
-
-  if (((val & 0xfff) << 0) == val)
-    return val;
-
-  return val & (0xfff << 12);
-}
-
-/* Return true if val is an immediate that can be loaded into a
-   register by a MOVZ instruction.  */
-static bool
-aarch64_movw_imm (HOST_WIDE_INT val, scalar_int_mode mode)
-{
-  if (GET_MODE_SIZE (mode) > 4)
-    {
-      if ((val & (((HOST_WIDE_INT) 0xffff) << 32)) == val
-	  || (val & (((HOST_WIDE_INT) 0xffff) << 48)) == val)
-	return 1;
-    }
-  else
-    {
-      /* Ignore sign extension.  */
-      val &= (HOST_WIDE_INT) 0xffffffff;
-    }
-  return ((val & (((HOST_WIDE_INT) 0xffff) << 0)) == val
-	  || (val & (((HOST_WIDE_INT) 0xffff) << 16)) == val);
-}
-
-/* Test whether:
-
-     X = (X & AND_VAL) | IOR_VAL;
-
-   can be implemented using:
-
-     MOVK X, #(IOR_VAL >> shift), LSL #shift
-
-   Return the shift if so, otherwise return -1.  */
-int
-aarch64_movk_shift (const wide_int_ref &and_val,
-		    const wide_int_ref &ior_val)
-{
-  unsigned int precision = and_val.get_precision ();
-  unsigned HOST_WIDE_INT mask = 0xffff;
-  for (unsigned int shift = 0; shift < precision; shift += 16)
-    {
-      if (and_val == ~mask && (ior_val & mask) == ior_val)
-	return shift;
-      mask <<= 16;
-    }
-  return -1;
-}
-
-/* VAL is a value with the inner mode of MODE.  Replicate it to fill a
-   64-bit (DImode) integer.  */
-
-static unsigned HOST_WIDE_INT
-aarch64_replicate_bitmask_imm (unsigned HOST_WIDE_INT val, machine_mode mode)
-{
-  unsigned int size = GET_MODE_UNIT_PRECISION (mode);
-  while (size < 64)
-    {
-      val &= (HOST_WIDE_INT_1U << size) - 1;
-      val |= val << size;
-      size *= 2;
-    }
-  return val;
-}
-
-/* Multipliers for repeating bitmasks of width 32, 16, 8, 4, and 2.  */
-
-static const unsigned HOST_WIDE_INT bitmask_imm_mul[] =
-  {
-    0x0000000100000001ull,
-    0x0001000100010001ull,
-    0x0101010101010101ull,
-    0x1111111111111111ull,
-    0x5555555555555555ull,
-  };
-
-
-/* Return true if val is a valid bitmask immediate.  */
-
-bool
-aarch64_bitmask_imm (HOST_WIDE_INT val_in, machine_mode mode)
-{
-  unsigned HOST_WIDE_INT val, tmp, mask, first_one, next_one;
-  int bits;
-
-  /* Check for a single sequence of one bits and return quickly if so.
-     The special cases of all ones and all zeroes returns false.  */
-  val = aarch64_replicate_bitmask_imm (val_in, mode);
-  tmp = val + (val & -val);
-
-  if (tmp == (tmp & -tmp))
-    return (val + 1) > 1;
-
-  /* Replicate 32-bit immediates so we can treat them as 64-bit.  */
-  if (mode == SImode)
-    val = (val << 32) | (val & 0xffffffff);
-
-  /* Invert if the immediate doesn't start with a zero bit - this means we
-     only need to search for sequences of one bits.  */
-  if (val & 1)
-    val = ~val;
-
-  /* Find the first set bit and set tmp to val with the first sequence of one
-     bits removed.  Return success if there is a single sequence of ones.  */
-  first_one = val & -val;
-  tmp = val & (val + first_one);
-
-  if (tmp == 0)
-    return true;
-
-  /* Find the next set bit and compute the difference in bit position.  */
-  next_one = tmp & -tmp;
-  bits = clz_hwi (first_one) - clz_hwi (next_one);
-  mask = val ^ tmp;
-
-  /* Check the bit position difference is a power of 2, and that the first
-     sequence of one bits fits within 'bits' bits.  */
-  if ((mask >> bits) != 0 || bits != (bits & -bits))
-    return false;
-
-  /* Check the sequence of one bits is repeated 64/bits times.  */
-  return val == mask * bitmask_imm_mul[__builtin_clz (bits) - 26];
-}
-
-/* Create mask of ones, covering the lowest to highest bits set in VAL_IN.  
-   Assumed precondition: VAL_IN Is not zero.  */
-
-unsigned HOST_WIDE_INT
-aarch64_and_split_imm1 (HOST_WIDE_INT val_in)
-{
-  int lowest_bit_set = ctz_hwi (val_in);
-  int highest_bit_set = floor_log2 (val_in);
-  gcc_assert (val_in != 0);
-
-  return ((HOST_WIDE_INT_UC (2) << highest_bit_set) -
-	  (HOST_WIDE_INT_1U << lowest_bit_set));
-}
-
-/* Create constant where bits outside of lowest bit set to highest bit set
-   are set to 1.  */
-
-unsigned HOST_WIDE_INT
-aarch64_and_split_imm2 (HOST_WIDE_INT val_in)
-{
-  return val_in | ~aarch64_and_split_imm1 (val_in);
-}
-
-/* Return true if VAL_IN is a valid 'and' bitmask immediate.  */
-
-bool
-aarch64_and_bitmask_imm (unsigned HOST_WIDE_INT val_in, machine_mode mode)
-{
-  scalar_int_mode int_mode;
-  if (!is_a <scalar_int_mode> (mode, &int_mode))
-    return false;
-
-  if (aarch64_bitmask_imm (val_in, int_mode))
-    return false;
-
-  if (aarch64_move_imm (val_in, int_mode))
-    return false;
-
-  unsigned HOST_WIDE_INT imm2 = aarch64_and_split_imm2 (val_in);
-
-  return aarch64_bitmask_imm (imm2, int_mode);
-}
-
-/* Return true if val is an immediate that can be loaded into a
-   register in a single instruction.  */
-bool
-aarch64_move_imm (HOST_WIDE_INT val, machine_mode mode)
-{
-  scalar_int_mode int_mode;
-  if (!is_a <scalar_int_mode> (mode, &int_mode))
-    return false;
-
-  if (aarch64_movw_imm (val, int_mode) || aarch64_movw_imm (~val, int_mode))
-    return 1;
-  return aarch64_bitmask_imm (val, int_mode);
-}
-
 static bool
 aarch64_cannot_force_const_mem (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
@@ -11095,9 +11180,7 @@ aarch64_float_const_rtx_p (rtx x)
       && SCALAR_FLOAT_MODE_P (mode)
       && aarch64_reinterpret_float_as_int (x, &ival))
     {
-      scalar_int_mode imode = (mode == HFmode
-			       ? SImode
-			       : int_mode_for_mode (mode).require ());
+      machine_mode imode = known_eq (GET_MODE_SIZE (mode), 8) ? DImode : SImode;
       int num_instr = aarch64_internal_mov_immediate
 			(NULL_RTX, gen_int_mode (ival, imode), false, imode);
       return num_instr < 3;
@@ -11274,7 +11357,7 @@ aarch64_select_cc_mode (RTX_CODE code, rtx x, rtx y)
   if (y == const0_rtx && (REG_P (x) || SUBREG_P (x))
       && (code == EQ || code == NE)
       && (mode_x == HImode || mode_x == QImode))
-    return CC_NZmode;
+    return CC_Zmode;
 
   /* Similarly, comparisons of zero_extends from shorter modes can
      be performed using an ANDS with an immediate mask.  */
@@ -11282,15 +11365,29 @@ aarch64_select_cc_mode (RTX_CODE code, rtx x, rtx y)
       && (mode_x == SImode || mode_x == DImode)
       && (GET_MODE (XEXP (x, 0)) == HImode || GET_MODE (XEXP (x, 0)) == QImode)
       && (code == EQ || code == NE))
-    return CC_NZmode;
+    return CC_Zmode;
 
+  /* Zero extracts support equality comparisons.  */
+  if ((mode_x == SImode || mode_x == DImode)
+      && y == const0_rtx
+      && (code_x == ZERO_EXTRACT && CONST_INT_P (XEXP (x, 1))
+	  && CONST_INT_P (XEXP (x, 2)))
+      && (code == EQ || code == NE))
+    return CC_Zmode;
+
+  /* ANDS/BICS/TST support equality and all signed comparisons.  */
+  if ((mode_x == SImode || mode_x == DImode)
+      && y == const0_rtx
+      && (code_x == AND)
+      && (code == EQ || code == NE || code == LT || code == GE
+	  || code == GT || code == LE))
+    return CC_NZVmode;
+
+  /* ADDS/SUBS correctly set N and Z flags.  */
   if ((mode_x == SImode || mode_x == DImode)
       && y == const0_rtx
       && (code == EQ || code == NE || code == LT || code == GE)
-      && (code_x == PLUS || code_x == MINUS || code_x == AND
-	  || code_x == NEG
-	  || (code_x == ZERO_EXTRACT && CONST_INT_P (XEXP (x, 1))
-	      && CONST_INT_P (XEXP (x, 2)))))
+      && (code_x == PLUS || code_x == MINUS || code_x == NEG))
     return CC_NZmode;
 
   /* A compare with a shifted operand.  Because of canonicalization,
@@ -11423,6 +11520,19 @@ aarch64_get_condition_code_1 (machine_mode mode, enum rtx_code comp_code)
 	case GTU: return AARCH64_HI; /* = pmore */
 	case LEU: return AARCH64_LS; /* = plast */
 	case LTU: return AARCH64_CC; /* = last */
+	default: return -1;
+	}
+      break;
+
+    case E_CC_NZVmode:
+      switch (comp_code)
+	{
+	case NE: return AARCH64_NE;
+	case EQ: return AARCH64_EQ;
+	case GE: return AARCH64_PL;
+	case LT: return AARCH64_MI;
+	case GT: return AARCH64_GT;
+	case LE: return AARCH64_LE;
 	default: return -1;
 	}
       break;
@@ -13728,10 +13838,10 @@ aarch64_rtx_costs (rtx x, machine_mode mode, int outer ATTRIBUTE_UNUSED,
 	     proportionally expensive to the number of instructions
 	     required to build that constant.  This is true whether we
 	     are compiling for SPEED or otherwise.  */
-	  if (!is_a <scalar_int_mode> (mode, &int_mode))
-	    int_mode = word_mode;
+	  machine_mode imode = known_le (GET_MODE_SIZE (mode), 4)
+				? SImode : DImode;
 	  *cost = COSTS_N_INSNS (aarch64_internal_mov_immediate
-				 (NULL_RTX, x, false, int_mode));
+				 (NULL_RTX, x, false, imode));
 	}
       return true;
 
@@ -13747,9 +13857,8 @@ aarch64_rtx_costs (rtx x, machine_mode mode, int outer ATTRIBUTE_UNUSED,
 	  bool succeed = aarch64_reinterpret_float_as_int (x, &ival);
 	  gcc_assert (succeed);
 
-	  scalar_int_mode imode = (mode == HFmode
-				   ? SImode
-				   : int_mode_for_mode (mode).require ());
+	  machine_mode imode = known_eq (GET_MODE_SIZE (mode), 8)
+				? DImode : SImode;
 	  int ncost = aarch64_internal_mov_immediate
 		(NULL_RTX, gen_int_mode (ival, imode), false, imode);
 	  *cost += COSTS_N_INSNS (ncost);
@@ -14125,6 +14234,16 @@ cost_plus:
 			& AARCH64_EXTRA_TUNE_CSE_SVE_VL_CONSTANTS))
 		  *cost += COSTS_N_INSNS (1);
 	      }
+	    return true;
+	  }
+
+	if (aarch64_pluslong_immediate (op1, mode))
+	  {
+	    /* 24-bit add in 2 instructions or 12-bit shifted add.  */
+	    if ((INTVAL (op1) & 0xfff) != 0)
+	      *cost += COSTS_N_INSNS (1);
+
+	    *cost += rtx_cost (op0, mode, PLUS, 0, speed);
 	    return true;
 	  }
 
@@ -19829,7 +19948,8 @@ aarch64_setup_incoming_varargs (cumulative_args_t cum_v,
      argument.  Advance a local copy of CUM past the last "real" named
      argument, to find out how many registers are left over.  */
   local_cum = *cum;
-  aarch64_function_arg_advance (pack_cumulative_args(&local_cum), arg);
+  if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl)))
+    aarch64_function_arg_advance (pack_cumulative_args(&local_cum), arg);
 
   /* Found out how many registers we need to save.
      Honor tree-stdvar analysis results.  */
@@ -21928,6 +22048,38 @@ aarch64_expand_vector_init (rtx target, rtx vals)
       return;
     }
 
+  /* Check for interleaving case.
+     For eg if initializer is (int16x8_t) {x, y, x, y, x, y, x, y}.
+     Generate following code:
+     dup v0.h, x
+     dup v1.h, y
+     zip1 v0.h, v0.h, v1.h
+     for "large enough" initializer.  */
+
+  if (n_elts >= 8)
+    {
+      int i;
+      for (i = 2; i < n_elts; i++)
+	if (!rtx_equal_p (XVECEXP (vals, 0, i), XVECEXP (vals, 0, i % 2)))
+	  break;
+
+      if (i == n_elts)
+	{
+	  machine_mode mode = GET_MODE (target);
+	  rtx dest[2];
+
+	  for (int i = 0; i < 2; i++)
+	    {
+	      rtx x = expand_vector_broadcast (mode, XVECEXP (vals, 0, i));
+	      dest[i] = force_reg (mode, x);
+	    }
+
+	  rtvec v = gen_rtvec (2, dest[0], dest[1]);
+	  emit_set_insn (target, gen_rtx_UNSPEC (mode, v, UNSPEC_ZIP1));
+	  return;
+	}
+    }
+
   enum insn_code icode = optab_handler (vec_set_optab, mode);
   gcc_assert (icode != CODE_FOR_nothing);
 
@@ -22531,30 +22683,56 @@ aarch64_declare_function_name (FILE *stream, const char* name,
   cfun->machine->label_is_assembled = true;
 }
 
-/* Implement PRINT_PATCHABLE_FUNCTION_ENTRY.  Check if the patch area is after
-   the function label and emit a BTI if necessary.  */
+/* Implement PRINT_PATCHABLE_FUNCTION_ENTRY.  */
 
 void
 aarch64_print_patchable_function_entry (FILE *file,
 					unsigned HOST_WIDE_INT patch_area_size,
 					bool record_p)
 {
-  if (cfun->machine->label_is_assembled
-      && aarch64_bti_enabled ()
-      && !cgraph_node::get (cfun->decl)->only_called_directly_p ())
+  if (!cfun->machine->label_is_assembled)
     {
-      /* Remove the BTI that follows the patch area and insert a new BTI
-	 before the patch area right after the function label.  */
-      rtx_insn *insn = next_real_nondebug_insn (get_insns ());
-      if (insn
-	  && INSN_P (insn)
-	  && GET_CODE (PATTERN (insn)) == UNSPEC_VOLATILE
-	  && XINT (PATTERN (insn), 1) == UNSPECV_BTI_C)
-	delete_insn (insn);
-      asm_fprintf (file, "\thint\t34 // bti c\n");
+      /* Emit the patching area before the entry label, if any.  */
+      default_print_patchable_function_entry (file, patch_area_size,
+					      record_p);
+      return;
     }
 
-  default_print_patchable_function_entry (file, patch_area_size, record_p);
+  rtx pa = gen_patchable_area (GEN_INT (patch_area_size),
+			       GEN_INT (record_p));
+  basic_block bb = ENTRY_BLOCK_PTR_FOR_FN (cfun)->next_bb;
+
+  if (!aarch64_bti_enabled ()
+      || cgraph_node::get (cfun->decl)->only_called_directly_p ())
+    {
+      /* Emit the patchable_area at the beginning of the function.  */
+      rtx_insn *insn = emit_insn_before (pa, BB_HEAD (bb));
+      INSN_ADDRESSES_NEW (insn, -1);
+      return;
+    }
+
+  rtx_insn *insn = next_real_nondebug_insn (get_insns ());
+  if (!insn
+      || !INSN_P (insn)
+      || GET_CODE (PATTERN (insn)) != UNSPEC_VOLATILE
+      || XINT (PATTERN (insn), 1) != UNSPECV_BTI_C)
+    {
+      /* Emit a BTI_C.  */
+      insn = emit_insn_before (gen_bti_c (), BB_HEAD (bb));
+    }
+
+  /* Emit the patchable_area after BTI_C.  */
+  insn = emit_insn_after (pa, insn);
+  INSN_ADDRESSES_NEW (insn, -1);
+}
+
+/* Output patchable area.  */
+
+void
+aarch64_output_patchable_area (unsigned int patch_area_size, bool record_p)
+{
+  default_print_patchable_function_entry (asm_out_file, patch_area_size,
+					  record_p);
 }
 
 /* Implement ASM_OUTPUT_DEF_FROM_DECLS.  Output .variant_pcs for aliases.  */
@@ -24206,6 +24384,45 @@ aarch64_vectorize_vec_perm_const (machine_mode vmode, machine_mode op_mode,
   return ret;
 }
 
+/* Implement TARGET_VECTORIZE_CAN_SPECIAL_DIV_BY_CONST.  */
+
+bool
+aarch64_vectorize_can_special_div_by_constant (enum tree_code code,
+					       tree vectype, wide_int cst,
+					       rtx *output, rtx in0, rtx in1)
+{
+  if (code != TRUNC_DIV_EXPR
+      || !TYPE_UNSIGNED (vectype))
+    return false;
+
+  machine_mode mode = TYPE_MODE (vectype);
+  unsigned int flags = aarch64_classify_vector_mode (mode);
+  if ((flags & VEC_ANY_SVE) && !TARGET_SVE2)
+    return false;
+
+  int pow = wi::exact_log2 (cst + 1);
+  auto insn_code = maybe_code_for_aarch64_bitmask_udiv3 (TYPE_MODE (vectype));
+  /* SVE actually has a div operator, we may have gotten here through
+     that route.  */
+  if (pow != (int) (element_precision (vectype) / 2)
+      || insn_code == CODE_FOR_nothing)
+    return false;
+
+  /* We can use the optimized pattern.  */
+  if (in0 == NULL_RTX && in1 == NULL_RTX)
+    return true;
+
+  gcc_assert (output);
+
+  expand_operand ops[3];
+  create_output_operand (&ops[0], *output, mode);
+  create_input_operand (&ops[1], in0, mode);
+  create_fixed_operand (&ops[2], in1);
+  expand_insn (insn_code, 3, ops);
+  *output = ops[0].value;
+  return true;
+}
+
 /* Generate a byte permute mask for a register of mode MODE,
    which has NUNITS units.  */
 
@@ -25476,6 +25693,33 @@ aarch_macro_fusion_pair_p (rtx_insn *prev, rtx_insn *curr)
 	}
     }
 
+  /* Fuse A+B+1 and A-B-1 */
+  if (simple_sets_p
+      && aarch64_fusion_enabled_p (AARCH64_FUSE_ADDSUB_2REG_CONST1))
+    {
+      /* We're trying to match:
+	  prev == (set (r0) (plus (r0) (r1)))
+	  curr == (set (r0) (plus (r0) (const_int 1)))
+	or:
+	  prev == (set (r0) (minus (r0) (r1)))
+	  curr == (set (r0) (plus (r0) (const_int -1))) */
+
+      rtx prev_src = SET_SRC (prev_set);
+      rtx curr_src = SET_SRC (curr_set);
+
+      int polarity = 1;
+      if (GET_CODE (prev_src) == MINUS)
+	polarity = -1;
+
+      if (GET_CODE (curr_src) == PLUS
+	  && (GET_CODE (prev_src) == PLUS || GET_CODE (prev_src) == MINUS)
+	  && CONST_INT_P (XEXP (curr_src, 1))
+	  && INTVAL (XEXP (curr_src, 1)) == polarity
+	  && REG_P (XEXP (curr_src, 0))
+	  && REGNO (SET_DEST (prev_set)) == REGNO (XEXP (curr_src, 0)))
+	return true;
+    }
+
   return false;
 }
 
@@ -26497,8 +26741,9 @@ aarch64_can_change_mode_class (machine_mode from,
   bool from_pred_p = (from_flags & VEC_SVE_PRED);
   bool to_pred_p = (to_flags & VEC_SVE_PRED);
 
-  bool from_full_advsimd_struct_p = (from_flags == (VEC_ADVSIMD | VEC_STRUCT));
   bool to_partial_advsimd_struct_p = (to_flags == (VEC_ADVSIMD | VEC_STRUCT
+						   | VEC_PARTIAL));
+  bool from_partial_advsimd_struct_p = (from_flags == (VEC_ADVSIMD | VEC_STRUCT
 						   | VEC_PARTIAL));
 
   /* Don't allow changes between predicate modes and other modes.
@@ -26521,9 +26766,10 @@ aarch64_can_change_mode_class (machine_mode from,
 	  || GET_MODE_UNIT_SIZE (from) != GET_MODE_UNIT_SIZE (to)))
     return false;
 
-  /* Don't allow changes between partial and full Advanced SIMD structure
-     modes.  */
-  if (from_full_advsimd_struct_p && to_partial_advsimd_struct_p)
+  /* Don't allow changes between partial and other registers only if
+     one is a normal SIMD register, allow only if not larger than 64-bit.  */
+  if ((to_partial_advsimd_struct_p ^ from_partial_advsimd_struct_p)
+      && (known_gt (GET_MODE_SIZE (to), 8) || known_gt (GET_MODE_SIZE (to), 8)))
     return false;
 
   if (maybe_ne (BITS_PER_SVE_VECTOR, 128u))
@@ -26671,7 +26917,8 @@ currently_supported_simd_type (tree t, tree b)
 static int
 aarch64_simd_clone_compute_vecsize_and_simdlen (struct cgraph_node *node,
 					struct cgraph_simd_clone *clonei,
-					tree base_type, int num)
+					tree base_type, int num,
+					bool explicit_p)
 {
   tree t, ret_type;
   unsigned int elt_bits, count;
@@ -26689,8 +26936,9 @@ aarch64_simd_clone_compute_vecsize_and_simdlen (struct cgraph_node *node,
 	  || const_simdlen > 1024
 	  || (const_simdlen & (const_simdlen - 1)) != 0))
     {
-      warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
-		  "unsupported simdlen %wd", const_simdlen);
+      if (explicit_p)
+	warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
+		    "unsupported simdlen %wd", const_simdlen);
       return 0;
     }
 
@@ -26698,7 +26946,9 @@ aarch64_simd_clone_compute_vecsize_and_simdlen (struct cgraph_node *node,
   if (TREE_CODE (ret_type) != VOID_TYPE
       && !currently_supported_simd_type (ret_type, base_type))
     {
-      if (TYPE_SIZE (ret_type) != TYPE_SIZE (base_type))
+      if (!explicit_p)
+	;
+      else if (TYPE_SIZE (ret_type) != TYPE_SIZE (base_type))
 	warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
 		    "GCC does not currently support mixed size types "
 		    "for %<simd%> functions");
@@ -26725,7 +26975,9 @@ aarch64_simd_clone_compute_vecsize_and_simdlen (struct cgraph_node *node,
       if (clonei->args[i].arg_type != SIMD_CLONE_ARG_TYPE_UNIFORM
 	  && !currently_supported_simd_type (arg_type, base_type))
 	{
-	  if (TYPE_SIZE (arg_type) != TYPE_SIZE (base_type))
+	  if (!explicit_p)
+	    ;
+	  else if (TYPE_SIZE (arg_type) != TYPE_SIZE (base_type))
 	    warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
 			"GCC does not currently support mixed size types "
 			"for %<simd%> functions");
@@ -26755,9 +27007,11 @@ aarch64_simd_clone_compute_vecsize_and_simdlen (struct cgraph_node *node,
       if (clonei->simdlen.is_constant (&const_simdlen)
 	  && maybe_ne (vec_bits, 64U) && maybe_ne (vec_bits, 128U))
 	{
-	  warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
-		      "GCC does not currently support simdlen %wd for type %qT",
-		      const_simdlen, base_type);
+	  if (explicit_p)
+	    warning_at (DECL_SOURCE_LOCATION (node->decl), 0,
+			"GCC does not currently support simdlen %wd for "
+			"type %qT",
+			const_simdlen, base_type);
 	  return 0;
 	}
     }
@@ -27669,6 +27923,10 @@ aarch64_libgcc_floating_mode_supported_p
 #undef TARGET_VECTOR_ALIGNMENT
 #define TARGET_VECTOR_ALIGNMENT aarch64_simd_vector_alignment
 
+#undef TARGET_VECTORIZE_CAN_SPECIAL_DIV_BY_CONST
+#define TARGET_VECTORIZE_CAN_SPECIAL_DIV_BY_CONST \
+  aarch64_vectorize_can_special_div_by_constant
+
 #undef TARGET_VECTORIZE_PREFERRED_VECTOR_ALIGNMENT
 #define TARGET_VECTORIZE_PREFERRED_VECTOR_ALIGNMENT \
   aarch64_vectorize_preferred_vector_alignment
@@ -27842,6 +28100,9 @@ aarch64_libgcc_floating_mode_supported_p
 
 #undef TARGET_HAVE_SHADOW_CALL_STACK
 #define TARGET_HAVE_SHADOW_CALL_STACK true
+
+#undef TARGET_CONST_ANCHOR
+#define TARGET_CONST_ANCHOR 0x1000000
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

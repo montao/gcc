@@ -19,6 +19,7 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
+#define INCLUDE_MEMORY
 #include "system.h"
 #include "coretypes.h"
 #include "tree.h"
@@ -27,7 +28,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple.h"
 #include "diagnostic.h"
 #include "intl.h"
-#include "function.h"
 #include "analyzer/analyzer.h"
 
 #if ENABLE_ANALYZER
@@ -449,7 +449,7 @@ make_label_text (bool can_colorize, const char *fmt, ...)
 /* As above, but with singular vs plural.  */
 
 label_text
-make_label_text_n (bool can_colorize, int n,
+make_label_text_n (bool can_colorize, unsigned HOST_WIDE_INT n,
 		   const char *singular_fmt,
 		   const char *plural_fmt, ...)
 {

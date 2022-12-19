@@ -680,7 +680,7 @@ do_build_copy_constructor (tree fndecl)
       else if (tree_int_cst_equal (TYPE_SIZE (current_class_type),
 				   CLASSTYPE_SIZE (current_class_type)))
 	{
-	  tree t = build2 (INIT_EXPR, void_type_node, current_class_ref, parm);
+	  tree t = cp_build_init_expr (current_class_ref, parm);
 	  finish_expr_stmt (t);
 	}
       else
@@ -695,7 +695,7 @@ do_build_copy_constructor (tree fndecl)
 			     current_class_ptr, alias_set);
 	  tree rhs = build2 (MEM_REF, array_type,
 			     TREE_OPERAND (parm, 0), alias_set);
-	  tree t = build2 (INIT_EXPR, void_type_node, lhs, rhs);
+	  tree t = cp_build_init_expr (lhs, rhs);
 	  finish_expr_stmt (t);
 	}
     }
@@ -1332,7 +1332,7 @@ struct comp_info
 	&& !potential_rvalue_constant_expression (expr))
       {
 	if (was_constexp)
-	  require_potential_rvalue_constant_expression (expr);
+	  require_potential_rvalue_constant_expression_fncheck (expr);
 	else
 	  constexp = false;
       }
@@ -2233,7 +2233,7 @@ ref_xes_from_temporary (tree to, tree from, bool direct_init_p)
   tree val = build_stub_object (from);
   if (!TYPE_REF_P (from) && TREE_CODE (from) != FUNCTION_TYPE)
     val = CLASS_TYPE_P (from) ? force_rvalue (val, tf_none) : rvalue (val);
-  return ref_conv_binds_directly (to, val, direct_init_p).is_false ();
+  return ref_conv_binds_to_temporary (to, val, direct_init_p).is_true ();
 }
 
 /* Worker for is_{,nothrow_}convertible.  Attempt to perform an implicit
@@ -2670,13 +2670,17 @@ synthesized_method_walk (tree ctype, special_function_kind sfk, bool const_p,
      requirements of a constexpr constructor (7.1.5), the
      implicitly-defined default constructor is constexpr.
 
+     C++20:
      The implicitly-defined copy/move assignment operator is constexpr if
       - X is a literal type, and
       - the assignment operator selected to copy/move each direct base class
 	subobject is a constexpr function, and
       - for each non-static data member of X that is of class type (or array
 	thereof), the assignment operator selected to copy/move that
-	member is a constexpr function.  */
+	member is a constexpr function.
+
+      C++23:
+      The implicitly-defined copy/move assignment operator is constexpr.  */
   if (constexpr_p)
     *constexpr_p = (SFK_CTOR_P (sfk)
 		    || (SFK_ASSIGN_P (sfk) && cxx_dialect >= cxx14)
@@ -3075,7 +3079,7 @@ implicitly_declare_fn (special_function_kind kind, tree type,
     {
       fn = copy_operator_fn (pattern_fn, EQ_EXPR);
       DECL_ARTIFICIAL (fn) = 1;
-      TREE_TYPE (fn) = change_return_type (boolean_type_node, TREE_TYPE (fn));
+      apply_deduced_return_type (fn, boolean_type_node);
       return fn;
     }
 

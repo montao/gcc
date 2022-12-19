@@ -246,14 +246,25 @@ target_type_format_char='@'
 xm_file=
 md_file=
 
+# Determine Solaris minor version
+case ${target}:`uname -v` in
+  # Only do this on Solaris.  Illumos uses illumos-* instead.
+  *-*-solaris2.11*:11.*)
+    # Restrict to native configurations.
+    if test x$host = x$target; then
+      uname_version="`uname -v`"
+      # Prepend dot as needed below.
+      target_min=".`expr "$uname_version" : '11\.\([0-9]*\)'`"
+    fi
+    ;;
+esac
+
 # Obsolete configurations.
-case ${target} in
-  *)
-  ;;
-  obsoleted-target \
+case ${target}${target_min} in
+    *-*-solaris2.11.[0-3]*		\
  )
     if test "x$enable_obsolete" != xyes; then
-      echo "*** Configuration ${target} is obsolete." >&2
+      echo "*** Configuration ${target}${target_min} is obsolete." >&2
       echo "*** Specify --enable-obsolete to build it anyway." >&2
       echo "*** Support will be REMOVED in the next major release of GCC," >&2
       echo "*** unless a maintainer comes forward." >&2
@@ -421,7 +432,10 @@ i[34567]86-*-* | x86_64-*-*)
 		       tsxldtrkintrin.h amxtileintrin.h amxint8intrin.h
 		       amxbf16intrin.h x86gprintrin.h uintrintrin.h
 		       hresetintrin.h keylockerintrin.h avxvnniintrin.h
-		       mwaitintrin.h avx512fp16intrin.h avx512fp16vlintrin.h"
+		       mwaitintrin.h avx512fp16intrin.h avx512fp16vlintrin.h
+		       avxifmaintrin.h avxvnniint8intrin.h avxneconvertintrin.h
+		       cmpccxaddintrin.h amxfp16intrin.h prfchiintrin.h
+		       raointintrin.h"
 	;;
 ia64-*-*)
 	extra_headers=ia64intrin.h
@@ -515,9 +529,12 @@ pru-*-*)
 	;;
 riscv*)
 	cpu_type=riscv
-	extra_objs="riscv-builtins.o riscv-c.o riscv-sr.o riscv-shorten-memrefs.o riscv-selftests.o"
-	extra_objs="${extra_objs} riscv-vector-builtins.o"
+	extra_objs="riscv-builtins.o riscv-c.o riscv-sr.o riscv-shorten-memrefs.o riscv-selftests.o riscv-v.o"
+	extra_objs="${extra_objs} riscv-vector-builtins.o riscv-vector-builtins-shapes.o riscv-vector-builtins-bases.o"
 	d_target_objs="riscv-d.o"
+	extra_headers="riscv_vector.h"
+	target_gtfiles="$target_gtfiles \$(srcdir)/config/riscv/riscv-vector-builtins.cc"
+	target_gtfiles="$target_gtfiles \$(srcdir)/config/riscv/riscv-vector-builtins.h"
 	;;
 rs6000*-*-*)
 	extra_options="${extra_options} g.opt fused-madd.opt rs6000/rs6000-tables.opt"
@@ -555,6 +572,7 @@ tic6x-*-*)
 	;;
 xtensa*-*-*)
 	extra_options="${extra_options} fused-madd.opt"
+	extra_objs="xtensa-dynconfig.o"
 	;;
 esac
 
@@ -656,13 +674,14 @@ c7 esther"
 # 64-bit x86 processors supported by --with-arch=.  Each processor
 # MUST be separated by exactly one space.
 x86_64_archs="amdfam10 athlon64 athlon64-sse3 barcelona bdver1 bdver2 \
-bdver3 bdver4 znver1 znver2 znver3 btver1 btver2 k8 k8-sse3 opteron \
+bdver3 bdver4 znver1 znver2 znver3 znver4 btver1 btver2 k8 k8-sse3 opteron \
 opteron-sse3 nocona core2 corei7 corei7-avx core-avx-i core-avx2 atom \
 slm nehalem westmere sandybridge ivybridge haswell broadwell bonnell \
 silvermont knl knm skylake-avx512 cannonlake icelake-client icelake-server \
 skylake goldmont goldmont-plus tremont cascadelake tigerlake cooperlake \
 sapphirerapids alderlake rocketlake eden-x2 nano nano-1000 nano-2000 nano-3000 \
-nano-x2 eden-x4 nano-x4 lujiazui x86-64 x86-64-v2 x86-64-v3 x86-64-v4 native"
+nano-x2 eden-x4 nano-x4 lujiazui x86-64 x86-64-v2 x86-64-v3 x86-64-v4 \
+sierraforest graniterapids grandridge native"
 
 # Additional x86 processors supported by --with-cpu=.  Each processor
 # MUST be separated by exactly one space.
@@ -878,16 +897,32 @@ case ${target} in
   esac
   c_target_objs="${c_target_objs} glibc-c.o"
   cxx_target_objs="${cxx_target_objs} glibc-c.o"
-  d_target_objs="${d_target_objs} glibc-d.o"
   tmake_file="${tmake_file} t-glibc"
   target_has_targetcm=yes
-  target_has_targetdm=yes
   case $target in
     *-*-*uclibc* | *-*-uclinuxfdpiceabi)
       ;;
     *)
       # Linux targets always support .init_array.
       gcc_cv_initfini_array=yes
+      ;;
+  esac
+  case $target in
+    *-*-*linux*)
+      d_target_objs="${d_target_objs} linux-d.o"
+      target_has_targetdm=yes
+      ;;
+    *-*-kfreebsd*-gnu)
+      d_target_objs="${d_target_objs} kfreebsd-d.o"
+      target_has_targetdm=yes
+      ;;
+    *-*-kopensolaris*-gnu)
+      d_target_objs="${d_target_objs} kopensolaris-d.o"
+      target_has_targetdm=yes
+      ;;
+    *-*-gnu*)
+      d_target_objs="${d_target_objs} gnu-d.o"
+      target_has_targetdm=yes
       ;;
   esac
   ;;
@@ -1081,6 +1116,11 @@ case ${target} in
   # Assume that newlib is being used and so __cxa_atexit is provided.
   default_use_cxa_atexit=yes
   use_gcc_stdint=wrap
+
+  case "${with_newlib}-${with_headers}" in
+  no-no) use_gcc_stdint=provide ;;
+  *) ;;
+  esac
   ;;
 esac
 
@@ -2045,7 +2085,7 @@ i[34567]86-*-cygwin*)
 	extra_objs="${extra_objs} winnt.o winnt-stubs.o"
 	c_target_objs="${c_target_objs} msformat-c.o"
 	cxx_target_objs="${cxx_target_objs} winnt-cxx.o msformat-c.o"
-	d_target_objs="${d_target_objs} winnt-d.o"
+	d_target_objs="${d_target_objs} cygwin-d.o"
 	target_has_targetdm="yes"
 	if test x$enable_threads = xyes; then
 		thread_file='posix'
@@ -2063,7 +2103,7 @@ x86_64-*-cygwin*)
 	extra_objs="${extra_objs} winnt.o winnt-stubs.o"
 	c_target_objs="${c_target_objs} msformat-c.o"
 	cxx_target_objs="${cxx_target_objs} winnt-cxx.o msformat-c.o"
-	d_target_objs="${d_target_objs} winnt-d.o"
+	d_target_objs="${d_target_objs} cygwin-d.o"
 	target_has_targetdm="yes"
 	if test x$enable_threads = xyes; then
 		thread_file='posix'
@@ -2089,6 +2129,9 @@ i[34567]86-*-mingw* | x86_64-*-mingw*)
 	esac
 	if test x$enable_threads = xposix ; then
 		tm_file="${tm_file} i386/mingw-pthread.h"
+	fi
+	if test x$enable_threads = xmcf ; then
+		tm_file="${tm_file} i386/mingw-mcfgthread.h"
 	fi
 	tm_file="${tm_file} i386/mingw32.h"
 	# This makes the logic if mingw's or the w64 feature set has to be used
@@ -3522,14 +3565,6 @@ case ${target} in
 	;;
 esac
 
-# Build mkoffload tool
-case ${target} in
-*-intelmic-* | *-intelmicemul-*)
-	tmake_file="${tmake_file} i386/t-intelmic"
-	tm_file="${tm_file} i386/intelmic-offload.h"
-	;;
-esac
-
 if [ "$target_has_targetcm" = "no" ]; then
   c_target_objs="$c_target_objs default-c.o"
   cxx_target_objs="$cxx_target_objs default-c.o"
@@ -3630,6 +3665,10 @@ case ${target} in
       znver3-*)
 	arch=znver3
 	cpu=znver3
+	;;
+      znver4-*)
+	arch=znver4
+	cpu=znver4
 	;;
       bdver4-*)
         arch=bdver4
@@ -3759,6 +3798,10 @@ case ${target} in
       znver3-*)
 	arch=znver3
 	cpu=znver3
+	;;
+	  znver4-*)
+	arch=znver4
+	cpu=znver4
 	;;
       bdver4-*)
         arch=bdver4
@@ -4655,7 +4698,7 @@ case "${target}" in
 		;;
 
 	mips*-*-*)
-		supported_defaults="abi arch arch_32 arch_64 float fpu nan fp_32 odd_spreg_32 tune tune_32 tune_64 divide llsc mips-plt synci lxc1-sxc1 madd4"
+		supported_defaults="abi arch arch_32 arch_64 float fpu nan fp_32 odd_spreg_32 tune tune_32 tune_64 divide llsc mips-plt synci lxc1-sxc1 madd4 compact-branches"
 
 		case ${with_float} in
 		"" | soft | hard)
@@ -4805,6 +4848,15 @@ case "${target}" in
 			;;
 		*)
 			echo "Unknown madd4 type used in --with-madd4" 1>&2
+			exit 1
+			;;
+		esac
+
+		case ${with_compact_branches} in
+		"" | never | always | optimal)
+			;;
+		*)
+			echo "Unknown compact-branches policy used in --with-compact-branches" 1>&2
 			exit 1
 			;;
 		esac
@@ -5517,6 +5569,15 @@ case "${target}" in
 		;;
 esac
 
+# VxWorks support for shared libraries has to be requested explicitly,
+# so we can factor this part here:
+
+case "${target}-${enable_shared}" in
+  *-*-vxworks*-yes)
+    tmake_file="${tmake_file} t-slibgcc"
+    ;;
+esac
+
 # Targets for which there is at least one VxWorks port should include
 # vxworks-dummy.h to allow safe references to various TARGET_VXWORKS kinds
 # of markers from other files in the port, including the vxworks*.h files to
@@ -5607,6 +5668,8 @@ case ${target} in
 		esac
 		if test x$with_arch != x; then
 			default_mips_arch=$with_arch
+		else
+			with_arch=$default_mips_arch
 		fi
 		if test x$with_abi != x; then
 			default_mips_abi=$with_abi
@@ -5741,7 +5804,7 @@ case ${target} in
 esac
 
 t=
-all_defaults="abi cpu cpu_32 cpu_64 arch arch_32 arch_64 tune tune_32 tune_64 schedule float mode fpu nan fp_32 odd_spreg_32 divide llsc mips-plt synci tls lxc1-sxc1 madd4 isa_spec"
+all_defaults="abi cpu cpu_32 cpu_64 arch arch_32 arch_64 tune tune_32 tune_64 schedule float mode fpu nan fp_32 odd_spreg_32 divide llsc mips-plt synci tls lxc1-sxc1 madd4 isa_spec compact-branches"
 for option in $all_defaults
 do
 	eval "val=\$with_"`echo $option | sed s/-/_/g`

@@ -25,6 +25,7 @@
 
 AC_INIT
 AC_CONFIG_SRCDIR(tree.cc)
+AC_CONFIG_MACRO_DIRS([../config] [..])
 AC_CONFIG_HEADER(auto-host.h:config.in)
 
 gcc_version=`cat $srcdir/BASE-VER`
@@ -886,6 +887,9 @@ if test x${enable_multiarch} = xauto; then
     enable_multiarch=no
   fi
 fi
+if test x${enable_multiarch} = xyes; then
+  AC_DEFINE(ENABLE_MULTIARCH, 1, [If --with-multiarch option is used])
+fi
 AC_MSG_CHECKING(for multiarch configuration)
 AC_SUBST(enable_multiarch)
 AC_MSG_RESULT($enable_multiarch$ma_msg_suffix)
@@ -1019,7 +1023,7 @@ fi,
 objc_boehm_gc='')
 
 AC_ARG_WITH(dwarf2,
-[AS_HELP_STRING([--with-dwarf2], [force the default debug format to be DWARF 2])],
+[AS_HELP_STRING([--with-dwarf2], [force the default debug format to be DWARF 2 (or later)])],
 dwarf2="$with_dwarf2",
 dwarf2=no)
 
@@ -1132,12 +1136,6 @@ if test x"$enable_as_accelerator_for" != x; then
   AC_DEFINE(ACCEL_COMPILER, 1,
     [Define if this compiler should be built as the offload target compiler.])
   enable_as_accelerator=yes
-  case "${target}" in
-    *-intelmicemul-*)
-      # In this case we expect offload compiler to be built as native, so we
-      # need to rename the driver to avoid clashes with host's drivers.
-      program_transform_name="s&^&${target}-&" ;;
-  esac
   sedscript="s#${target_noncanonical}#${enable_as_accelerator_for}-accel-${target_noncanonical}#"
   program_transform_name=`echo $program_transform_name | sed $sedscript`
   accel_dir_suffix=/accel/${target_noncanonical}
@@ -1152,10 +1150,6 @@ for tgt in `echo $enable_offload_targets | sed 's/,/ /g'`; do
 
   enable_offloading=1
   case "$tgt" in
-    *-intelmic-* | *-intelmicemul-*)
-  	omp_device_property=omp-device-properties-i386
-  	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/i386/t-omp-device"
-  	;;
     amdgcn*)
   	omp_device_property=omp-device-properties-gcn
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/gcn/t-omp-device"
@@ -1269,6 +1263,20 @@ AC_CHECK_PROGS([FLEX], flex, [$MISSING flex])
 # Bison?
 AC_CHECK_PROGS([BISON], bison, [$MISSING bison])
 
+# Python3?
+ACX_CHECK_PROG_VER(PYTHON, python3, --version,
+  [Python.* \([0-9][0-9.]*\)],
+  [3.[4-9]*|3.[1-9][0-9]*|[4-9].*|[1-9][0-9]*])
+if test $gcc_cv_prog_python3_modern = no; then
+  AC_MSG_WARN([
+*** Python3 is missing.
+*** Documentation for modula-2 will not include the target SYSTEM module.])
+  HAVE_PYTHON=no
+else
+  HAVE_PYTHON=yes
+fi
+AC_SUBST(HAVE_PYTHON)
+
 # Binutils are not build modules, unlike bison/flex/makeinfo.  So we
 # check for build == host before using them.
 
@@ -1307,7 +1315,7 @@ ACX_HEADER_STRING
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIOCGWINSZ
 AC_CHECK_HEADERS(limits.h stddef.h string.h strings.h stdlib.h time.h iconv.h \
-		 fcntl.h ftw.h unistd.h sys/file.h sys/time.h sys/mman.h \
+		 fcntl.h ftw.h unistd.h sys/auxv.h sys/file.h sys/time.h sys/mman.h \
 		 sys/resource.h sys/param.h sys/times.h sys/stat.h sys/locking.h \
 		 direct.h malloc.h langinfo.h ldfcn.h locale.h wchar.h)
 
@@ -1525,7 +1533,7 @@ define(gcc_UNLOCKED_FUNCS, clearerr_unlocked feof_unlocked dnl
 AC_CHECK_FUNCS(times clock kill getrlimit setrlimit atoq \
 	popen sysconf strsignal getrusage nl_langinfo \
 	gettimeofday mbstowcs wcswidth mmap posix_fallocate setlocale \
-	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat)
+	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat getauxval)
 
 if test x$ac_cv_func_mbstowcs = xyes; then
   AC_CACHE_CHECK(whether mbstowcs works, gcc_cv_func_mbstowcs_works,
@@ -1801,6 +1809,7 @@ AC_SUBST(objext)
 AC_ARG_ENABLE(sjlj-exceptions,
 [AS_HELP_STRING([--enable-sjlj-exceptions],
                 [arrange to use setjmp/longjmp exception handling])],
+[force_sjlj_exceptions=yes],
 [case $target in
   lm32*-*-*)
      force_sjlj_exceptions=yes
@@ -1991,7 +2000,7 @@ case ${enable_threads} in
     target_thread_file='single'
     ;;
   aix | dce | lynx | mipssde | posix | rtems | \
-  single | tpf | vxworks | win32)
+  single | tpf | vxworks | win32 | mcf)
     target_thread_file=${enable_threads}
     ;;
   *)
@@ -6773,14 +6782,16 @@ AC_SUBST([enable_default_ssp])
 
 # Test for <sys/sdt.h> on the target.
 GCC_TARGET_TEMPLATE([HAVE_SYS_SDT_H])
-AC_MSG_CHECKING(sys/sdt.h in the target C library)
-have_sys_sdt_h=no
-if test -f $target_header_dir/sys/sdt.h; then
-  have_sys_sdt_h=yes
-  AC_DEFINE(HAVE_SYS_SDT_H, 1,
+AC_CACHE_CHECK([sys/sdt.h in the target C library], [gcc_cv_sys_sdt_h], [
+  gcc_cv_sys_sdt_h=no
+  if test -f $target_header_dir/sys/sdt.h; then
+    gcc_cv_sys_sdt_h=yes
+  fi
+])
+AS_IF([test x$gcc_cv_sys_sdt_h = xyes], [
+  AC_DEFINE([HAVE_SYS_SDT_H], [1],
             [Define if your target C library provides sys/sdt.h])
-fi
-AC_MSG_RESULT($have_sys_sdt_h)
+])
 
 # Check if TFmode long double should be used by default or not.
 # Some glibc targets used DFmode long double, but with glibc 2.4
@@ -7654,4 +7665,3 @@ done
 ], 
 [subdirs='$subdirs'])
 AC_OUTPUT
-

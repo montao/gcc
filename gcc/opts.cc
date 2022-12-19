@@ -658,6 +658,8 @@ static const struct default_options default_options_table[] =
       REORDER_BLOCKS_ALGORITHM_STC },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_ftree_loop_vectorize, NULL, 1 },
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_ftree_slp_vectorize, NULL, 1 },
+    { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_fopenmp_target_simd_clone_, NULL,
+      OMP_TARGET_SIMD_CLONE_NOHOST },
 #ifdef INSN_SCHEDULING
   /* Only run the pre-regalloc scheduling pass if optimizing for speed.  */
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_fschedule_insns, NULL, 1 },
@@ -1288,8 +1290,9 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
 	   "%<-fsanitize=kernel-address%>");
 
   /* Currently live patching is not support for LTO.  */
-  if (opts->x_flag_live_patching && opts->x_flag_lto)
-    sorry ("live patching is not supported with LTO");
+  if (opts->x_flag_live_patching == LIVE_PATCHING_INLINE_ONLY_STATIC && opts->x_flag_lto)
+    sorry ("live patching (with %qs) is not supported with LTO",
+	   "inline-only-static");
 
   /* Currently vtable verification is not supported for LTO */
   if (opts->x_flag_vtable_verify && opts->x_flag_lto)
@@ -1408,6 +1411,14 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
       opts->x_profile_flag = 0;
     }
 
+  if (opts->x_warn_strict_flex_arrays)
+    if (opts->x_flag_strict_flex_arrays == 0)
+      {
+	opts->x_warn_strict_flex_arrays = 0;
+	warning_at (UNKNOWN_LOCATION, 0,
+		    "%<-Wstrict-flex-arrays%> is ignored when"
+		    " %<-fstrict-flex-arrays%> is not present");
+      }
 
   diagnose_options (opts, opts_set, loc);
 }
@@ -3245,6 +3256,10 @@ common_handle_option (struct gcc_options *opts,
 
     case OPT_freport_bug:
       dc->report_bug = value;
+      break;
+
+    case OPT_fmultiflags:
+      gcc_checking_assert (lang_mask == CL_DRIVER);
       break;
 
     default:

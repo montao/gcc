@@ -2090,11 +2090,29 @@ vn_walk_cb_data::push_partial_def (pd_data pd,
 	    len = ROUND_UP (pd.size, BITS_PER_UNIT) / BITS_PER_UNIT;
 	  memset (this_buffer, 0, len);
 	}
-      else
+      else if (pd.rhs_off >= 0)
 	{
 	  len = native_encode_expr (pd.rhs, this_buffer, bufsize,
 				    (MAX (0, -pd.offset)
 				     + pd.rhs_off) / BITS_PER_UNIT);
+	  if (len <= 0
+	      || len < (ROUND_UP (pd.size, BITS_PER_UNIT) / BITS_PER_UNIT
+			- MAX (0, -pd.offset) / BITS_PER_UNIT))
+	    {
+	      if (dump_file && (dump_flags & TDF_DETAILS))
+		fprintf (dump_file, "Failed to encode %u "
+			 "partial definitions\n", ndefs);
+	      return (void *)-1;
+	    }
+	}
+      else /* negative pd.rhs_off indicates we want to chop off first bits */
+	{
+	  if (-pd.rhs_off >= bufsize)
+	    return (void *)-1;
+	  len = native_encode_expr (pd.rhs,
+				    this_buffer + -pd.rhs_off / BITS_PER_UNIT,
+				    bufsize - -pd.rhs_off / BITS_PER_UNIT,
+				    MAX (0, -pd.offset) / BITS_PER_UNIT);
 	  if (len <= 0
 	      || len < (ROUND_UP (pd.size, BITS_PER_UNIT) / BITS_PER_UNIT
 			- MAX (0, -pd.offset) / BITS_PER_UNIT))
@@ -3349,10 +3367,13 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 		}
 	      else if (fn == IFN_LEN_STORE)
 		{
-		  pd.rhs_off = 0;
 		  pd.offset = offset2i;
 		  pd.size = (tree_to_uhwi (len)
 			     + -tree_to_shwi (bias)) * BITS_PER_UNIT;
+		  if (BYTES_BIG_ENDIAN)
+		    pd.rhs_off = pd.size - tree_to_uhwi (TYPE_SIZE (vectype));
+		  else
+		    pd.rhs_off = 0;
 		  if (ranges_known_overlap_p (offset, maxsize,
 					      pd.offset, pd.size))
 		    return data->push_partial_def (pd, set, set,
@@ -5718,19 +5739,6 @@ visit_reference_op_store (tree lhs, tree op, gimple *stmt)
 
   if (!resultsame)
     {
-      /* Only perform the following when being called from PRE
-	 which embeds tail merging.  */
-      if (default_vn_walk_kind == VN_WALK)
-	{
-	  assign = build2 (MODIFY_EXPR, TREE_TYPE (lhs), lhs, op);
-	  vn_reference_lookup (assign, vuse, VN_NOWALK, &vnresult, false);
-	  if (vnresult)
-	    {
-	      VN_INFO (vdef)->visited = true;
-	      return set_ssa_val_to (vdef, vnresult->result_vdef);
-	    }
-	}
-
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
 	  fprintf (dump_file, "No store match\n");
@@ -5755,7 +5763,9 @@ visit_reference_op_store (tree lhs, tree op, gimple *stmt)
       if (default_vn_walk_kind == VN_WALK)
 	{
 	  assign = build2 (MODIFY_EXPR, TREE_TYPE (lhs), lhs, op);
-	  vn_reference_insert (assign, lhs, vuse, vdef);
+	  vn_reference_lookup (assign, vuse, VN_NOWALK, &vnresult, false);
+	  if (!vnresult)
+	    vn_reference_insert (assign, lhs, vuse, vdef);
 	}
     }
   else
@@ -5804,7 +5814,8 @@ visit_phi (gimple *phi, bool *inserted, bool backedges_varying_p)
 
   /* See if all non-TOP arguments have the same value.  TOP is
      equivalent to everything, so we can ignore it.  */
-  FOR_EACH_EDGE (e, ei, gimple_bb (phi)->preds)
+  basic_block bb = gimple_bb (phi);
+  FOR_EACH_EDGE (e, ei, bb->preds)
     if (e->flags & EDGE_EXECUTABLE)
       {
 	tree def = PHI_ARG_DEF_FROM_EDGE (phi, e);
@@ -5848,6 +5859,59 @@ visit_phi (gimple *phi, bool *inserted, bool backedges_varying_p)
 			    (TREE_OPERAND (def, 0), &doff) == sameval_base)
 			 && known_eq (soff, doff))
 		  continue;
+	      }
+	    /* There's also the possibility to use equivalences.  */
+	    if (!FLOAT_TYPE_P (TREE_TYPE (def))
+		/* But only do this if we didn't force any of sameval or
+		   val to VARYING because of backedge processing rules.  */
+		&& (TREE_CODE (sameval) != SSA_NAME
+		    || SSA_VAL (sameval) == sameval)
+		&& (TREE_CODE (def) != SSA_NAME || SSA_VAL (def) == def))
+	      {
+		vn_nary_op_t vnresult;
+		tree ops[2];
+		ops[0] = def;
+		ops[1] = sameval;
+		tree val = vn_nary_op_lookup_pieces (2, EQ_EXPR,
+						     boolean_type_node,
+						     ops, &vnresult);
+		if (! val && vnresult && vnresult->predicated_values)
+		  {
+		    val = vn_nary_op_get_predicated_value (vnresult, e->src);
+		    if (val && integer_truep (val))
+		      {
+			if (dump_file && (dump_flags & TDF_DETAILS))
+			  {
+			    fprintf (dump_file, "Predication says ");
+			    print_generic_expr (dump_file, def, TDF_NONE);
+			    fprintf (dump_file, " and ");
+			    print_generic_expr (dump_file, sameval, TDF_NONE);
+			    fprintf (dump_file, " are equal on edge %d -> %d\n",
+				     e->src->index, e->dest->index);
+			  }
+			continue;
+		      }
+		    /* If on all previous edges the value was equal to def
+		       we can change sameval to def.  */
+		    if (EDGE_COUNT (bb->preds) == 2
+			&& (val = vn_nary_op_get_predicated_value
+				    (vnresult, EDGE_PRED (bb, 0)->src))
+			&& integer_truep (val))
+		      {
+			if (dump_file && (dump_flags & TDF_DETAILS))
+			  {
+			    fprintf (dump_file, "Predication says ");
+			    print_generic_expr (dump_file, def, TDF_NONE);
+			    fprintf (dump_file, " and ");
+			    print_generic_expr (dump_file, sameval, TDF_NONE);
+			    fprintf (dump_file, " are equal on edge %d -> %d\n",
+				     EDGE_PRED (bb, 0)->src->index,
+				     EDGE_PRED (bb, 0)->dest->index);
+			  }
+			sameval = def;
+			continue;
+		      }
+		  }
 	      }
 	    sameval = NULL_TREE;
 	    break;

@@ -68,6 +68,7 @@ std_headers = \
 	${std_srcdir}/deque \
 	${std_srcdir}/execution \
 	${std_srcdir}/filesystem \
+	${std_srcdir}/format \
 	${std_srcdir}/forward_list \
 	${std_srcdir}/fstream \
 	${std_srcdir}/future \
@@ -95,6 +96,7 @@ std_headers = \
 	${std_srcdir}/stack \
 	${std_srcdir}/stacktrace \
 	${std_srcdir}/stdexcept \
+	${std_srcdir}/stdfloat \
 	${std_srcdir}/stop_token \
 	${std_srcdir}/streambuf \
 	${std_srcdir}/string \
@@ -768,6 +770,7 @@ experimental_headers = \
 	${experimental_srcdir}/array \
 	${experimental_srcdir}/buffer \
 	${experimental_srcdir}/chrono \
+	${experimental_srcdir}/contract \
 	${experimental_srcdir}/deque \
 	${experimental_srcdir}/executor \
 	${experimental_srcdir}/forward_list \

@@ -1203,9 +1203,42 @@ assign_discriminators (void)
     {
       edge e;
       edge_iterator ei;
+      gimple_stmt_iterator gsi;
+      location_t curr_locus = UNKNOWN_LOCATION;
+      expanded_location curr_locus_e = {};
+      int curr_discr = 0;
+
+      /* Traverse the basic block, if two function calls within a basic block
+	are mapped to the same line, assign a new discriminator because a call
+	stmt could be a split point of a basic block.  */
+      for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+	{
+	  gimple *stmt = gsi_stmt (gsi);
+
+	  if (curr_locus == UNKNOWN_LOCATION)
+	    {
+	      curr_locus = gimple_location (stmt);
+	      curr_locus_e = expand_location (curr_locus);
+	    }
+	  else if (!same_line_p (curr_locus, &curr_locus_e, gimple_location (stmt)))
+	    {
+	      curr_locus = gimple_location (stmt);
+	      curr_locus_e = expand_location (curr_locus);
+	      curr_discr = 0;
+	    }
+	  else if (curr_discr != 0)
+	    {
+	      location_t loc = gimple_location (stmt);
+	      location_t dloc = location_with_discriminator (loc, curr_discr);
+	      gimple_set_location (stmt, dloc);
+	    }
+	  /* Allocate a new discriminator for CALL stmt.  */
+	  if (gimple_code (stmt) == GIMPLE_CALL)
+	    curr_discr = next_discriminator_for_locus (curr_locus);
+	}
+
       gimple *last = last_stmt (bb);
       location_t locus = last ? gimple_location (last) : UNKNOWN_LOCATION;
-
       if (locus == UNKNOWN_LOCATION)
 	continue;
 
@@ -4762,17 +4795,6 @@ verify_gimple_assign_single (gassign *stmt)
 	}
       return res;
 
-    case ASSERT_EXPR:
-      /* FIXME.  */
-      rhs1 = fold (ASSERT_EXPR_COND (rhs1));
-      if (rhs1 == boolean_false_node)
-	{
-	  error ("%qs with an always-false condition", code_name);
-	  debug_generic_stmt (rhs1);
-	  return true;
-	}
-      break;
-
     case WITH_SIZE_EXPR:
       error ("%qs RHS in assignment statement",
 	     get_tree_code_name (rhs_code));
@@ -5106,6 +5128,9 @@ verify_gimple_stmt (gimple *stmt)
 	 how to setup the parallel iteration.  */
       return false;
 
+    case GIMPLE_ASSUME:
+      return false;
+
     case GIMPLE_DEBUG:
       return verify_gimple_debug (stmt);
 
@@ -5219,6 +5244,10 @@ verify_gimple_in_seq_2 (gimple_seq stmts)
 					   as_a <gcatch *> (stmt)));
 	  break;
 
+	case GIMPLE_ASSUME:
+	  err |= verify_gimple_in_seq_2 (gimple_assume_body (stmt));
+	  break;
+
 	case GIMPLE_TRANSACTION:
 	  err |= verify_gimple_transaction (as_a <gtransaction *> (stmt));
 	  break;
@@ -5260,13 +5289,15 @@ verify_gimple_transaction (gtransaction *stmt)
 
 /* Verify the GIMPLE statements inside the statement list STMTS.  */
 
-DEBUG_FUNCTION void
-verify_gimple_in_seq (gimple_seq stmts)
+DEBUG_FUNCTION bool
+verify_gimple_in_seq (gimple_seq stmts, bool ice)
 {
   timevar_push (TV_TREE_STMT_VERIFY);
-  if (verify_gimple_in_seq_2 (stmts))
+  bool res = verify_gimple_in_seq_2 (stmts);
+  if (res && ice)
     internal_error ("%<verify_gimple%> failed");
   timevar_pop (TV_TREE_STMT_VERIFY);
+  return res;
 }
 
 /* Return true when the T can be shared.  */
@@ -5456,8 +5487,8 @@ collect_subblocks (hash_set<tree> *blocks, tree block)
 
 /* Verify the GIMPLE statements in the CFG of FN.  */
 
-DEBUG_FUNCTION void
-verify_gimple_in_cfg (struct function *fn, bool verify_nothrow)
+DEBUG_FUNCTION bool
+verify_gimple_in_cfg (struct function *fn, bool verify_nothrow, bool ice)
 {
   basic_block bb;
   bool err = false;
@@ -5612,11 +5643,13 @@ verify_gimple_in_cfg (struct function *fn, bool verify_nothrow)
     eh_table->traverse<hash_set<gimple *> *, verify_eh_throw_stmt_node>
       (&visited_throwing_stmts);
 
-  if (err || eh_error_found)
+  if (ice && (err || eh_error_found))
     internal_error ("verify_gimple failed");
 
   verify_histograms ();
   timevar_pop (TV_TREE_STMT_VERIFY);
+
+  return (err || eh_error_found);
 }
 
 
@@ -6926,8 +6959,6 @@ gimple_duplicate_sese_tail (edge entry, edge exit,
   /* Anything that is outside of the region, but was dominated by something
      inside needs to update dominance info.  */
   iterate_fix_dominators (CDI_DOMINATORS, doms, false);
-  /* Update the SSA web.  */
-  update_ssa (TODO_update_ssa);
 
   if (free_region_copy)
     free (region_copy);
@@ -7828,6 +7859,8 @@ move_sese_region_to_fn (struct function *dest_cfun, basic_block entry_bb,
       if (bb->loop_father->header == bb)
 	{
 	  class loop *this_loop = bb->loop_father;
+	  /* Avoid the need to remap SSA names used in nb_iterations.  */
+	  free_numbers_of_iterations_estimates (this_loop);
 	  class loop *outer = loop_outer (this_loop);
 	  if (outer == loop
 	      /* If the SESE region contains some bbs ending with

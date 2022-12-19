@@ -1311,10 +1311,11 @@ c_omp_is_loop_iterator (tree decl, struct c_omp_check_loop_iv_data *d)
     else if (TREE_CODE (TREE_VEC_ELT (d->declv, i)) == TREE_LIST
 	     && TREE_CHAIN (TREE_VEC_ELT (d->declv, i))
 	     && (TREE_CODE (TREE_CHAIN (TREE_VEC_ELT (d->declv, i)))
-		 == TREE_VEC)
-	     && decl == TREE_VEC_ELT (TREE_CHAIN (TREE_VEC_ELT (d->declv,
-						  i)), 2))
-      return TREE_VEC_LENGTH (d->declv);
+		 == TREE_VEC))
+      for (int j = 2;
+	   j < TREE_VEC_LENGTH (TREE_CHAIN (TREE_VEC_ELT (d->declv, i))); j++)
+	if (decl == TREE_VEC_ELT (TREE_CHAIN (TREE_VEC_ELT (d->declv, i)), j))
+	  return TREE_VEC_LENGTH (d->declv);
   return -1;
 }
 
@@ -3112,8 +3113,8 @@ const struct c_omp_directive c_omp_directives[] = {
     C_OMP_DIR_STANDALONE, false },
   { "begin", "assumes", nullptr, PRAGMA_OMP_BEGIN,
     C_OMP_DIR_INFORMATIONAL, false },
-  /* { "begin", "declare", "target", PRAGMA_OMP_BEGIN,
-    C_OMP_DIR_DECLARATIVE, false }, */
+  { "begin", "declare", "target", PRAGMA_OMP_BEGIN,
+    C_OMP_DIR_DECLARATIVE, false },
   /* { "begin", "declare", "variant", PRAGMA_OMP_BEGIN,
     C_OMP_DIR_DECLARATIVE, false }, */
   /* { "begin", "metadirective", nullptr, PRAGMA_OMP_BEGIN,

@@ -4522,3 +4522,8 @@ expand_TRAP (internal_fn, gcall *)
 {
   expand_builtin_trap ();
 }
+
+void
+expand_ASSUME (internal_fn, gcall *)
+{
+}
