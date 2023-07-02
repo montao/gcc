@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -728,10 +728,6 @@ package body Sem_Aux is
       CList : Node_Id;
 
    begin
-      if not Is_Type (Typ) then
-         return False;
-      end if;
-
       FSTyp := First_Subtype (Typ);
 
       if not Has_Discriminants (FSTyp) then

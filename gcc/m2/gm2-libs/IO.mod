@@ -1,6 +1,6 @@
 (* IO.mod provides Read, Write, Errors procedures mapping onto 0, 1 and 2.
 
-Copyright (C) 2001-2021 Free Software Foundation, Inc.
+Copyright (C) 2001-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -344,18 +344,12 @@ END EchoOff ;
 *)
 
 PROCEDURE Init ;
+VAR
+   fdi: CARDINAL ;
 BEGIN
-   WITH fdState[0] DO
-      IsEof := FALSE ;
-      IsRaw := FALSE
-   END ;
-   WITH fdState[1] DO
-      IsEof := FALSE ;
-      IsRaw := FALSE
-   END ;
-   WITH fdState[2] DO
-      IsEof := FALSE ;
-      IsRaw := FALSE
+   FOR fdi := 0 TO HIGH (fdState) DO
+      fdState[fdi].IsEof := FALSE ;
+      fdState[fdi].IsRaw := FALSE
    END
 END Init ;
 

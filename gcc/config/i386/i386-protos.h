@@ -1,5 +1,5 @@
 /* Definitions of target machine for GCC for IA-32.
-   Copyright (C) 1988-2022 Free Software Foundation, Inc.
+   Copyright (C) 1988-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -49,8 +49,6 @@ extern bool ix86_use_pseudo_pic_reg (void);
 extern void ix86_reset_previous_fndecl (void);
 
 extern bool ix86_using_red_zone (void);
-
-extern rtx ix86_gen_scratch_sse_rtx (machine_mode);
 
 extern unsigned int ix86_regmode_natural_size (machine_mode);
 extern bool ix86_check_builtin_isa_match (unsigned int fcode);
@@ -142,6 +140,7 @@ extern void ix86_expand_copysign (rtx []);
 extern void ix86_expand_xorsign (rtx []);
 extern bool ix86_unary_operator_ok (enum rtx_code, machine_mode, rtx[2]);
 extern bool ix86_match_ccmode (rtx, machine_mode);
+extern bool ix86_match_ptest_ccmode (rtx);
 extern void ix86_expand_branch (enum rtx_code, rtx, rtx, rtx);
 extern void ix86_expand_setcc (rtx, enum rtx_code, rtx, rtx);
 extern bool ix86_expand_int_movcc (rtx[]);
@@ -156,6 +155,7 @@ extern void ix86_expand_sse_movcc (rtx, rtx, rtx, rtx);
 extern void ix86_expand_sse_unpack (rtx, rtx, bool, bool);
 extern void ix86_expand_fp_spaceship (rtx, rtx, rtx);
 extern bool ix86_expand_int_addcc (rtx[]);
+extern void ix86_expand_carry (rtx arg);
 extern rtx_insn *ix86_expand_call (rtx, rtx, rtx, rtx, rtx, bool);
 extern bool ix86_call_use_plt_p (rtx);
 extern void ix86_split_call_vzeroupper (rtx, rtx);
@@ -168,6 +168,7 @@ extern void ix86_split_lshr (rtx *, rtx, machine_mode);
 extern void ix86_expand_v1ti_shift (enum rtx_code, rtx[]);
 extern void ix86_expand_v1ti_rotate (enum rtx_code, rtx[]);
 extern void ix86_expand_v1ti_ashiftrt (rtx[]);
+extern rtx ix86_replace_reg_with_reg (rtx, rtx, rtx);
 extern rtx ix86_find_base_term (rtx);
 extern bool ix86_check_movabs (rtx, int);
 extern bool ix86_check_no_addr_space (rtx);
@@ -216,6 +217,7 @@ extern void ix86_expand_round (rtx, rtx);
 extern void ix86_expand_rounddf_32 (rtx, rtx);
 extern void ix86_expand_round_sse4 (rtx, rtx);
 
+extern void ix86_expand_vecop_qihi_partial (enum rtx_code, rtx, rtx, rtx);
 extern void ix86_expand_vecop_qihi (enum rtx_code, rtx, rtx, rtx);
 extern rtx ix86_split_stack_guard (void);
 

@@ -1,3 +1,64 @@
+2023-06-29  Qing Zhao  <qing.zhao@oracle.com>
+
+	* lto-common.cc (compare_tree_sccs_1): Compare bit
+	TYPE_NO_NAMED_ARGS_STDARG_P or TYPE_INCLUDES_FLEXARRAY properly
+	for its corresponding type.
+
+2023-06-29  Eugene Rozenfeld  <erozen@microsoft.com>
+
+	* Make-lang.in: Pass correct stage lto when processing
+	profile data collected while building target libraries
+
+2023-06-28  Richard Biener  <rguenther@suse.de>
+
+	* lto-common.cc (compare_tree_sccs_1): Use TYPE_PRECISION_RAW.
+
+2023-05-18  Bernhard Reutner-Fischer  <aldot@gcc.gnu.org>
+
+	* lto-common.cc (lto_maybe_register_decl): Use _P defines from tree.h.
+	* lto-symtab.cc (warn_type_compatibility_p): Ditto.
+	(lto_symtab_resolve_replaceable_p): Ditto.
+	(lto_symtab_merge_decls_1): Ditto.
+	* lto-symtab.h (lto_symtab_prevailing_decl): Ditto.
+
+2023-04-28  Eugene Rozenfeld  <erozen@microsoft.com>
+
+	* Make-lang.in: Merge perf data collected when compiling lto1 and runtime libraries
+
+2023-03-01  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/108910
+	* lto-common.cc (lto_fixup_prevailing_type): Don't add t to
+	TYPE_POINTER_TO or TYPE_REFERENCE_TO chain if it has
+	TYPE_ATTRIBUTES or is TYPE_REF_IS_RVALUE.
+
+2023-01-13  Richard Biener  <rguenther@suse.de>
+
+	* lto-lang.cc (lto_type_for_mode): Sync with
+	c_common_type_for_mode.
+
+2023-01-04  Jan Hubicka  <hubicka@ucw.cz>
+
+	* lto-partition.cc (may_need_named_section_p): Clones with no body
+	need no remaning.
+
+2022-12-29  Alexandre Oliva  <oliva@adacore.com>
+
+	* lto-partition.cc (lto_1_to_1_map): Drop NULL partition
+	mapping.
+
+2022-12-22  Richard Biener  <rguenther@suse.de>
+
+	* lto-common.cc (compare_tree_sccs_1): Compare DECL_NOT_FLEXARRAY.
+
+2022-12-21  Jan Hubicka  <hubicka@ucw.cz>
+
+	* lto-common.cc (lto_resolution_read): With incremental linking
+	and whole program ignore turn LDPR_PREVAILING_DEF_IRONLY to
+	LDPR_PREVAILING_DEF_IRONLY_EXP
+	* lto-lang.cc (lto_post_options): Do not clear flag_whole_program
+	for incremental link
+
 2022-11-25  Martin Liska  <mliska@suse.cz>
 
 	PR lto/107829
@@ -6658,7 +6719,7 @@
 	* lto-tree.h: Likewise.
 	* lto-lang.c: Likewise.
 
-Copyright (C) 2006-2022 Free Software Foundation, Inc.
+Copyright (C) 2006-2023 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

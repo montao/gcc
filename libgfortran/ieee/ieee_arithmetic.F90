@@ -1,5 +1,5 @@
 !    Implementation of the IEEE_ARITHMETIC standard intrinsic module
-!    Copyright (C) 2013-2022 Free Software Foundation, Inc.
+!    Copyright (C) 2013-2023 Free Software Foundation, Inc.
 !    Contributed by Francois-Xavier Coudert <fxcoudert@gcc.gnu.org>
 ! 
 ! This file is part of the GNU Fortran runtime library (libgfortran).
@@ -222,6 +222,132 @@ module IEEE_ARITHMETIC
       _gfortran_ieee_is_normal_8, _gfortran_ieee_is_normal_4
   end interface
   public :: IEEE_IS_NORMAL
+
+  ! IEEE_MIN_NUM, IEEE_MAX_NUM, IEEE_MIN_NUM_MAG, IEEE_MAX_NUM_MAG
+
+  interface
+    elemental real(kind=4) function _gfortran_ieee_max_num_4(X, Y)
+      real(kind=4), intent(in) :: X, Y
+    end function
+    elemental real(kind=8) function _gfortran_ieee_max_num_8(X, Y)
+      real(kind=8), intent(in) :: X, Y
+    end function
+#ifdef HAVE_GFC_REAL_10
+    elemental real(kind=10) function _gfortran_ieee_max_num_10(X, Y)
+      real(kind=10), intent(in) :: X, Y
+    end function
+#endif
+#ifdef HAVE_GFC_REAL_16
+    elemental real(kind=16) function _gfortran_ieee_max_num_16(X, Y)
+      real(kind=16), intent(in) :: X, Y
+    end function
+#endif
+  end interface
+
+  interface IEEE_MAX_NUM
+    procedure &
+#ifdef HAVE_GFC_REAL_16
+      _gfortran_ieee_max_num_16, &
+#endif
+#ifdef HAVE_GFC_REAL_10
+      _gfortran_ieee_max_num_10, &
+#endif
+      _gfortran_ieee_max_num_8, _gfortran_ieee_max_num_4
+  end interface
+  public :: IEEE_MAX_NUM
+
+  interface
+    elemental real(kind=4) function _gfortran_ieee_max_num_mag_4(X, Y)
+      real(kind=4), intent(in) :: X, Y
+    end function
+    elemental real(kind=8) function _gfortran_ieee_max_num_mag_8(X, Y)
+      real(kind=8), intent(in) :: X, Y
+    end function
+#ifdef HAVE_GFC_REAL_10
+    elemental real(kind=10) function _gfortran_ieee_max_num_mag_10(X, Y)
+      real(kind=10), intent(in) :: X, Y
+    end function
+#endif
+#ifdef HAVE_GFC_REAL_16
+    elemental real(kind=16) function _gfortran_ieee_max_num_mag_16(X, Y)
+      real(kind=16), intent(in) :: X, Y
+    end function
+#endif
+  end interface
+
+  interface IEEE_MAX_NUM_MAG
+    procedure &
+#ifdef HAVE_GFC_REAL_16
+      _gfortran_ieee_max_num_mag_16, &
+#endif
+#ifdef HAVE_GFC_REAL_10
+      _gfortran_ieee_max_num_mag_10, &
+#endif
+      _gfortran_ieee_max_num_mag_8, _gfortran_ieee_max_num_mag_4
+  end interface
+  public :: IEEE_MAX_NUM_MAG
+
+  interface
+    elemental real(kind=4) function _gfortran_ieee_min_num_4(X, Y)
+      real(kind=4), intent(in) :: X, Y
+    end function
+    elemental real(kind=8) function _gfortran_ieee_min_num_8(X, Y)
+      real(kind=8), intent(in) :: X, Y
+    end function
+#ifdef HAVE_GFC_REAL_10
+    elemental real(kind=10) function _gfortran_ieee_min_num_10(X, Y)
+      real(kind=10), intent(in) :: X, Y
+    end function
+#endif
+#ifdef HAVE_GFC_REAL_16
+    elemental real(kind=16) function _gfortran_ieee_min_num_16(X, Y)
+      real(kind=16), intent(in) :: X, Y
+    end function
+#endif
+  end interface
+
+  interface IEEE_MIN_NUM
+    procedure &
+#ifdef HAVE_GFC_REAL_16
+      _gfortran_ieee_min_num_16, &
+#endif
+#ifdef HAVE_GFC_REAL_10
+      _gfortran_ieee_min_num_10, &
+#endif
+      _gfortran_ieee_min_num_8, _gfortran_ieee_min_num_4
+  end interface
+  public :: IEEE_MIN_NUM
+
+  interface
+    elemental real(kind=4) function _gfortran_ieee_min_num_mag_4(X, Y)
+      real(kind=4), intent(in) :: X, Y
+    end function
+    elemental real(kind=8) function _gfortran_ieee_min_num_mag_8(X, Y)
+      real(kind=8), intent(in) :: X, Y
+    end function
+#ifdef HAVE_GFC_REAL_10
+    elemental real(kind=10) function _gfortran_ieee_min_num_mag_10(X, Y)
+      real(kind=10), intent(in) :: X, Y
+    end function
+#endif
+#ifdef HAVE_GFC_REAL_16
+    elemental real(kind=16) function _gfortran_ieee_min_num_mag_16(X, Y)
+      real(kind=16), intent(in) :: X, Y
+    end function
+#endif
+  end interface
+
+  interface IEEE_MIN_NUM_MAG
+    procedure &
+#ifdef HAVE_GFC_REAL_16
+      _gfortran_ieee_min_num_mag_16, &
+#endif
+#ifdef HAVE_GFC_REAL_10
+      _gfortran_ieee_min_num_mag_10, &
+#endif
+      _gfortran_ieee_min_num_mag_8, _gfortran_ieee_min_num_mag_4
+  end interface
+  public :: IEEE_MIN_NUM_MAG
 
   ! IEEE_COPY_SIGN
 

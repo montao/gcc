@@ -1,4 +1,4 @@
-/* Copyright (C) 1988-2022 Free Software Foundation, Inc.
+/* Copyright (C) 1988-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -296,6 +296,8 @@ scalar_chain::scalar_chain (enum machine_mode smode_, enum machine_mode vmode_)
 
   n_sse_to_integer = 0;
   n_integer_to_sse = 0;
+
+  max_visits = x86_stv_max_visits;
 }
 
 /* Free chain's data.  */
@@ -314,14 +316,12 @@ scalar_chain::~scalar_chain ()
 void
 scalar_chain::add_to_queue (unsigned insn_uid)
 {
-  if (bitmap_bit_p (insns, insn_uid)
-      || bitmap_bit_p (queue, insn_uid))
+  if (!bitmap_set_bit (queue, insn_uid))
     return;
 
   if (dump_file)
     fprintf (dump_file, "  Adding insn %d into chain's #%d queue\n",
 	     insn_uid, chain_id);
-  bitmap_set_bit (queue, insn_uid);
 }
 
 /* For DImode conversion, mark register defined by DEF as requiring
@@ -356,16 +356,17 @@ scalar_chain::mark_dual_mode_def (df_ref def)
 }
 
 /* Check REF's chain to add new insns into a queue
-   and find registers requiring conversion.  */
+   and find registers requiring conversion.  Return true if OK, false
+   if the analysis was aborted.  */
 
-void
-scalar_chain::analyze_register_chain (bitmap candidates, df_ref ref)
+bool
+scalar_chain::analyze_register_chain (bitmap candidates, df_ref ref,
+				      bitmap disallowed)
 {
   df_link *chain;
+  bool mark_def = false;
 
-  gcc_assert (bitmap_bit_p (insns, DF_REF_INSN_UID (ref))
-	      || bitmap_bit_p (candidates, DF_REF_INSN_UID (ref)));
-  add_to_queue (DF_REF_INSN_UID (ref));
+  gcc_checking_assert (bitmap_bit_p (insns, DF_REF_INSN_UID (ref)));
 
   for (chain = DF_REF_CHAIN (ref); chain; chain = chain->next)
     {
@@ -373,6 +374,9 @@ scalar_chain::analyze_register_chain (bitmap candidates, df_ref ref)
 
       if (!NONDEBUG_INSN_P (DF_REF_INSN (chain->ref)))
 	continue;
+
+      if (--max_visits == 0)
+	return false;
 
       if (!DF_REF_REG_MEM_P (chain->ref))
 	{
@@ -384,6 +388,10 @@ scalar_chain::analyze_register_chain (bitmap candidates, df_ref ref)
 	      add_to_queue (uid);
 	      continue;
 	    }
+
+	  /* If we run into parts of an aborted chain discovery abort.  */
+	  if (bitmap_bit_p (disallowed, uid))
+	    return false;
 	}
 
       if (DF_REF_REG_DEF_P (chain->ref))
@@ -398,23 +406,28 @@ scalar_chain::analyze_register_chain (bitmap candidates, df_ref ref)
 	  if (dump_file)
 	    fprintf (dump_file, "  r%d use in insn %d isn't convertible\n",
 		     DF_REF_REGNO (chain->ref), uid);
-	  mark_dual_mode_def (ref);
+	  mark_def = true;
 	}
     }
+
+  if (mark_def)
+    mark_dual_mode_def (ref);
+
+  return true;
 }
 
-/* Add instruction into a chain.  */
+/* Add instruction into a chain.  Return true if OK, false if the search
+   was aborted.  */
 
-void
-scalar_chain::add_insn (bitmap candidates, unsigned int insn_uid)
+bool
+scalar_chain::add_insn (bitmap candidates, unsigned int insn_uid,
+			bitmap disallowed)
 {
-  if (bitmap_bit_p (insns, insn_uid))
-    return;
+  if (!bitmap_set_bit (insns, insn_uid))
+    return true;
 
   if (dump_file)
     fprintf (dump_file, "  Adding insn %d to chain #%d\n", insn_uid, chain_id);
-
-  bitmap_set_bit (insns, insn_uid);
 
   rtx_insn *insn = DF_INSN_UID_GET (insn_uid)->insn;
   rtx def_set = single_set (insn);
@@ -428,17 +441,27 @@ scalar_chain::add_insn (bitmap candidates, unsigned int insn_uid)
   df_ref ref;
   for (ref = DF_INSN_UID_DEFS (insn_uid); ref; ref = DF_REF_NEXT_LOC (ref))
     if (!HARD_REGISTER_P (DF_REF_REG (ref)))
-      analyze_register_chain (candidates, ref);
+      if (!analyze_register_chain (candidates, ref, disallowed))
+	return false;
+
+  /* The operand(s) of VEC_SELECT don't need to be converted/convertible.  */
+  if (def_set && GET_CODE (SET_SRC (def_set)) == VEC_SELECT)
+    return true;
+
   for (ref = DF_INSN_UID_USES (insn_uid); ref; ref = DF_REF_NEXT_LOC (ref))
     if (!DF_REF_REG_MEM_P (ref))
-      analyze_register_chain (candidates, ref);
+      if (!analyze_register_chain (candidates, ref, disallowed))
+	return false;
+
+  return true;
 }
 
 /* Build new chain starting from insn INSN_UID recursively
-   adding all dependent uses and definitions.  */
+   adding all dependent uses and definitions.  Return true if OK, false
+   if the chain discovery was aborted.  */
 
-void
-scalar_chain::build (bitmap candidates, unsigned insn_uid)
+bool
+scalar_chain::build (bitmap candidates, unsigned insn_uid, bitmap disallowed)
 {
   queue = BITMAP_ALLOC (NULL);
   bitmap_set_bit (queue, insn_uid);
@@ -451,7 +474,17 @@ scalar_chain::build (bitmap candidates, unsigned insn_uid)
       insn_uid = bitmap_first_set_bit (queue);
       bitmap_clear_bit (queue, insn_uid);
       bitmap_clear_bit (candidates, insn_uid);
-      add_insn (candidates, insn_uid);
+      if (!add_insn (candidates, insn_uid, disallowed))
+	{
+	  /* If we aborted the search put sofar found insn on the set of
+	     disallowed insns so that further searches reaching them also
+	     abort and thus we abort the whole but yet undiscovered chain.  */
+	  bitmap_ior_into (disallowed, insns);
+	  if (dump_file)
+	    fprintf (dump_file, "Aborted chain #%d discovery\n", chain_id);
+	  BITMAP_FREE (queue);
+	  return false;
+	}
     }
 
   if (dump_file)
@@ -475,6 +508,8 @@ scalar_chain::build (bitmap candidates, unsigned insn_uid)
     }
 
   BITMAP_FREE (queue);
+
+  return true;
 }
 
 /* Return a cost of building a vector costant
@@ -547,6 +582,25 @@ general_scalar_chain::compute_convert_gain ()
 	      igain -= vector_const_cost (XEXP (src, 0));
 	    break;
 
+	  case ROTATE:
+	  case ROTATERT:
+	    igain += m * ix86_cost->shift_const;
+	    if (smode == DImode)
+	      {
+		int bits = INTVAL (XEXP (src, 1));
+		if ((bits & 0x0f) == 0)
+		  igain -= ix86_cost->sse_op;
+		else if ((bits & 0x07) == 0)
+		  igain -= 2 * ix86_cost->sse_op;
+		else
+		  igain -= 3 * ix86_cost->sse_op;
+	      }
+	    else if (INTVAL (XEXP (src, 1)) == 16)
+	      igain -= ix86_cost->sse_op;
+	    else
+	      igain -= 2 * ix86_cost->sse_op;
+	    break;
+
 	  case AND:
 	  case IOR:
 	  case XOR:
@@ -562,6 +616,14 @@ general_scalar_chain::compute_convert_gain ()
 	      igain -= vector_const_cost (XEXP (src, 0));
 	    if (CONST_INT_P (XEXP (src, 1)))
 	      igain -= vector_const_cost (XEXP (src, 1));
+	    if (MEM_P (XEXP (src, 1)))
+	      {
+		if (optimize_insn_for_size_p ())
+		  igain -= COSTS_N_BYTES (m == 2 ? 3 : 5);
+		else
+		  igain += m * ix86_cost->int_load[2]
+			   - ix86_cost->sse_load[sse_cost_idx];
+	      }
 	    break;
 
 	  case NEG:
@@ -588,7 +650,31 @@ general_scalar_chain::compute_convert_gain ()
 	    break;
 
 	  case COMPARE:
-	    /* Assume comparison cost is the same.  */
+	    if (XEXP (src, 1) != const0_rtx)
+	      {
+		/* cmp vs. pxor;pshufd;ptest.  */
+		igain += COSTS_N_INSNS (m - 3);
+	      }
+	    else if (GET_CODE (XEXP (src, 0)) != AND)
+	      {
+		/* test vs. pshufd;ptest.  */
+		igain += COSTS_N_INSNS (m - 2);
+	      }
+	    else if (GET_CODE (XEXP (XEXP (src, 0), 0)) != NOT)
+	      {
+		/* and;test vs. pshufd;ptest.  */
+		igain += COSTS_N_INSNS (2 * m - 2);
+	      }
+	    else if (TARGET_BMI)
+	      {
+		/* andn;test vs. pandn;pshufd;ptest.  */
+		igain += COSTS_N_INSNS (2 * m - 3);
+	      }
+	    else
+	      {
+		/* not;and;test vs. pandn;pshufd;ptest.  */
+		igain += COSTS_N_INSNS (3 * m - 3);
+	      }
 	    break;
 
 	  case CONST_INT:
@@ -626,6 +712,23 @@ general_scalar_chain::compute_convert_gain ()
 		igain += (m * ix86_cost->int_store[2]
 			  - ix86_cost->sse_store[sse_cost_idx]);
 		igain -= vector_const_cost (src);
+	      }
+	    break;
+
+	  case VEC_SELECT:
+	    if (XVECEXP (XEXP (src, 1), 0, 0) == const0_rtx)
+	      {
+		// movd (4 bytes) replaced with movdqa (4 bytes).
+		if (!optimize_insn_for_size_p ())
+		  igain += ix86_cost->sse_to_integer - ix86_cost->xmm_move;
+	      }
+	    else
+	      {
+		// pshufd; movd replaced with pshufd.
+		if (optimize_insn_for_size_p ())
+		  igain += COSTS_N_BYTES (4);
+		else
+		  igain += ix86_cost->sse_to_integer;
 	      }
 	    break;
 
@@ -914,12 +1017,45 @@ general_scalar_chain::convert_op (rtx *op, rtx_insn *insn)
     }
 }
 
-/* Convert COMPARE to vector mode.  */
+/* Convert CCZmode COMPARE to vector mode.  */
 
 rtx
 scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
 {
   rtx src, tmp;
+
+  /* Handle any REG_EQUAL notes.  */
+  tmp = find_reg_equal_equiv_note (insn);
+  if (tmp)
+    {
+      if (GET_CODE (XEXP (tmp, 0)) == COMPARE
+	  && GET_MODE (XEXP (tmp, 0)) == CCZmode
+	  && REG_P (XEXP (XEXP (tmp, 0), 0)))
+	{
+	  rtx *op = &XEXP (XEXP (tmp, 0), 1);
+	  if (CONST_SCALAR_INT_P (*op))
+	    {
+	      if (constm1_operand (*op, GET_MODE (*op)))
+		*op = CONSTM1_RTX (vmode);
+	      else
+		{
+		  unsigned n = GET_MODE_NUNITS (vmode);
+		  rtx *v = XALLOCAVEC (rtx, n);
+		  v[0] = *op;
+		  for (unsigned i = 1; i < n; ++i)
+		    v[i] = const0_rtx;
+		  *op = gen_rtx_CONST_VECTOR (vmode, gen_rtvec_v (n, v));
+		}
+	      tmp = NULL_RTX;
+	    }
+	  else if (REG_P (*op))
+	    tmp = NULL_RTX;
+	}
+
+      if (tmp)
+	remove_note (insn, tmp);
+    }
+
   /* Comparison against anything other than zero, requires an XOR.  */
   if (op2 != const0_rtx)
     {
@@ -963,7 +1099,7 @@ scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
 	  emit_insn_before (gen_rtx_SET (tmp, op11), insn);
 	  op11 = tmp;
 	}
-      return gen_rtx_UNSPEC (CCmode, gen_rtvec (2, op11, op12),
+      return gen_rtx_UNSPEC (CCZmode, gen_rtvec (2, op11, op12),
 			     UNSPEC_PTEST);
     }
   else
@@ -992,7 +1128,7 @@ scalar_chain::convert_compare (rtx op1, rtx op2, rtx_insn *insn)
       src = tmp;
     }
 
-  return gen_rtx_UNSPEC (CCmode, gen_rtvec (2, src, src), UNSPEC_PTEST);
+  return gen_rtx_UNSPEC (CCZmode, gen_rtvec (2, src, src), UNSPEC_PTEST);
 }
 
 /* Helper function for converting INSN to vector mode.  */
@@ -1061,6 +1197,95 @@ scalar_chain::convert_insn_common (rtx_insn *insn)
 	}
 }
 
+/* Convert INSN which is an SImode or DImode rotation by a constant
+   to vector mode.  CODE is either ROTATE or ROTATERT with operands
+   OP0 and OP1.  Returns the SET_SRC of the last instruction in the
+   resulting sequence, which is emitted before INSN.  */
+
+rtx
+general_scalar_chain::convert_rotate (enum rtx_code code, rtx op0, rtx op1,
+				      rtx_insn *insn)
+{
+  int bits = INTVAL (op1);
+  rtx pat, result;
+
+  convert_op (&op0, insn);
+  if (bits == 0)
+    return op0;
+
+  if (smode == DImode)
+    {
+      if (code == ROTATE)
+	bits = 64 - bits;
+      if (bits == 32)
+	{
+	  rtx tmp1 = gen_reg_rtx (V4SImode);
+	  pat = gen_sse2_pshufd (tmp1, gen_lowpart (V4SImode, op0),
+				 GEN_INT (225));
+	  emit_insn_before (pat, insn);
+	  result = gen_lowpart (V2DImode, tmp1);
+	}
+      else if (bits == 16 || bits == 48)
+	{
+	  rtx tmp1 = gen_reg_rtx (V8HImode);
+	  pat = gen_sse2_pshuflw (tmp1, gen_lowpart (V8HImode, op0),
+				  GEN_INT (bits == 16 ? 57 : 147));
+	  emit_insn_before (pat, insn);
+	  result = gen_lowpart (V2DImode, tmp1);
+	}
+      else if ((bits & 0x07) == 0)
+	{
+	  rtx tmp1 = gen_reg_rtx (V4SImode);
+	  pat = gen_sse2_pshufd (tmp1, gen_lowpart (V4SImode, op0),
+				 GEN_INT (68));
+	  emit_insn_before (pat, insn);
+	  rtx tmp2 = gen_reg_rtx (V1TImode);
+	  pat = gen_sse2_lshrv1ti3 (tmp2, gen_lowpart (V1TImode, tmp1),
+				    GEN_INT (bits));
+	  emit_insn_before (pat, insn);
+	  result = gen_lowpart (V2DImode, tmp2);
+	}
+      else
+	{
+	  rtx tmp1 = gen_reg_rtx (V4SImode);
+	  pat = gen_sse2_pshufd (tmp1, gen_lowpart (V4SImode, op0),
+				 GEN_INT (20));
+	  emit_insn_before (pat, insn);
+	  rtx tmp2 = gen_reg_rtx (V2DImode);
+	  pat = gen_lshrv2di3 (tmp2, gen_lowpart (V2DImode, tmp1),
+			       GEN_INT (bits & 31));
+	  emit_insn_before (pat, insn);
+	  rtx tmp3 = gen_reg_rtx (V4SImode);
+	  pat = gen_sse2_pshufd (tmp3, gen_lowpart (V4SImode, tmp2),
+				 GEN_INT (bits > 32 ? 34 : 136));
+	  emit_insn_before (pat, insn);
+	  result = gen_lowpart (V2DImode, tmp3);
+	}
+    }
+  else if (bits == 16)
+    {
+      rtx tmp1 = gen_reg_rtx (V8HImode);
+      pat = gen_sse2_pshuflw (tmp1, gen_lowpart (V8HImode, op0), GEN_INT (225));
+      emit_insn_before (pat, insn);
+      result = gen_lowpart (V4SImode, tmp1);
+    }
+  else
+    {
+      if (code == ROTATE)
+	bits = 32 - bits;
+
+      rtx tmp1 = gen_reg_rtx (V4SImode);
+      emit_insn_before (gen_sse2_pshufd (tmp1, op0, GEN_INT (224)), insn);
+      rtx tmp2 = gen_reg_rtx (V2DImode);
+      pat = gen_lshrv2di3 (tmp2, gen_lowpart (V2DImode, tmp1),
+			   GEN_INT (bits));
+      emit_insn_before (pat, insn);
+      result = gen_lowpart (V4SImode, tmp2);
+    }
+
+  return result;
+}
+
 /* Convert INSN to vector mode.  */
 
 void
@@ -1116,6 +1341,12 @@ general_scalar_chain::convert_insn (rtx_insn *insn)
       PUT_MODE (src, vmode);
       break;
 
+    case ROTATE:
+    case ROTATERT:
+      src = convert_rotate (GET_CODE (src), XEXP (src, 0), XEXP (src, 1),
+			    insn);
+      break;
+
     case NEG:
       src = XEXP (src, 0);
 
@@ -1159,12 +1390,30 @@ general_scalar_chain::convert_insn (rtx_insn *insn)
       break;
 
     case COMPARE:
-      dst = gen_rtx_REG (CCmode, FLAGS_REG);
+      dst = gen_rtx_REG (CCZmode, FLAGS_REG);
       src = convert_compare (XEXP (src, 0), XEXP (src, 1), insn);
       break;
 
     case CONST_INT:
       convert_op (&src, insn);
+      break;
+
+    case VEC_SELECT:
+      if (XVECEXP (XEXP (src, 1), 0, 0) == const0_rtx)
+	src = XEXP (src, 0);
+      else if (smode == DImode)
+	{
+	  rtx tmp = gen_lowpart (V1TImode, XEXP (src, 0));
+	  dst = gen_lowpart (V1TImode, dst);
+	  src = gen_rtx_LSHIFTRT (V1TImode, tmp, GEN_INT (64));
+	}
+      else
+	{
+	  rtx tmp = XVECEXP (XEXP (src, 1), 0, 0);
+	  rtvec vec = gen_rtvec (4, tmp, tmp, tmp, tmp);
+	  rtx par = gen_rtx_PARALLEL (VOIDmode, vec);
+	  src = gen_rtx_VEC_SELECT (vmode, XEXP (src, 0), par);
+	}
       break;
 
     default:
@@ -1557,10 +1806,11 @@ timode_scalar_chain::convert_insn (rtx_insn *insn)
   switch (GET_CODE (src))
     {
     case REG:
-      PUT_MODE (src, V1TImode);
-      /* Call fix_debug_reg_uses only if SRC is never defined.  */
-      if (!DF_REG_DEF_CHAIN (REGNO (src)))
-	fix_debug_reg_uses (src);
+      if (GET_MODE (src) == TImode)
+	{
+	  PUT_MODE (src, V1TImode);
+	  fix_debug_reg_uses (src);
+	}
       break;
 
     case MEM:
@@ -1647,7 +1897,7 @@ timode_scalar_chain::convert_insn (rtx_insn *insn)
       break;
 
     case COMPARE:
-      dst = gen_rtx_REG (CCmode, FLAGS_REG);
+      dst = gen_rtx_REG (CCZmode, FLAGS_REG);
       src = convert_compare (XEXP (src, 0), XEXP (src, 1), insn);
       break;
 
@@ -1756,6 +2006,19 @@ pseudo_reg_set (rtx_insn *insn)
   return set;
 }
 
+/* Return true if the register REG is defined in a single DEF chain.
+   If it is defined in more than one DEF chains, we may not be able
+   to convert it in all chains.  */
+
+static bool
+single_def_chain_p (rtx reg)
+{
+  df_ref ref = DF_REG_DEF_CHAIN (REGNO (reg));
+  if (!ref)
+    return false;
+  return DF_REF_NEXT_REG (ref) == nullptr;
+}
+
 /* Check if comparison INSN may be transformed into vector comparison.
    Currently we transform equality/inequality checks which look like:
    (set (reg:CCZ 17 flags) (compare:CCZ (reg:TI x) (reg:TI y)))  */
@@ -1857,6 +2120,8 @@ general_scalar_to_vector_candidate_p (rtx_insn *insn, enum machine_mode mode)
 
     case ASHIFT:
     case LSHIFTRT:
+    case ROTATE:
+    case ROTATERT:
       if (!CONST_INT_P (XEXP (src, 1))
 	  || !IN_RANGE (INTVAL (XEXP (src, 1)), 0, GET_MODE_BITSIZE (mode)-1))
 	return false;
@@ -1917,6 +2182,16 @@ general_scalar_to_vector_candidate_p (rtx_insn *insn, enum machine_mode mode)
     case CONST_INT:
       return REG_P (dst);
 
+    case VEC_SELECT:
+      /* Excluding MEM_P (dst) avoids intefering with vpextr[dq].  */
+      return REG_P (dst)
+	     && REG_P (XEXP (src, 0))
+	     && GET_MODE (XEXP (src, 0)) == (mode == DImode ? V2DImode
+							    : V4SImode)
+	     && GET_CODE (XEXP (src, 1)) == PARALLEL
+	     && XVECLEN (XEXP (src, 1), 0) == 1
+	     && CONST_INT_P (XVECEXP (XEXP (src, 1), 0, 0));
+
     default:
       return false;
     }
@@ -1972,9 +2247,14 @@ timode_scalar_to_vector_candidate_p (rtx_insn *insn)
       && !TARGET_SSE_UNALIGNED_STORE_OPTIMAL)
     return false;
 
+  if (REG_P (dst) && !single_def_chain_p (dst))
+    return false;
+
   switch (GET_CODE (src))
     {
     case REG:
+      return single_def_chain_p (src);
+
     case CONST_WIDE_INT:
       return true;
 
@@ -2207,30 +2487,34 @@ convert_scalars_to_vector (bool timode_p)
       fprintf (dump_file, "There are no candidates for optimization.\n");
 
   for (unsigned i = 0; i <= 2; ++i)
-    while (!bitmap_empty_p (&candidates[i]))
-      {
-	unsigned uid = bitmap_first_set_bit (&candidates[i]);
-	scalar_chain *chain;
+    {
+      auto_bitmap disallowed;
+      bitmap_tree_view (&candidates[i]);
+      while (!bitmap_empty_p (&candidates[i]))
+	{
+	  unsigned uid = bitmap_first_set_bit (&candidates[i]);
+	  scalar_chain *chain;
 
-	if (cand_mode[i] == TImode)
-	  chain = new timode_scalar_chain;
-	else
-	  chain = new general_scalar_chain (cand_mode[i], cand_vmode[i]);
+	  if (cand_mode[i] == TImode)
+	    chain = new timode_scalar_chain;
+	  else
+	    chain = new general_scalar_chain (cand_mode[i], cand_vmode[i]);
 
-	/* Find instructions chain we want to convert to vector mode.
-	   Check all uses and definitions to estimate all required
-	   conversions.  */
-	chain->build (&candidates[i], uid);
+	  /* Find instructions chain we want to convert to vector mode.
+	     Check all uses and definitions to estimate all required
+	     conversions.  */
+	  if (chain->build (&candidates[i], uid, disallowed))
+	    {
+	      if (chain->compute_convert_gain () > 0)
+		converted_insns += chain->convert ();
+	      else if (dump_file)
+		fprintf (dump_file, "Chain #%d conversion is not profitable\n",
+			 chain->chain_id);
+	    }
 
-	if (chain->compute_convert_gain () > 0)
-	  converted_insns += chain->convert ();
-	else
-	  if (dump_file)
-	    fprintf (dump_file, "Chain #%d conversion is not profitable\n",
-		     chain->chain_id);
-
-	delete chain;
-      }
+	  delete chain;
+	}
+    }
 
   if (dump_file)
     fprintf (dump_file, "Total insns converted: %d\n", converted_insns);
@@ -2345,8 +2629,7 @@ public:
   /* opt_pass methods: */
   bool gate (function *) final override
     {
-      return TARGET_AVX && TARGET_VZEROUPPER
-	&& flag_expensive_optimizations && !optimize_size;
+      return TARGET_AVX && TARGET_VZEROUPPER;
     }
 
   unsigned int execute (function *) final override

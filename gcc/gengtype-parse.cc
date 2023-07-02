@@ -1,5 +1,5 @@
 /* Process source files and output type information.
-   Copyright (C) 2006-2022 Free Software Foundation, Inc.
+   Copyright (C) 2006-2023 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -449,6 +449,12 @@ consume_until_comma_or_eos ()
       case EOF_TOKEN:
 	parse_error ("unexpected end of file while scanning for ',' or ';'");
 	return false;
+
+      case '=':
+	advance ();
+	if (token () == '{')
+	  consume_balanced ('{', '}');
+	break;
 
       default:
 	advance ();

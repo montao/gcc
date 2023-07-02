@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -281,9 +281,6 @@ package Sem_Ch6 is
    --  is done only in some cases where the actual subtype cannot change
    --  during execution of the subprogram. By setting the actual subtype
    --  once, we avoid recomputing it unnecessarily.
-
-   procedure Set_Formal_Mode (Formal_Id : Entity_Id);
-   --  Set proper Ekind to reflect formal mode (in, out, in out)
 
    function Subtype_Conformant
      (New_Id                   : Entity_Id;

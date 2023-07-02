@@ -1,5 +1,5 @@
 /* intrinsics.cc -- D language compiler intrinsics.
-   Copyright (C) 2006-2022 Free Software Foundation, Inc.
+   Copyright (C) 2006-2023 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -1007,6 +1007,7 @@ expand_volatile_load (tree callexp)
   tree type = build_qualified_type (TREE_TYPE (ptrtype), TYPE_QUAL_VOLATILE);
   tree result = indirect_ref (type, ptr);
   TREE_THIS_VOLATILE (result) = 1;
+  TREE_SIDE_EFFECTS (result) = 1;
 
   return result;
 }
@@ -1034,6 +1035,7 @@ expand_volatile_store (tree callexp)
   tree type = build_qualified_type (TREE_TYPE (ptrtype), TYPE_QUAL_VOLATILE);
   tree result = indirect_ref (type, ptr);
   TREE_THIS_VOLATILE (result) = 1;
+  TREE_SIDE_EFFECTS (result) = 1;
 
   /* (*(volatile T *) ptr) = value;  */
   tree value = CALL_EXPR_ARG (callexp, 1);

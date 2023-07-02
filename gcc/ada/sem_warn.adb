@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1999-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1999-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -353,7 +353,7 @@ package body Sem_Warn is
             begin
                --  One argument, so check the argument
 
-               if Present (PA) and then List_Length (PA) = 1 then
+               if List_Length (PA) = 1 then
                   if Nkind (First (PA)) = N_Parameter_Association then
                      Find_Var (Explicit_Actual_Parameter (First (PA)));
                   else

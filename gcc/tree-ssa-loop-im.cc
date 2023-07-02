@@ -1,5 +1,5 @@
 /* Loop invariant motion.
-   Copyright (C) 2003-2022 Free Software Foundation, Inc.
+   Copyright (C) 2003-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -617,7 +617,8 @@ stmt_cost (gimple *stmt)
   if (gimple_code (stmt) != GIMPLE_ASSIGN)
     return 1;
 
-  switch (gimple_assign_rhs_code (stmt))
+  enum tree_code code = gimple_assign_rhs_code (stmt);
+  switch (code)
     {
     case MULT_EXPR:
     case WIDEN_MULT_EXPR:
@@ -645,6 +646,11 @@ stmt_cost (gimple *stmt)
       /* Shifts and rotates are usually expensive.  */
       return LIM_EXPENSIVE;
 
+    case COND_EXPR:
+    case VEC_COND_EXPR:
+      /* Conditionals are expensive.  */
+      return LIM_EXPENSIVE;
+
     case CONSTRUCTOR:
       /* Make vector construction cost proportional to the number
          of elements.  */
@@ -658,6 +664,9 @@ stmt_cost (gimple *stmt)
       return 0;
 
     default:
+      /* Comparisons are usually expensive.  */
+      if (TREE_CODE_CLASS (code) == tcc_comparison)
+	return LIM_EXPENSIVE;
       return 1;
     }
 }
@@ -2605,7 +2614,9 @@ sm_seq_valid_bb (class loop *loop, basic_block bb, tree vdef,
       if (data->ref == UNANALYZABLE_MEM_ID)
 	return -1;
       /* Stop at memory references which we can't move.  */
-      else if (memory_accesses.refs_list[data->ref]->mem.ref == error_mark_node)
+      else if (memory_accesses.refs_list[data->ref]->mem.ref == error_mark_node
+	       || TREE_THIS_VOLATILE
+		    (memory_accesses.refs_list[data->ref]->mem.ref))
 	{
 	  /* Mark refs_not_in_seq as unsupported.  */
 	  bitmap_ior_into (refs_not_supported, refs_not_in_seq);

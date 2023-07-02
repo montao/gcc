@@ -1,5 +1,5 @@
 /* Handling for the various __analyzer_* known functions.
-   Copyright (C) 2020-2022 Free Software Foundation, Inc.
+   Copyright (C) 2020-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -255,7 +255,7 @@ public:
     return 0;
   }
 
-  bool emit (rich_location *richloc) final override
+  bool emit (rich_location *richloc, logger *) final override
   {
     inform (richloc, "path");
     return true;

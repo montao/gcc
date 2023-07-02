@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2022 Free Software Foundation, Inc.
+/* Copyright (C) 2011-2023 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -75,14 +75,14 @@ enum aarch64_code_model {
   AARCH64_CMODEL_LARGE
 };
 
-/* Function types -msign-return-address should sign.  */
-enum aarch64_function_type {
-  /* Don't sign any function.  */
-  AARCH64_FUNCTION_NONE,
-  /* Non-leaf functions.  */
-  AARCH64_FUNCTION_NON_LEAF,
-  /* All functions.  */
-  AARCH64_FUNCTION_ALL
+/* The register to use as a thread pointer for TLS accesses.
+   tpidr_el0 by default, but can be changed through the -mtp option.  */
+enum aarch64_tp_reg {
+  AARCH64_TPIDR_EL0 = 0,
+  AARCH64_TPIDR_EL1 = 1,
+  AARCH64_TPIDR_EL2 = 2,
+  AARCH64_TPIDR_EL3 = 3,
+  AARCH64_TPIDRRO_EL0 = 4
 };
 
 /* SVE vector register sizes.  */

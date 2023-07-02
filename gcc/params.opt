@@ -1,6 +1,6 @@
 ; Parameter options of the compiler.
 
-; Copyright (C) 2019-2022 Free Software Foundation, Inc.
+; Copyright (C) 2019-2023 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -49,6 +49,10 @@ Enable asan store operations protection.
 -param=asan-instrumentation-with-call-threshold=
 Common Joined UInteger Var(param_asan_instrumentation_with_call_threshold) Init(7000) Param Optimization
 Use callbacks instead of inline code if number of accesses in function becomes greater or equal to this number.
+
+-param=asan-kernel-mem-intrinsic-prefix=
+Common Joined UInteger Var(param_asan_kernel_mem_intrinsic_prefix) Init(0) IntegerRange(0, 1) Param Optimization
+Prefix calls to memcpy, memset and memmove with __asan_ or __hwasan_ for -fsanitize=kernel-address or -fsanitize=kernel-hwaddress.
 
 -param=asan-memintrin=
 Common Joined UInteger Var(param_asan_memintrin) Init(1) IntegerRange(0, 1) Param Optimization
@@ -126,21 +130,9 @@ Maximum size (in bytes) of objects tracked bytewise by dead store elimination.
 Common Joined UInteger Var(param_early_inlining_insns) Init(6) Optimization Param
 Maximal estimated growth of function body caused by early inlining of single call.
 
--param=evrp-sparse-threshold=
-Common Joined UInteger Var(param_evrp_sparse_threshold) Init(800) Optimization Param
-Maximum number of basic blocks before EVRP uses a sparse cache.
-
--param=evrp-switch-limit=
-Common Joined UInteger Var(param_evrp_switch_limit) Init(50) Optimization Param
-Maximum number of outgoing edges in a switch before EVRP will not process it.
-
--param=fsm-scale-path-blocks=
-Common Joined UInteger Var(param_fsm_scale_path_blocks) Init(3) IntegerRange(1, 10) Param Optimization
-Scale factor to apply to the number of blocks in a threading path when comparing to the number of (scaled) statements.
-
 -param=fsm-scale-path-stmts=
 Common Joined UInteger Var(param_fsm_scale_path_stmts) Init(2) IntegerRange(1, 10) Param Optimization
-Scale factor to apply to the number of statements in a threading path when comparing to the number of (scaled) blocks.
+Scale factor to apply to the number of statements in a threading path crossing a loop backedge when comparing to max-jump-thread-duplication-stmts.
 
 -param=gcse-after-reload-critical-fraction=
 Common Joined UInteger Var(param_gcse_after_reload_critical_fraction) Init(10) Param Optimization
@@ -306,6 +298,10 @@ The number of registers in each class kept unused by loop invariant motion.
 Common Joined UInteger Var(param_ira_max_conflict_table_size) Init(1000) Param Optimization
 Max size of conflict table in MB.
 
+-param=ira-simple-lra-insn-threshold=
+Common Joined UInteger Var(param_ira_simple_lra_insn_threshold) Init(1000) Param Optimization
+Approximate function insn number in 1K units triggering simple local RA.
+
 -param=ira-max-loops-num=
 Common Joined UInteger Var(param_ira_max_loops_num) Init(100) Param Optimization
 Max loops number for regional RA.
@@ -327,11 +323,11 @@ Common Joined UInteger Var(param_iv_max_considered_uses) Init(250) Param Optimiz
 Bound on number of iv uses in loop optimized in iv optimizations.
 
 -param=jump-table-max-growth-ratio-for-size=
-Common Joined UInteger Var(param_jump_table_max_growth_ratio_for_size) Init(300) Param Optimization
+Common Joined UInteger Var(param_jump_table_max_growth_ratio_for_size) Init(300) IntegerRange(0, 10000) Param Optimization
 The maximum code size growth ratio when expanding into a jump table (in percent).  The parameter is used when optimizing for size.
 
 -param=jump-table-max-growth-ratio-for-speed=
-Common Joined UInteger Var(param_jump_table_max_growth_ratio_for_speed) Init(800) Param Optimization
+Common Joined UInteger Var(param_jump_table_max_growth_ratio_for_speed) Init(800) IntegerRange(0, 10000) Param Optimization
 The maximum code size growth ratio when expanding into a jump table (in percent).  The parameter is used when optimizing for speed.
 
 -param=l1-cache-line-size=
@@ -904,6 +900,11 @@ Common Joined UInteger Var(param_ranger_logical_depth) Init(6) IntegerRange(1, 9
 Maximum depth of logical expression evaluation ranger will look through when
 evaluating outgoing edge ranges.
 
+-param=ranger-recompute-depth=
+Common Joined UInteger Var(param_ranger_recompute_depth) Init(5) IntegerRange(1, 100) Param Optimization
+Maximum depth of instruction chains to consider for recomputation in the
+outgoing range calculator.
+
 -param=relation-block-limit=
 Common Joined UInteger Var(param_relation_block_limit) Init(200) IntegerRange(0, 9999) Param Optimization
 Maximum number of relations the oracle will register in a basic block.
@@ -1090,7 +1091,7 @@ Common Joined UInteger Var(param_tracer_min_branch_ratio) Init(10) IntegerRange(
 Stop reverse growth if the reverse probability of best edge is less than this threshold (in percent).
 
 -param=tree-reassoc-width=
-Common Joined UInteger Var(param_tree_reassoc_width) Param Optimization
+Common Joined UInteger Var(param_tree_reassoc_width) IntegerRange(0, 256) Param Optimization
 Set the maximum number of instructions executed in parallel in reassociated tree.  If 0, use the target dependent heuristic.
 
 -param=tsan-distinguish-volatile=
@@ -1170,7 +1171,19 @@ Common Joined UInteger Var(param_vect_inner_loop_cost_factor) Init(50) IntegerRa
 The maximum factor which the loop vectorizer applies to the cost of statements in an inner loop relative to the loop being vectorized.
 
 -param=vect-induction-float=
-Common Joined UInteger Var(param_vect_induction_float) Init(1) IntegerRage(0, 1) Param Optimization
+Common Joined UInteger Var(param_vect_induction_float) Init(1) IntegerRange(0, 1) Param Optimization
 Enable loop vectorization of floating point inductions.
+
+-param=vrp-sparse-threshold=
+Common Joined UInteger Var(param_vrp_sparse_threshold) Init(3000) Optimization Param
+Maximum number of basic blocks before VRP uses a sparse bitmap cache.
+
+-param=vrp-switch-limit=
+Common Joined UInteger Var(param_vrp_switch_limit) Init(50) Optimization Param
+Maximum number of outgoing edges in a switch before VRP will not process it.
+
+-param=vrp-vector-threshold=
+Common Joined UInteger Var(param_vrp_vector_threshold) Init(250) Optimization Param
+Maximum number of basic blocks for VRP to use a basic cache vector.
 
 ; This comment is to ensure we retain the blank line above.

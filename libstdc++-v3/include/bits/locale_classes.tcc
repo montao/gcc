@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 2007-2022 Free Software Foundation, Inc.
+// Copyright (C) 2007-2023 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -128,9 +128,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       _GLIBCXX_STD_FACET(time_get<wchar_t>);
       _GLIBCXX_STD_FACET(time_put<wchar_t>);
       _GLIBCXX_STD_FACET(messages<wchar_t>);
-#endif
-#ifdef _GLIBCXX_USE_CHAR8_T
-      _GLIBCXX_STD_FACET(codecvt<char8_t, char, mbstate_t>);
 #endif
 #if __cplusplus >= 201103L
       _GLIBCXX_STD_FACET(codecvt<char16_t, char, mbstate_t>);

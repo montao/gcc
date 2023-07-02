@@ -1,5 +1,5 @@
 ;; Machine description for AArch64 processor synchronization primitives.
-;; Copyright (C) 2009-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2009-2023 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -705,13 +705,13 @@
 )
 
 (define_insn "*aarch64_atomic_load<ALLX:mode>_rcpc_zext"
-  [(set (match_operand:GPI 0 "register_operand" "=r")
-    (zero_extend:GPI
+  [(set (match_operand:SD_HSDI 0 "register_operand" "=r")
+    (zero_extend:SD_HSDI
       (unspec_volatile:ALLX
         [(match_operand:ALLX 1 "aarch64_sync_memory_operand" "Q")
          (match_operand:SI 2 "const_int_operand")]			;; model
        UNSPECV_LDAP)))]
-  "TARGET_RCPC && (<GPI:sizen> > <ALLX:sizen>)"
+  "TARGET_RCPC && (<SD_HSDI:sizen> > <ALLX:sizen>)"
   "ldapr<ALLX:atomic_sfx>\t%w0, %1"
 )
 

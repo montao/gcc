@@ -1,5 +1,5 @@
 /* Part of CPP library.
-   Copyright (C) 1997-2022 Free Software Foundation, Inc.
+   Copyright (C) 1997-2023 Free Software Foundation, Inc.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -686,7 +686,7 @@ inline bool _cpp_maybe_notify_macro_use (cpp_reader *pfile, cpp_hashnode *node,
 }
 extern cpp_macro *_cpp_new_macro (cpp_reader *, cpp_macro_kind, void *);
 extern void _cpp_free_definition (cpp_hashnode *);
-extern bool _cpp_create_definition (cpp_reader *, cpp_hashnode *);
+extern bool _cpp_create_definition (cpp_reader *, cpp_hashnode *, location_t);
 extern void _cpp_pop_context (cpp_reader *);
 extern void _cpp_push_text_context (cpp_reader *, cpp_hashnode *,
 				    const unsigned char *, size_t);

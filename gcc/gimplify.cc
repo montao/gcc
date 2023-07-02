@@ -1,6 +1,6 @@
 /* Tree lowering pass.  This pass converts the GENERIC functions-as-trees
    tree representation into the GIMPLE form.
-   Copyright (C) 2002-2022 Free Software Foundation, Inc.
+   Copyright (C) 2002-2023 Free Software Foundation, Inc.
    Major work done by Sebastian Pop <s.pop@laposte.net>,
    Diego Novillo <dnovillo@redhat.com> and Jason Merrill <jason@redhat.com>.
 
@@ -1491,7 +1491,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	      if (DECL_HAS_VALUE_EXPR_P (key))
 		{
 		  key = DECL_VALUE_EXPR (key);
-		  if (TREE_CODE (key) == INDIRECT_REF)
+		  if (INDIRECT_REF_P (key))
 		    key = TREE_OPERAND (key, 0);
 		}
 	      tree *c = oacc_declare_returns->get (key);
@@ -1625,7 +1625,7 @@ gimplify_return_expr (tree stmt, gimple_seq *pre_p)
       result_decl = TREE_OPERAND (ret_expr, 0);
 
       /* See through a return by reference.  */
-      if (TREE_CODE (result_decl) == INDIRECT_REF)
+      if (INDIRECT_REF_P (result_decl))
 	result_decl = TREE_OPERAND (result_decl, 0);
 
       gcc_assert ((TREE_CODE (ret_expr) == MODIFY_EXPR
@@ -1775,9 +1775,9 @@ gimple_add_init_for_auto_var (tree decl,
 
   else
     {
-      char *decl_name_anonymous = xasprintf ("D.%u", DECL_UID (decl));
+      char decl_name_anonymous[3 + (HOST_BITS_PER_INT + 2) / 3];
+      sprintf (decl_name_anonymous, "D.%u", DECL_UID (decl));
       decl_name = build_string_literal (decl_name_anonymous);
-      free (decl_name_anonymous);
     }
 
   tree call = build_call_expr_internal_loc (loc, IFN_DEFERRED_INIT,
@@ -1812,7 +1812,7 @@ gimple_add_padding_init_for_auto_var (tree decl, bool is_vla,
       /* The temporary address variable for this vla should be
 	 created in gimplify_vla_decl.  */
       gcc_assert (DECL_HAS_VALUE_EXPR_P (decl));
-      gcc_assert (TREE_CODE (DECL_VALUE_EXPR (decl)) == INDIRECT_REF);
+      gcc_assert (INDIRECT_REF_P (DECL_VALUE_EXPR (decl)));
       addr_of_decl = TREE_OPERAND (DECL_VALUE_EXPR (decl), 0);
     }
   else
@@ -3264,6 +3264,11 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	    }
 	  need_non_reg = true;
 	}
+      else if (!is_gimple_reg_type (TREE_TYPE (t)))
+	/* When the result of an operation, in particular a VIEW_CONVERT_EXPR
+	   is a non-register type then require the base object to be a
+	   non-register as well.  */
+	need_non_reg = true;
     }
 
   /* Step 2 is to gimplify the base expression.  Make sure lvalue is set
@@ -3281,15 +3286,21 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
   if (need_non_reg && (fallback & fb_rvalue))
     prepare_gimple_addressable (p, pre_p);
 
-  /* Step 3: gimplify size expressions and the indices and operands of
-     ARRAY_REF.  During this loop we also remove any useless conversions.  */
 
+  /* Step 3: gimplify size expressions and the indices and operands of
+     ARRAY_REF.  During this loop we also remove any useless conversions.
+     If we operate on a register also make sure to properly gimplify
+     to individual operations.  */
+
+  bool reg_operations = is_gimple_reg (*p);
   for (; expr_stack.length () > 0; )
     {
       tree t = expr_stack.pop ();
 
       if (TREE_CODE (t) == ARRAY_REF || TREE_CODE (t) == ARRAY_RANGE_REF)
 	{
+	  gcc_assert (!reg_operations);
+
 	  /* Gimplify the low bound and element type size. */
 	  tret = gimplify_expr (&TREE_OPERAND (t, 2), pre_p, post_p,
 				is_gimple_reg, fb_rvalue);
@@ -3306,8 +3317,16 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	}
       else if (TREE_CODE (t) == COMPONENT_REF)
 	{
+	  gcc_assert (!reg_operations);
+
 	  tret = gimplify_expr (&TREE_OPERAND (t, 2), pre_p, post_p,
 				is_gimple_reg, fb_rvalue);
+	  ret = MIN (ret, tret);
+	}
+      else if (reg_operations)
+	{
+	  tret = gimplify_expr (&TREE_OPERAND (t, 0), pre_p, post_p,
+				is_gimple_val, fb_rvalue);
 	  ret = MIN (ret, tret);
 	}
 
@@ -5234,7 +5253,8 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	    && TREE_READONLY (object)
 	    && VAR_P (object)
 	    && !DECL_REGISTER (object)
-	    && (flag_merge_constants >= 2 || !TREE_ADDRESSABLE (object))
+	    && (flag_merge_constants >= 2 || !TREE_ADDRESSABLE (object)
+		|| DECL_MERGEABLE (object))
 	    /* For ctors that have many repeated nonzero elements
 	       represented through RANGE_EXPRs, prefer initializing
 	       those through runtime loops over copies of large amounts
@@ -6441,7 +6461,7 @@ gimplify_save_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
   gcc_assert (TREE_CODE (*expr_p) == SAVE_EXPR);
   val = TREE_OPERAND (*expr_p, 0);
 
-  if (TREE_TYPE (val) == error_mark_node)
+  if (val && TREE_TYPE (val) == error_mark_node)
     return GS_ERROR;
 
   /* If the SAVE_EXPR has not been resolved, then evaluate it once.  */
@@ -6571,7 +6591,7 @@ gimplify_addr_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 
       /* For various reasons, the gimplification of the expression
 	 may have made a new INDIRECT_REF.  */
-      if (TREE_CODE (op0) == INDIRECT_REF
+      if (INDIRECT_REF_P (op0)
 	  || (TREE_CODE (op0) == MEM_REF
 	      && integer_zerop (TREE_OPERAND (op0, 1))))
 	goto do_indirect_ref;
@@ -6915,7 +6935,12 @@ gimplify_asm_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
       stmt = gimple_build_asm_vec (TREE_STRING_POINTER (ASM_STRING (expr)),
 				   inputs, outputs, clobbers, labels);
 
-      gimple_asm_set_volatile (stmt, ASM_VOLATILE_P (expr) || noutputs == 0);
+      /* asm is volatile if it was marked by the user as volatile or
+	 there are no outputs or this is an asm goto.  */
+      gimple_asm_set_volatile (stmt,
+			       ASM_VOLATILE_P (expr)
+			       || noutputs == 0
+			       || labels);
       gimple_asm_set_input (stmt, ASM_INPUT_P (expr));
       gimple_asm_set_inline (stmt, ASM_INLINE_P (expr));
 
@@ -7154,8 +7179,10 @@ gimplify_target_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	gimplify_and_add (init, &init_pre_p);
 
       /* Add a clobber for the temporary going out of scope, like
-	 gimplify_bind_expr.  */
+	 gimplify_bind_expr.  But only if we did not promote the
+	 temporary to static storage.  */
       if (gimplify_ctxp->in_cleanup_point_expr
+	  && !TREE_STATIC (temp)
 	  && needs_to_live_in_memory (temp))
 	{
 	  if (flag_stack_reuse == SR_ALL)
@@ -7381,7 +7408,7 @@ omp_add_variable (struct gimplify_omp_ctx *ctx, tree decl, unsigned int flags)
 	    nflags = GOVD_FIRSTPRIVATE;
 	  nflags |= flags & GOVD_SEEN;
 	  t = DECL_VALUE_EXPR (decl);
-	  gcc_assert (TREE_CODE (t) == INDIRECT_REF);
+	  gcc_assert (INDIRECT_REF_P (t));
 	  t = TREE_OPERAND (t, 0);
 	  gcc_assert (DECL_P (t));
 	  omp_add_variable (ctx, t, nflags);
@@ -7904,6 +7931,11 @@ omp_notice_variable (struct gimplify_omp_ctx *ctx, tree decl, bool in_code)
 		  else if (ctx->defaultmap[gdmk]
 			   & (GOVD_MAP_0LEN_ARRAY | GOVD_FIRSTPRIVATE))
 		    nflags |= ctx->defaultmap[gdmk];
+		  else if (ctx->defaultmap[gdmk] & GOVD_MAP_FORCE_PRESENT)
+		    {
+		      gcc_assert (ctx->defaultmap[gdmk] & GOVD_MAP);
+		      nflags |= ctx->defaultmap[gdmk] | GOVD_MAP_ALLOC_ONLY;
+		    }
 		  else
 		    {
 		      gcc_assert (ctx->defaultmap[gdmk] & GOVD_MAP);
@@ -8014,7 +8046,7 @@ omp_notice_variable (struct gimplify_omp_ctx *ctx, tree decl, bool in_code)
 	{
 	  splay_tree_node n2;
 	  tree t = DECL_VALUE_EXPR (decl);
-	  gcc_assert (TREE_CODE (t) == INDIRECT_REF);
+	  gcc_assert (INDIRECT_REF_P (t));
 	  t = TREE_OPERAND (t, 0);
 	  gcc_assert (DECL_P (t));
 	  n2 = splay_tree_lookup (ctx->variables, (splay_tree_key) t);
@@ -8958,6 +8990,22 @@ enum omp_tsort_mark {
   PERMANENT
 };
 
+/* Hash for trees based on operand_equal_p.  Like tree_operand_hash
+   but ignores side effects in the equality comparisons.  */
+
+struct tree_operand_hash_no_se : tree_operand_hash
+{
+  static inline bool equal (const value_type &,
+			    const compare_type &);
+};
+
+inline bool
+tree_operand_hash_no_se::equal (const value_type &t1,
+				const compare_type &t2)
+{
+  return operand_equal_p (t1, t2, OEP_MATCH_SIDE_EFFECTS);
+}
+
 /* A group of OMP_CLAUSE_MAP nodes that correspond to a single "map"
    clause.  */
 
@@ -8991,7 +9039,7 @@ omp_get_base_pointer (tree expr)
 	 || TREE_CODE (expr) == COMPONENT_REF)
     expr = TREE_OPERAND (expr, 0);
 
-  if (TREE_CODE (expr) == INDIRECT_REF
+  if (INDIRECT_REF_P (expr)
       || (TREE_CODE (expr) == MEM_REF
 	  && integer_zerop (TREE_OPERAND (expr, 1))))
     {
@@ -9015,7 +9063,7 @@ static tree
 omp_strip_components_and_deref (tree expr)
 {
   while (TREE_CODE (expr) == COMPONENT_REF
-	 || TREE_CODE (expr) == INDIRECT_REF
+	 || INDIRECT_REF_P (expr)
 	 || (TREE_CODE (expr) == MEM_REF
 	     && integer_zerop (TREE_OPERAND (expr, 1)))
 	 || TREE_CODE (expr) == POINTER_PLUS_EXPR
@@ -9033,7 +9081,7 @@ omp_strip_components_and_deref (tree expr)
 static tree
 omp_strip_indirections (tree expr)
 {
-  while (TREE_CODE (expr) == INDIRECT_REF
+  while (INDIRECT_REF_P (expr)
 	 || (TREE_CODE (expr) == MEM_REF
 	     && integer_zerop (TREE_OPERAND (expr, 1))))
     expr = TREE_OPERAND (expr, 0);
@@ -9062,6 +9110,13 @@ omp_get_attachment (omp_mapping_group *grp)
     case GOMP_MAP_FORCE_TO:
     case GOMP_MAP_FORCE_TOFROM:
     case GOMP_MAP_FORCE_PRESENT:
+    case GOMP_MAP_PRESENT_ALLOC:
+    case GOMP_MAP_PRESENT_FROM:
+    case GOMP_MAP_PRESENT_TO:
+    case GOMP_MAP_PRESENT_TOFROM:
+    case GOMP_MAP_ALWAYS_PRESENT_FROM:
+    case GOMP_MAP_ALWAYS_PRESENT_TO:
+    case GOMP_MAP_ALWAYS_PRESENT_TOFROM:
     case GOMP_MAP_ALLOC:
     case GOMP_MAP_RELEASE:
     case GOMP_MAP_DELETE:
@@ -9293,6 +9348,13 @@ omp_group_base (omp_mapping_group *grp, unsigned int *chained,
     case GOMP_MAP_FORCE_TO:
     case GOMP_MAP_FORCE_TOFROM:
     case GOMP_MAP_FORCE_PRESENT:
+    case GOMP_MAP_PRESENT_ALLOC:
+    case GOMP_MAP_PRESENT_FROM:
+    case GOMP_MAP_PRESENT_TO:
+    case GOMP_MAP_PRESENT_TOFROM:
+    case GOMP_MAP_ALWAYS_PRESENT_FROM:
+    case GOMP_MAP_ALWAYS_PRESENT_TO:
+    case GOMP_MAP_ALWAYS_PRESENT_TOFROM:
     case GOMP_MAP_ALLOC:
     case GOMP_MAP_RELEASE:
     case GOMP_MAP_DELETE:
@@ -9400,10 +9462,10 @@ omp_group_base (omp_mapping_group *grp, unsigned int *chained,
 }
 
 /* Given a vector of omp_mapping_groups, build a hash table so we can look up
-   nodes by tree_operand_hash.  */
+   nodes by tree_operand_hash_no_se.  */
 
 static void
-omp_index_mapping_groups_1 (hash_map<tree_operand_hash,
+omp_index_mapping_groups_1 (hash_map<tree_operand_hash_no_se,
 				     omp_mapping_group *> *grpmap,
 			    vec<omp_mapping_group> *groups,
 			    tree reindex_sentinel)
@@ -9432,7 +9494,6 @@ omp_index_mapping_groups_1 (hash_map<tree_operand_hash,
 	   node = OMP_CLAUSE_CHAIN (node), j++)
 	{
 	  tree decl = OMP_CLAUSE_DECL (node);
-
 	  /* Sometimes we see zero-offset MEM_REF instead of INDIRECT_REF,
 	     meaning node-hash lookups don't work.  This is a workaround for
 	     that, but ideally we should just create the INDIRECT_REF at
@@ -9478,11 +9539,11 @@ omp_index_mapping_groups_1 (hash_map<tree_operand_hash,
     }
 }
 
-static hash_map<tree_operand_hash, omp_mapping_group *> *
+static hash_map<tree_operand_hash_no_se, omp_mapping_group *> *
 omp_index_mapping_groups (vec<omp_mapping_group> *groups)
 {
-  hash_map<tree_operand_hash, omp_mapping_group *> *grpmap
-    = new hash_map<tree_operand_hash, omp_mapping_group *>;
+  hash_map<tree_operand_hash_no_se, omp_mapping_group *> *grpmap
+    = new hash_map<tree_operand_hash_no_se, omp_mapping_group *>;
 
   omp_index_mapping_groups_1 (grpmap, groups, NULL_TREE);
 
@@ -9502,14 +9563,14 @@ omp_index_mapping_groups (vec<omp_mapping_group> *groups)
    so, we can do the reindex operation in two parts, on the processed and
    then the unprocessed halves of the list.  */
 
-static hash_map<tree_operand_hash, omp_mapping_group *> *
+static hash_map<tree_operand_hash_no_se, omp_mapping_group *> *
 omp_reindex_mapping_groups (tree *list_p,
 			    vec<omp_mapping_group> *groups,
 			    vec<omp_mapping_group> *processed_groups,
 			    tree sentinel)
 {
-  hash_map<tree_operand_hash, omp_mapping_group *> *grpmap
-    = new hash_map<tree_operand_hash, omp_mapping_group *>;
+  hash_map<tree_operand_hash_no_se, omp_mapping_group *> *grpmap
+    = new hash_map<tree_operand_hash_no_se, omp_mapping_group *>;
 
   processed_groups->truncate (0);
 
@@ -9550,7 +9611,7 @@ omp_containing_struct (tree expr)
    that maps that structure, if present.  */
 
 static bool
-omp_mapped_by_containing_struct (hash_map<tree_operand_hash,
+omp_mapped_by_containing_struct (hash_map<tree_operand_hash_no_se,
 					  omp_mapping_group *> *grpmap,
 				 tree decl,
 				 omp_mapping_group **mapped_by_group)
@@ -9590,8 +9651,8 @@ omp_mapped_by_containing_struct (hash_map<tree_operand_hash,
 static bool
 omp_tsort_mapping_groups_1 (omp_mapping_group ***outlist,
 			    vec<omp_mapping_group> *groups,
-			    hash_map<tree_operand_hash, omp_mapping_group *>
-			      *grpmap,
+			    hash_map<tree_operand_hash_no_se,
+				     omp_mapping_group *> *grpmap,
 			    omp_mapping_group *grp)
 {
   if (grp->mark == PERMANENT)
@@ -9670,7 +9731,7 @@ omp_tsort_mapping_groups_1 (omp_mapping_group ***outlist,
 
 static omp_mapping_group *
 omp_tsort_mapping_groups (vec<omp_mapping_group> *groups,
-			  hash_map<tree_operand_hash, omp_mapping_group *>
+			  hash_map<tree_operand_hash_no_se, omp_mapping_group *>
 			    *grpmap)
 {
   omp_mapping_group *grp, *outlist = NULL, **cursor;
@@ -9986,7 +10047,7 @@ omp_check_mapping_compatibility (location_t loc,
 
 void
 oacc_resolve_clause_dependencies (vec<omp_mapping_group> *groups,
-				  hash_map<tree_operand_hash,
+				  hash_map<tree_operand_hash_no_se,
 					   omp_mapping_group *> *grpmap)
 {
   int i;
@@ -10249,7 +10310,7 @@ omp_accumulate_sibling_list (enum omp_region_type region_type,
   while (TREE_CODE (ocd) == ARRAY_REF)
     ocd = TREE_OPERAND (ocd, 0);
 
-  if (TREE_CODE (ocd) == INDIRECT_REF)
+  if (INDIRECT_REF_P (ocd))
     ocd = TREE_OPERAND (ocd, 0);
 
   tree base = extract_base_bit_offset (ocd, &cbitpos, &coffset);
@@ -10341,11 +10402,10 @@ omp_accumulate_sibling_list (enum omp_region_type region_type,
 	  tree c2 = build_omp_clause (OMP_CLAUSE_LOCATION (grp_end),
 				      OMP_CLAUSE_MAP);
 	  bool base_ref
-	    = (TREE_CODE (base) == INDIRECT_REF
+	    = (INDIRECT_REF_P (base)
 	       && ((TREE_CODE (TREE_TYPE (TREE_OPERAND (base, 0)))
 		    == REFERENCE_TYPE)
-		   || ((TREE_CODE (TREE_OPERAND (base, 0))
-			== INDIRECT_REF)
+		   || (INDIRECT_REF_P (TREE_OPERAND (base, 0))
 		       && (TREE_CODE (TREE_TYPE (TREE_OPERAND
 						  (TREE_OPERAND (base, 0), 0)))
 			   == REFERENCE_TYPE))));
@@ -10407,7 +10467,7 @@ omp_accumulate_sibling_list (enum omp_region_type region_type,
 		    || TREE_CODE (TREE_TYPE (sc_decl)) != ARRAY_TYPE)
 		  break;
 	      }
-	    else if (TREE_CODE (sc_decl) == INDIRECT_REF
+	    else if (INDIRECT_REF_P (sc_decl)
 		     && TREE_CODE (TREE_OPERAND (sc_decl, 0)) == COMPONENT_REF
 		     && (TREE_CODE (TREE_TYPE (TREE_OPERAND (sc_decl, 0)))
 			 == REFERENCE_TYPE))
@@ -10520,8 +10580,8 @@ static bool
 omp_build_struct_sibling_lists (enum tree_code code,
 				enum omp_region_type region_type,
 				vec<omp_mapping_group> *groups,
-				hash_map<tree_operand_hash, omp_mapping_group *>
-				  **grpmap,
+				hash_map<tree_operand_hash_no_se,
+					 omp_mapping_group *> **grpmap,
 				tree *list_p)
 {
   unsigned i;
@@ -10577,7 +10637,7 @@ omp_build_struct_sibling_lists (enum tree_code code,
 	    decl = d;
 	}
       if (d == decl
-	  && TREE_CODE (decl) == INDIRECT_REF
+	  && INDIRECT_REF_P (decl)
 	  && TREE_CODE (TREE_OPERAND (decl, 0)) == COMPONENT_REF
 	  && (TREE_CODE (TREE_TYPE (TREE_OPERAND (decl, 0)))
 	      == REFERENCE_TYPE)
@@ -10707,7 +10767,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 {
   struct gimplify_omp_ctx *ctx, *outer_ctx;
   tree c;
-  tree *prev_list_p = NULL, *orig_list_p = list_p;
+  tree *orig_list_p = list_p;
   int handled_depend_iterators = -1;
   int nowait = -1;
 
@@ -10747,7 +10807,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
       groups = omp_gather_mapping_groups (list_p);
       if (groups)
 	{
-	  hash_map<tree_operand_hash, omp_mapping_group *> *grpmap;
+	  hash_map<tree_operand_hash_no_se, omp_mapping_group *> *grpmap;
 	  grpmap = omp_index_mapping_groups (groups);
 
 	  omp_build_struct_sibling_lists (code, region_type, groups, &grpmap,
@@ -10776,6 +10836,50 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	  delete grpmap;
 	  delete groups;
 	}
+
+      /* OpenMP map clauses with 'present' need to go in front of those
+	 without.  */
+      tree present_map_head = NULL;
+      tree *present_map_tail_p = &present_map_head;
+      tree *first_map_clause_p = NULL;
+
+      for (tree *c_p = list_p; *c_p; )
+	{
+	  tree c = *c_p;
+	  tree *next_c_p = &OMP_CLAUSE_CHAIN (c);
+
+	  if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_MAP)
+	    {
+	      if (!first_map_clause_p)
+		first_map_clause_p = c_p;
+	      switch (OMP_CLAUSE_MAP_KIND (c))
+		{
+		case GOMP_MAP_PRESENT_ALLOC:
+		case GOMP_MAP_PRESENT_FROM:
+		case GOMP_MAP_PRESENT_TO:
+		case GOMP_MAP_PRESENT_TOFROM:
+		  next_c_p = c_p;
+		  *c_p = OMP_CLAUSE_CHAIN (c);
+
+		  OMP_CLAUSE_CHAIN (c) = NULL;
+		  *present_map_tail_p = c;
+		  present_map_tail_p = &OMP_CLAUSE_CHAIN (c);
+
+		  break;
+
+		default:
+		  break;
+		}
+	    }
+
+	  c_p = next_c_p;
+	}
+      if (first_map_clause_p && present_map_head)
+	{
+	  tree next = *first_map_clause_p;
+	  *first_map_clause_p = present_map_head;
+	  *present_map_tail_p = next;
+	}
     }
   else if (region_type & ORT_ACC)
     {
@@ -10783,7 +10887,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
       groups = omp_gather_mapping_groups (list_p);
       if (groups)
 	{
-	  hash_map<tree_operand_hash, omp_mapping_group *> *grpmap;
+	  hash_map<tree_operand_hash_no_se, omp_mapping_group *> *grpmap;
 	  grpmap = omp_index_mapping_groups (groups);
 
 	  oacc_resolve_clause_dependencies (groups, grpmap);
@@ -11134,31 +11238,6 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	    default:
 	      break;
 	    }
-	  /* For Fortran, not only the pointer to the data is mapped but also
-	     the address of the pointer, the array descriptor etc.; for
-	     'exit data' - and in particular for 'delete:' - having an 'alloc:'
-	     does not make sense.  Likewise, for 'update' only transferring the
-	     data itself is needed as the rest has been handled in previous
-	     directives.  However, for 'exit data', the array descriptor needs
-	     to be delete; hence, we turn the MAP_TO_PSET into a MAP_DELETE.
-
-	     NOTE: Generally, it is not safe to perform "enter data" operations
-	     on arrays where the data *or the descriptor* may go out of scope
-	     before a corresponding "exit data" operation -- and such a
-	     descriptor may be synthesized temporarily, e.g. to pass an
-	     explicit-shape array to a function expecting an assumed-shape
-	     argument.  Performing "enter data" inside the called function
-	     would thus be problematic.  */
-	  if (code == OMP_TARGET_EXIT_DATA
-	      && OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_TO_PSET)
-	    OMP_CLAUSE_SET_MAP_KIND (c, OMP_CLAUSE_MAP_KIND (*prev_list_p)
-					== GOMP_MAP_DELETE
-					? GOMP_MAP_DELETE : GOMP_MAP_RELEASE);
-	  else if ((code == OMP_TARGET_EXIT_DATA || code == OMP_TARGET_UPDATE)
-		   && (OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_POINTER
-		       || OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_TO_PSET))
-	    remove = true;
-
 	  if (remove)
 	    break;
 	  if (DECL_P (decl) && outer_ctx && (region_type & ORT_ACC))
@@ -11418,21 +11497,6 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 		  remove = true;
 		  break;
 		}
-
-	      if (!remove
-		  && OMP_CLAUSE_MAP_KIND (c) != GOMP_MAP_ALWAYS_POINTER
-		  && OMP_CLAUSE_MAP_KIND (c) != GOMP_MAP_ATTACH_DETACH
-		  && OMP_CLAUSE_MAP_KIND (c) != GOMP_MAP_TO_PSET
-		  && OMP_CLAUSE_CHAIN (c)
-		  && OMP_CLAUSE_CODE (OMP_CLAUSE_CHAIN (c)) == OMP_CLAUSE_MAP
-		  && ((OMP_CLAUSE_MAP_KIND (OMP_CLAUSE_CHAIN (c))
-		       == GOMP_MAP_ALWAYS_POINTER)
-		      || (OMP_CLAUSE_MAP_KIND (OMP_CLAUSE_CHAIN (c))
-			  == GOMP_MAP_ATTACH_DETACH)
-		      || (OMP_CLAUSE_MAP_KIND (OMP_CLAUSE_CHAIN (c))
-			  == GOMP_MAP_TO_PSET)))
-		prev_list_p = list_p;
-
 	      break;
 	    }
 	  flags = GOVD_MAP | GOVD_EXPLICIT;
@@ -11972,6 +12036,9 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	      case OMP_CLAUSE_DEFAULTMAP_NONE:
 		ctx->defaultmap[gdmk] = 0;
 		break;
+	      case OMP_CLAUSE_DEFAULTMAP_PRESENT:
+		ctx->defaultmap[gdmk] = GOVD_MAP | GOVD_MAP_FORCE_PRESENT;
+		break;
 	      case OMP_CLAUSE_DEFAULTMAP_DEFAULT:
 		switch (gdmk)
 		  {
@@ -12416,6 +12483,9 @@ gimplify_adjust_omp_clauses_1 (splay_tree_node n, void *data)
 	case GOVD_MAP_FORCE_PRESENT:
 	  kind = GOMP_MAP_FORCE_PRESENT;
 	  break;
+	case GOVD_MAP_FORCE_PRESENT | GOVD_MAP_ALLOC_ONLY:
+	  kind = GOMP_MAP_FORCE_PRESENT;
+	  break;
 	default:
 	  gcc_unreachable ();
 	}
@@ -12428,7 +12498,7 @@ gimplify_adjust_omp_clauses_1 (splay_tree_node n, void *data)
 	  && TREE_CODE (DECL_SIZE (decl)) != INTEGER_CST)
 	{
 	  tree decl2 = DECL_VALUE_EXPR (decl);
-	  gcc_assert (TREE_CODE (decl2) == INDIRECT_REF);
+	  gcc_assert (INDIRECT_REF_P (decl2));
 	  decl2 = TREE_OPERAND (decl2, 0);
 	  gcc_assert (DECL_P (decl2));
 	  tree mem = build_simple_mem_ref (decl2);
@@ -12717,7 +12787,7 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 
 	case OMP_CLAUSE_HAS_DEVICE_ADDR:
 	  decl = OMP_CLAUSE_DECL (c);
-	  while (TREE_CODE (decl) == INDIRECT_REF
+	  while (INDIRECT_REF_P (decl)
 		 || TREE_CODE (decl) == ARRAY_REF)
 	    decl = TREE_OPERAND (decl, 0);
 	  n = splay_tree_lookup (ctx->variables, (splay_tree_key) decl);
@@ -12732,6 +12802,17 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	  break;
 
 	case OMP_CLAUSE_MAP:
+	  switch (OMP_CLAUSE_MAP_KIND (c))
+	    {
+	    case GOMP_MAP_PRESENT_ALLOC:
+	    case GOMP_MAP_PRESENT_TO:
+	    case GOMP_MAP_PRESENT_FROM:
+	    case GOMP_MAP_PRESENT_TOFROM:
+	      OMP_CLAUSE_SET_MAP_KIND (c, GOMP_MAP_FORCE_PRESENT);
+	      break;
+	    default:
+	      break;
+	    }
 	  if (code == OMP_TARGET_EXIT_DATA
 	      && OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_ALWAYS_POINTER)
 	    {
@@ -12792,7 +12873,7 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	      if ((ctx->region_type & ORT_TARGET) != 0
 		  && OMP_CLAUSE_MAP_KIND (c) == GOMP_MAP_FIRSTPRIVATE_POINTER)
 		{
-		  if (TREE_CODE (decl) == INDIRECT_REF
+		  if (INDIRECT_REF_P (decl)
 		      && TREE_CODE (TREE_OPERAND (decl, 0)) == COMPONENT_REF
 		      && (TREE_CODE (TREE_TYPE (TREE_OPERAND (decl, 0)))
 			  == REFERENCE_TYPE))
@@ -12846,7 +12927,7 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	      gcc_assert (OMP_CLAUSE_MAP_KIND (c) != GOMP_MAP_FORCE_DEVICEPTR);
 
 	      tree decl2 = DECL_VALUE_EXPR (decl);
-	      gcc_assert (TREE_CODE (decl2) == INDIRECT_REF);
+	      gcc_assert (INDIRECT_REF_P (decl2));
 	      decl2 = TREE_OPERAND (decl2, 0);
 	      gcc_assert (DECL_P (decl2));
 	      tree mem = build_simple_mem_ref (decl2);
@@ -12897,7 +12978,7 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	      && TREE_CODE (DECL_SIZE (decl)) != INTEGER_CST)
 	    {
 	      tree decl2 = DECL_VALUE_EXPR (decl);
-	      gcc_assert (TREE_CODE (decl2) == INDIRECT_REF);
+	      gcc_assert (INDIRECT_REF_P (decl2));
 	      decl2 = TREE_OPERAND (decl2, 0);
 	      gcc_assert (DECL_P (decl2));
 	      tree mem = build_simple_mem_ref (decl2);
@@ -13818,8 +13899,7 @@ gimplify_omp_for (tree *expr_p, gimple_seq *pre_p)
     {
       has_decl_expr = BITMAP_ALLOC (NULL);
       if (TREE_CODE (OMP_FOR_PRE_BODY (for_stmt)) == DECL_EXPR
-	  && TREE_CODE (DECL_EXPR_DECL (OMP_FOR_PRE_BODY (for_stmt)))
-	     == VAR_DECL)
+	  && VAR_P (DECL_EXPR_DECL (OMP_FOR_PRE_BODY (for_stmt))))
 	{
 	  t = OMP_FOR_PRE_BODY (for_stmt);
 	  bitmap_set_bit (has_decl_expr, DECL_UID (DECL_EXPR_DECL (t)));
@@ -13832,7 +13912,7 @@ gimplify_omp_for (tree *expr_p, gimple_seq *pre_p)
 	    {
 	      t = tsi_stmt (si);
 	      if (TREE_CODE (t) == DECL_EXPR
-		  && TREE_CODE (DECL_EXPR_DECL (t)) == VAR_DECL)
+		  && VAR_P (DECL_EXPR_DECL (t)))
 		bitmap_set_bit (has_decl_expr, DECL_UID (DECL_EXPR_DECL (t)));
 	    }
 	}
@@ -15629,7 +15709,7 @@ goa_lhs_expr_p (tree expr, tree addr)
      STRIP_TYPE_NOPS but includes the main variant lookup.  */
   STRIP_USELESS_TYPE_CONVERSION (expr);
 
-  if (TREE_CODE (expr) == INDIRECT_REF)
+  if (INDIRECT_REF_P (expr))
     {
       expr = TREE_OPERAND (expr, 0);
       while (expr != addr
@@ -15815,8 +15895,8 @@ goa_stabilize_expr (tree *expr_p, gimple_seq *pre_p, tree lhs_addr,
       if (TREE_CODE (expr) == CALL_EXPR)
 	{
 	  if (tree fndecl = get_callee_fndecl (expr))
-	    if (fndecl_built_in_p (fndecl, BUILT_IN_CLEAR_PADDING)
-		|| fndecl_built_in_p (fndecl, BUILT_IN_MEMCMP))
+	    if (fndecl_built_in_p (fndecl, BUILT_IN_CLEAR_PADDING,
+					   BUILT_IN_MEMCMP))
 	      {
 		int nargs = call_expr_nargs (expr);
 		for (int i = 0; i < nargs; i++)
@@ -17098,6 +17178,9 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 		 Compare scalar mode aggregates as scalar mode values.  Using
 		 memcmp for them would be very inefficient at best, and is
 		 plain wrong if bitfields are involved.  */
+	      if (error_operand_p (TREE_OPERAND (*expr_p, 1)))
+		ret = GS_ERROR;
+	      else
 		{
 		  tree type = TREE_TYPE (TREE_OPERAND (*expr_p, 1));
 
@@ -17122,9 +17205,8 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 		    ret = gimplify_scalar_mode_aggregate_compare (expr_p);
 		  else
 		    ret = gimplify_variable_sized_compare (expr_p);
-
-		  break;
 		}
+	      break;
 
 	    /* If *EXPR_P does not need to be special-cased, handle it
 	       according to its class.  */
@@ -17555,7 +17637,7 @@ gimplify_one_sizepos (tree *expr_p, gimple_seq *stmt_p)
      if this type is from outside the function.  It's OK to have that here.  */
   if (expr == NULL_TREE
       || is_gimple_constant (expr)
-      || TREE_CODE (expr) == VAR_DECL
+      || VAR_P (expr)
       || CONTAINS_PLACEHOLDER_P (expr))
     return;
 

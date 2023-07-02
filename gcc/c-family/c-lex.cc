@@ -1,5 +1,5 @@
 /* Mainly the interface between cpplib and the C front ends.
-   Copyright (C) 1987-2022 Free Software Foundation, Inc.
+   Copyright (C) 1987-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -392,17 +392,13 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 	    }
 	  else
 	    {
-	      if (is_attribute_p ("deprecated", attr_name))
-		result = 201904;
-	      else if (is_attribute_p ("fallthrough", attr_name))
-		result = 201910;
-	      else if (is_attribute_p ("nodiscard", attr_name))
-		result = 202003;
-	      else if (is_attribute_p ("maybe_unused", attr_name))
-		result = 202106;
-	      else if (is_attribute_p ("noreturn", attr_name)
-		       || is_attribute_p ("_Noreturn", attr_name))
-		result = 202202;
+	      if (is_attribute_p ("deprecated", attr_name)
+		  || is_attribute_p ("fallthrough", attr_name)
+		  || is_attribute_p ("maybe_unused", attr_name)
+		  || is_attribute_p ("nodiscard", attr_name)
+		  || is_attribute_p ("noreturn", attr_name)
+		  || is_attribute_p ("_Noreturn", attr_name))
+		result = 202311;
 	    }
 	  if (result)
 	    attr_name = NULL_TREE;

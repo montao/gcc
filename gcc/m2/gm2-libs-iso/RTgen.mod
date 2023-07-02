@@ -1,6 +1,6 @@
 (* RTgen.mod implement a generic device interface used by ISO.
 
-Copyright (C) 2008-2021 Free Software Foundation, Inc.
+Copyright (C) 2008-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -282,29 +282,25 @@ PROCEDURE doLook (g: ChanDev;
                   d: DeviceTablePtr;
                   VAR ch: CHAR;
                   VAR r: ReadResults) ;
-VAR
-   old: ReadResults ;
 BEGIN
    checkValid(g, d) ;
    WITH d^ DO
       checkErrno(g, d) ;
       checkPreRead(g, d, RaiseEOFinLook(g), ChanConsts.rawFlag IN flags) ;
       IF (result=IOConsts.allRight) OR (result=IOConsts.notKnown) OR
-         (result=IOConsts.endOfLine) 
+         (result=IOConsts.endOfLine)
       THEN
-         old := result ;
          ch := doReadChar(g^.genif, d) ;
          setReadResult(g, d) ;
          r := result ;
-         ch := doUnReadChar(g^.genif, d, ch) ;
-         result := old
+         ch := doUnReadChar(g^.genif, d, ch)
       END
    END
 END doLook ;
 
 
 (*
-   doSkip - 
+   doSkip -
 *)
 
 PROCEDURE doSkip (g: ChanDev;

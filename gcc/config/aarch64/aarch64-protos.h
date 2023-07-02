@@ -1,5 +1,5 @@
 /* Machine description for AArch64 architecture.
-   Copyright (C) 2009-2022 Free Software Foundation, Inc.
+   Copyright (C) 2009-2023 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -23,6 +23,7 @@
 #define GCC_AARCH64_PROTOS_H
 
 #include "input.h"
+#include "config/arm/aarch-common.h"
 
 /* SYMBOL_SMALL_ABSOLUTE: Generate symbol accesses through
    high and lo relocs that calculate the base address using a PC
@@ -651,18 +652,6 @@ enum aarch64_extra_tuning_flags
   AARCH64_EXTRA_TUNE_ALL = (1u << AARCH64_EXTRA_TUNE_index_END) - 1
 };
 
-/* Enum describing the various ways that the
-   aarch64_parse_{arch,tune,cpu,extension} functions can fail.
-   This way their callers can choose what kind of error to give.  */
-
-enum aarch64_parse_opt_result
-{
-  AARCH64_PARSE_OK,			/* Parsing was successful.  */
-  AARCH64_PARSE_MISSING_ARG,		/* Missing argument.  */
-  AARCH64_PARSE_INVALID_FEATURE,	/* Invalid feature modifier.  */
-  AARCH64_PARSE_INVALID_ARG		/* Invalid arch, tune, cpu arg.  */
-};
-
 /* Enum to distinguish which type of check is to be done in
    aarch64_simd_valid_immediate.  This is used as a bitmask where
    AARCH64_CHECK_MOV has both bits set.  Thus AARCH64_CHECK_MOV will
@@ -744,11 +733,11 @@ const unsigned int AARCH64_BUILTIN_CLASS = (1 << AARCH64_BUILTIN_SHIFT) - 1;
 class aarch64_simd_switcher
 {
 public:
-  aarch64_simd_switcher (unsigned int extra_flags = 0);
+  aarch64_simd_switcher (aarch64_feature_flags extra_flags = 0);
   ~aarch64_simd_switcher ();
 
 private:
-  unsigned long m_old_asm_isa_flags;
+  aarch64_feature_flags m_old_asm_isa_flags;
   bool m_old_general_regs_only;
 };
 
@@ -769,9 +758,12 @@ bool aarch64_can_const_movi_rtx_p (rtx x, machine_mode mode);
 bool aarch64_const_vec_all_same_int_p (rtx, HOST_WIDE_INT);
 bool aarch64_const_vec_all_same_in_range_p (rtx, HOST_WIDE_INT,
 					    HOST_WIDE_INT);
+bool aarch64_const_vec_rnd_cst_p (rtx, rtx);
+bool aarch64_rnd_imm_p (rtx);
 bool aarch64_constant_address_p (rtx);
 bool aarch64_emit_approx_div (rtx, rtx, rtx);
 bool aarch64_emit_approx_sqrt (rtx, rtx, bool);
+tree aarch64_vector_load_decl (tree);
 void aarch64_expand_call (rtx, rtx, rtx, bool);
 bool aarch64_expand_cpymem (rtx *);
 bool aarch64_expand_setmem (rtx *);
@@ -827,6 +819,8 @@ bool aarch64_regno_ok_for_index_p (int, bool);
 bool aarch64_reinterpret_float_as_int (rtx value, unsigned HOST_WIDE_INT *fail);
 bool aarch64_simd_check_vect_par_cnst_half (rtx op, machine_mode mode,
 					    bool high);
+bool aarch64_parallel_select_half_p (machine_mode, rtx);
+bool aarch64_pars_overlap_p (rtx, rtx);
 bool aarch64_simd_scalar_immediate_valid_for_move (rtx, scalar_int_mode);
 bool aarch64_simd_shift_imm_p (rtx, machine_mode, bool);
 bool aarch64_sve_ptrue_svpattern_p (rtx, struct simd_immediate_info *);
@@ -848,6 +842,7 @@ int aarch64_movk_shift (const wide_int_ref &, const wide_int_ref &);
 bool aarch64_is_mov_xn_imm (unsigned HOST_WIDE_INT);
 bool aarch64_use_return_insn_p (void);
 const char *aarch64_output_casesi (rtx *);
+const char *aarch64_output_load_tp (rtx);
 
 unsigned int aarch64_tlsdesc_abi_id ();
 enum aarch64_symbol_type aarch64_classify_symbol (rtx, HOST_WIDE_INT);
@@ -914,7 +909,6 @@ void aarch64_register_pragmas (void);
 void aarch64_relayout_simd_types (void);
 void aarch64_reset_previous_fndecl (void);
 bool aarch64_return_address_signing_enabled (void);
-bool aarch64_bti_enabled (void);
 void aarch64_save_restore_target_globals (tree);
 void aarch64_addti_scratch_regs (rtx, rtx, rtx *,
 				 rtx *, rtx *,
@@ -1038,9 +1032,9 @@ void aarch64_set_asm_isa_flags (gcc_options *, aarch64_feature_flags);
 bool aarch64_handle_option (struct gcc_options *, struct gcc_options *,
 			     const struct cl_decoded_option *, location_t);
 const char *aarch64_rewrite_selected_cpu (const char *name);
-enum aarch64_parse_opt_result aarch64_parse_extension (const char *,
-						       aarch64_feature_flags *,
-						       std::string *);
+enum aarch_parse_opt_result aarch64_parse_extension (const char *,
+                                                     aarch64_feature_flags *,
+                                                     std::string *);
 void aarch64_get_all_extension_candidates (auto_vec<const char *> *candidates);
 std::string aarch64_get_extension_string_for_isa_flags (aarch64_feature_flags,
 							aarch64_feature_flags);
@@ -1076,5 +1070,7 @@ extern bool aarch64_harden_sls_retbr_p (void);
 extern bool aarch64_harden_sls_blr_p (void);
 
 extern void aarch64_output_patchable_area (unsigned int, bool);
+
+extern void aarch64_adjust_reg_alloc_order ();
 
 #endif /* GCC_AARCH64_PROTOS_H */

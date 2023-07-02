@@ -1,7 +1,7 @@
 /* A state machine for use in DejaGnu tests, to check that
    pattern-matching works as expected.
 
-   Copyright (C) 2019-2022 Free Software Foundation, Inc.
+   Copyright (C) 2019-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -92,7 +92,7 @@ public:
     return 0;
   }
 
-  bool emit (rich_location *rich_loc) final override
+  bool emit (rich_location *rich_loc, logger *) final override
   {
     return warning_at (rich_loc, get_controlling_option (),
 		       "pattern match on %<%E %s %E%>",

@@ -1,5 +1,5 @@
 /* Various declarations for language-independent diagnostics subroutines.
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@codesourcery.com>
 
 This file is part of GCC.
@@ -23,6 +23,11 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "pretty-print.h"
 #include "diagnostic-core.h"
+
+namespace text_art
+{
+  class theme;
+} // namespace text_art
 
 /* An enum for controlling what units to use for the column number
    when diagnostics are output, used by the -fdiagnostics-column-unit option.
@@ -170,6 +175,7 @@ class edit_context;
 namespace json { class value; }
 class diagnostic_client_data_hooks;
 class logical_location;
+class diagnostic_diagram;
 
 /* This data structure bundles altogether any information relevant to
    the context of a diagnostic message.  */
@@ -405,6 +411,9 @@ struct diagnostic_context
      of a diagnostic's location.  */
   void (*set_locations_cb)(diagnostic_context *, diagnostic_info *);
 
+  /* Optional callback for attempting to handle ICEs gracefully.  */
+  void (*ice_handler_cb) (diagnostic_context *context);
+
   /* Include files that diagnostic_report_current_module has already listed the
      include path for.  */
   hash_set<location_t, false, location_hash> *includes_seen;
@@ -414,9 +423,21 @@ struct diagnostic_context
      Used by SARIF output to give metadata about the client that's
      producing diagnostics.  */
   diagnostic_client_data_hooks *m_client_data_hooks;
+
+  /* Support for diagrams.  */
+  struct
+  {
+    /* Theme to use when generating diagrams.
+       Can be NULL (if text art is disabled).  */
+    text_art::theme *m_theme;
+
+    /* Callback for emitting diagrams.  */
+    void (*m_emission_cb) (diagnostic_context *context,
+			   const diagnostic_diagram &diagram);
+  } m_diagrams;
 };
 
-static inline void
+inline void
 diagnostic_inhibit_notes (diagnostic_context * context)
 {
   context->inhibit_notes_p = true;
@@ -474,7 +495,7 @@ extern diagnostic_context *global_dc;
 /* Override the option index to be used for reporting a
    diagnostic.  */
 
-static inline void
+inline void
 diagnostic_override_option_index (diagnostic_info *info, int optidx)
 {
   info->option_index = optidx;
@@ -546,7 +567,7 @@ int get_terminal_width (void);
 /* Return the location associated to this diagnostic. Parameter WHICH
    specifies which location. By default, expand the first one.  */
 
-static inline location_t
+inline location_t
 diagnostic_location (const diagnostic_info * diagnostic, int which = 0)
 {
   return diagnostic->message.get_location (which);
@@ -554,7 +575,7 @@ diagnostic_location (const diagnostic_info * diagnostic, int which = 0)
 
 /* Return the number of locations to be printed in DIAGNOSTIC.  */
 
-static inline unsigned int
+inline unsigned int
 diagnostic_num_locations (const diagnostic_info * diagnostic)
 {
   return diagnostic->message.m_richloc->get_num_locations ();
@@ -564,7 +585,7 @@ diagnostic_num_locations (const diagnostic_info * diagnostic)
    consistency.  Parameter WHICH specifies which location. By default,
    expand the first one.  */
 
-static inline expanded_location
+inline expanded_location
 diagnostic_expand_location (const diagnostic_info * diagnostic, int which = 0)
 {
   return diagnostic->richloc->get_expanded_location (which);
@@ -579,7 +600,7 @@ const int CARET_LINE_MARGIN = 10;
    caret line.  This is used to build a prefix and also to determine
    whether to print one or two caret lines.  */
 
-static inline bool
+inline bool
 diagnostic_same_line (const diagnostic_context *context,
 		       expanded_location s1, expanded_location s2)
 {
@@ -615,5 +636,8 @@ extern json::value *json_from_expanded_location (diagnostic_context *context,
 extern bool warning_enabled_at (location_t, int);
 
 extern char *get_cwe_url (int cwe);
+
+extern void diagnostic_emit_diagram (diagnostic_context *context,
+				     const diagnostic_diagram &diagram);
 
 #endif /* ! GCC_DIAGNOSTIC_H */

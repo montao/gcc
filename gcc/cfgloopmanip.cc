@@ -1,5 +1,5 @@
 /* Loop manipulation code for GNU compiler.
-   Copyright (C) 2002-2022 Free Software Foundation, Inc.
+   Copyright (C) 2002-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -826,7 +826,7 @@ create_empty_loop_on_edge (edge entry_edge,
     }
 
   gsi = gsi_last_bb (loop_header);
-  create_iv (initial_value, stride, iv, loop, &gsi, false,
+  create_iv (initial_value, PLUS_EXPR, stride, iv, loop, &gsi, false,
 	     iv_before, iv_after);
 
   /* Insert loop exit condition.  */

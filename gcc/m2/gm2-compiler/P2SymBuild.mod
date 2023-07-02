@@ -1,6 +1,6 @@
 (* P2SymBuild.mod pass 2 symbol creation.
 
-Copyright (C) 2001-2022 Free Software Foundation, Inc.
+Copyright (C) 2001-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -59,7 +59,7 @@ FROM SymbolTable IMPORT NulSym,
                         MakeSubrange,
                         MakeVar, MakeType, PutType,
                         MakeModuleCtor,
-                        PutMode, PutDeclared,
+                        PutMode, PutDeclared, GetParameterShadowVar,
                         PutFieldEnumeration, PutSubrange, PutVar, PutConst,
                         PutConstSet, PutConstructor,
                         IsDefImp, IsType, IsRecord, IsRecordField, IsPointer,
@@ -108,6 +108,7 @@ FROM SymbolTable IMPORT NulSym,
                         ParametersDefinedInDefinition,
                         ParametersDefinedInImplementation,
                         ProcedureParametersDefined,
+                        PutProcedureNoReturn,
                         CheckForUnImplementedExports,
                         CheckForUndeclaredExports,
                         IsHiddenTypeDeclared,
@@ -1819,14 +1820,15 @@ BEGIN
                (* different parameter names *)
                FailParameter('',
                              'the parameter has been declared with a different name',
-                             OperandT(pi), ParamTotal+i, ProcSym)
+                             OperandT (pi), ParamTotal+i, ProcSym)
             END
          ELSE
-            IF GetSymName(ParamI)=NulName
+            IF GetSymName (ParamI) = NulName
             THEN
-               PutParamName (OperandTok (pi), ProcSym, ParamTotal+i, OperandT(pi))
+               PutParamName (OperandTok (pi), ProcSym, ParamTotal+i, OperandT (pi))
             END
          END ;
+         PutDeclared (OperandTok (pi), GetParameterShadowVar (ParamI)) ;
          IF Unbounded
          THEN
             (* GetType(ParamI) yields an UnboundedSym or a PartialUnboundedSym,
@@ -2096,6 +2098,17 @@ BEGIN
 *)
    PushT(ProcSym)
 END BuildOptFunction ;
+
+
+(*
+   BuildNoReturnAttribute - provide an interface to the symbol table module.
+*)
+
+PROCEDURE BuildNoReturnAttribute (procedureSym: CARDINAL) ;
+BEGIN
+   Assert (IsProcedure (procedureSym)) ;
+   PutProcedureNoReturn (procedureSym, TRUE)
+END BuildNoReturnAttribute ;
 
 
 (*

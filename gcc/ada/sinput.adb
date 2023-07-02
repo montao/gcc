@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -550,7 +550,7 @@ package body Sinput is
                        or else S = Standard_ASCII_Location
                        or else S = System_Location;
 
-         pragma Assert ((S > No_Location) xor Special);
+         pragma Assert (S > No_Location xor Special);
          pragma Assert (Result in Source_File.First .. Source_File.Last);
 
          SFR : Source_File_Record renames Source_File.Table (Result);

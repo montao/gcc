@@ -1,5 +1,5 @@
 /* GCC backend functions for C-SKY targets.
-   Copyright (C) 2018-2022 Free Software Foundation, Inc.
+   Copyright (C) 2018-2023 Free Software Foundation, Inc.
    Contributed by C-SKY Microsystems and Mentor Graphics.
 
    This file is part of GCC.
@@ -395,6 +395,11 @@ csky_cpu_cpp_builtins (cpp_reader *pfile)
 	{
 	  builtin_define ("__csky_hard_float_abi__");
 	  builtin_define ("__CSKY_HARD_FLOAT_ABI__");
+	}
+      else
+	{
+	  builtin_define ("__csky_soft_float_abi__");
+	  builtin_define ("__CSKY_SOFT_FLOAT_ABI__");
 	}
       if (TARGET_SINGLE_FPU)
 	{
@@ -6485,8 +6490,7 @@ csky_handle_isr_attribute (tree *node, tree name, tree args, int flags,
     }
   else
     {
-      if (TREE_CODE (*node) == FUNCTION_TYPE
-	  || TREE_CODE (*node) == METHOD_TYPE)
+      if (FUNC_OR_METHOD_TYPE_P (*node))
 	{
 	  if (csky_isr_value (args) == CSKY_FT_UNKNOWN)
 	    {
@@ -6495,8 +6499,7 @@ csky_handle_isr_attribute (tree *node, tree name, tree args, int flags,
 	    }
 	}
       else if (TREE_CODE (*node) == POINTER_TYPE
-	       && (TREE_CODE (TREE_TYPE (*node)) == FUNCTION_TYPE
-		   || TREE_CODE (TREE_TYPE (*node)) == METHOD_TYPE)
+	       && FUNC_OR_METHOD_TYPE_P (TREE_TYPE (*node))
 	       && csky_isr_value (args) != CSKY_FT_UNKNOWN)
 	{
 	  *node = build_variant_type_copy (*node);
@@ -7314,7 +7317,7 @@ csky_init_builtins (void)
 static const char *
 csky_mangle_type (const_tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE
+  if (SCALAR_FLOAT_TYPE_P (type)
       && TYPE_PRECISION (type) == 16
       && TYPE_MAIN_VARIANT (type) != float16_type_node)
     return "Dh";

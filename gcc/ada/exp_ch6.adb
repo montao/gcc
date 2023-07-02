@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -70,6 +70,7 @@ with Sem_Mech;       use Sem_Mech;
 with Sem_Res;        use Sem_Res;
 with Sem_SCIL;       use Sem_SCIL;
 with Sem_Util;       use Sem_Util;
+                     use Sem_Util.Storage_Model_Support;
 with Sinfo;          use Sinfo;
 with Sinfo.Nodes;    use Sinfo.Nodes;
 with Sinfo.Utils;    use Sinfo.Utils;
@@ -687,7 +688,11 @@ package body Exp_Ch6 is
       Loc : constant Source_Ptr := Sloc (Exp);
 
    begin
+       --  CodePeer does not do anything useful on Ada.Tags.Type_Specific_Data
+       --  components.
+
       if Ada_Version >= Ada_2005
+        and then not CodePeer_Mode
         and then Tagged_Type_Expansion
         and then not Scope_Suppress.Suppress (Accessibility_Check)
         and then
@@ -770,20 +775,18 @@ package body Exp_Ch6 is
                    Attribute_Name => Name_Tag);
             end if;
 
-            --  CodePeer does not do anything useful with
-            --  Ada.Tags.Type_Specific_Data components.
+            --  Suppress junk access chacks on RE_Tag_Ptr
 
-            if not CodePeer_Mode then
-               Insert_Action (Exp,
-                 Make_Raise_Program_Error (Loc,
-                   Condition =>
-                     Make_Op_Gt (Loc,
-                       Left_Opnd  => Build_Get_Access_Level (Loc, Tag_Node),
-                       Right_Opnd =>
-                         Make_Integer_Literal (Loc,
-                           Scope_Depth (Enclosing_Dynamic_Scope (Func)))),
-                   Reason    => PE_Accessibility_Check_Failed));
-            end if;
+            Insert_Action (Exp,
+              Make_Raise_Program_Error (Loc,
+                Condition =>
+                  Make_Op_Gt (Loc,
+                    Left_Opnd  => Build_Get_Access_Level (Loc, Tag_Node),
+                    Right_Opnd =>
+                      Make_Integer_Literal (Loc,
+                        Scope_Depth (Enclosing_Dynamic_Scope (Func)))),
+                Reason    => PE_Accessibility_Check_Failed),
+              Suppress => Access_Check);
          end;
       end if;
    end Apply_CW_Accessibility_Check;
@@ -1934,8 +1937,14 @@ package body Exp_Ch6 is
       ----------------------------------
 
       procedure Add_Simple_Call_By_Copy_Code (Force : Boolean) is
+         With_Storage_Model : constant Boolean :=
+           Nkind (Actual) = N_Explicit_Dereference
+             and then
+               Has_Designated_Storage_Model_Aspect (Etype (Prefix (Actual)));
+
+         Cpcod  : List_Id;
          Decl   : Node_Id;
-         F_Typ  : Entity_Id := Etype (Formal);
+         F_Typ  : Entity_Id;
          Incod  : Node_Id;
          Indic  : Node_Id;
          Lhs    : Node_Id;
@@ -1950,6 +1959,8 @@ package body Exp_Ch6 is
             return;
          end if;
 
+         F_Typ := Etype (Formal);
+
          --  Handle formals whose type comes from the limited view
 
          if From_Limited_With (F_Typ)
@@ -1959,11 +1970,11 @@ package body Exp_Ch6 is
          end if;
 
          --  Use formal type for temp, unless formal type is an unconstrained
-         --  array, in which case we don't have to worry about bounds checks,
-         --  and we use the actual type, since that has appropriate bounds.
+         --  composite, in which case we don't have to worry about checks and
+         --  we can use the actual type, since that has appropriate bounds.
 
-         if Is_Array_Type (F_Typ) and then not Is_Constrained (F_Typ) then
-            Indic := New_Occurrence_Of (Etype (Actual), Loc);
+         if Is_Composite_Type (F_Typ) and then not Is_Constrained (F_Typ) then
+            Indic := New_Occurrence_Of (Get_Actual_Subtype (Actual), Loc);
          else
             Indic := New_Occurrence_Of (F_Typ, Loc);
          end if;
@@ -1972,7 +1983,6 @@ package body Exp_Ch6 is
 
          Reset_Packed_Prefix;
 
-         Temp   := Make_Temporary (Loc, 'T', Actual);
          Incod  := Relocate_Node (Actual);
          Outcod := New_Copy_Tree (Incod);
 
@@ -1980,17 +1990,8 @@ package body Exp_Ch6 is
          --  with the input parameter unless we have an OUT formal or
          --  this is an initialization call.
 
-         --  If the formal is an out parameter with discriminants, the
-         --  discriminants must be captured even if the rest of the object
-         --  is in principle uninitialized, because the discriminants may
-         --  be read by the called subprogram.
-
          if Ekind (Formal) = E_Out_Parameter then
             Incod := Empty;
-
-            if Has_Discriminants (F_Typ) then
-               Indic := New_Occurrence_Of (Etype (Actual), Loc);
-            end if;
 
          elsif Inside_Init_Proc then
 
@@ -2015,15 +2016,31 @@ package body Exp_Ch6 is
             end if;
          end if;
 
-         Decl :=
-           Make_Object_Declaration (Loc,
-             Defining_Identifier => Temp,
-             Object_Definition   => Indic,
-             Expression          => Incod);
+         Cpcod := New_List;
 
-         if Inside_Init_Proc
-           and then No (Incod)
-         then
+         if With_Storage_Model then
+            Temp :=
+              Build_Temporary_On_Secondary_Stack (Loc, Entity (Indic), Cpcod);
+
+            if Present (Incod) then
+               Append_To (Cpcod,
+                 Make_Assignment_Statement (Loc,
+                   Name       =>
+                     Make_Explicit_Dereference (Loc,
+                       Prefix => New_Occurrence_Of (Temp, Loc)),
+                   Expression => Incod));
+               Set_Suppress_Assignment_Checks (Last (Cpcod));
+            end if;
+
+         else
+            Temp := Make_Temporary (Loc, 'T', Actual);
+
+            Decl :=
+              Make_Object_Declaration (Loc,
+                Defining_Identifier => Temp,
+                Object_Definition   => Indic,
+                Expression          => Incod);
+
             --  If the call is to initialize a component of a composite type,
             --  and the component does not depend on discriminants, use the
             --  actual type of the component. This is required in case the
@@ -2033,23 +2050,42 @@ package body Exp_Ch6 is
             --  discriminant, the presence of the initialization in the
             --  declaration will generate an expression for the actual subtype.
 
-            Set_No_Initialization (Decl);
-            Set_Object_Definition (Decl,
-              New_Occurrence_Of (Etype (Actual), Loc));
+            if Inside_Init_Proc and then No (Incod) then
+               Set_No_Initialization (Decl);
+               Set_Object_Definition (Decl,
+                 New_Occurrence_Of (Etype (Actual), Loc));
+            end if;
+
+            Append_To (Cpcod, Decl);
          end if;
 
-         Insert_Action (N, Decl);
+         Insert_Actions (N, Cpcod);
 
          --  The actual is simply a reference to the temporary
 
-         Rewrite (Actual, New_Occurrence_Of (Temp, Loc));
+         if With_Storage_Model then
+            Rewrite (Actual,
+              Make_Explicit_Dereference (Loc,
+                Prefix => New_Occurrence_Of (Temp, Loc)));
+         else
+            Rewrite (Actual, New_Occurrence_Of (Temp, Loc));
+         end if;
+
+         Analyze (Actual);
 
          --  Generate copy out if OUT or IN OUT parameter
 
          if Ekind (Formal) /= E_In_Parameter then
             Lhs := Outcod;
-            Rhs := New_Occurrence_Of (Temp, Loc);
-            Set_Is_True_Constant (Temp, False);
+
+            if With_Storage_Model then
+               Rhs :=
+                 Make_Explicit_Dereference (Loc,
+                   Prefix => New_Occurrence_Of (Temp, Loc));
+            else
+               Rhs := New_Occurrence_Of (Temp, Loc);
+               Set_Is_True_Constant (Temp, False);
+            end if;
 
             --  Deal with conversion
 
@@ -2062,6 +2098,7 @@ package body Exp_Ch6 is
               Make_Assignment_Statement (Loc,
                 Name       => Lhs,
                 Expression => Rhs));
+            Set_Suppress_Assignment_Checks (Last (Post_Call));
             Set_Assignment_OK (Name (Last (Post_Call)));
          end if;
       end Add_Simple_Call_By_Copy_Code;
@@ -2450,6 +2487,22 @@ package body Exp_Ch6 is
             elsif Is_Ref_To_Bit_Packed_Array (Actual) then
                Add_Simple_Call_By_Copy_Code (Force => True);
 
+            --  If the actual has a nonnative storage model, we need a copy
+
+            elsif Nkind (Actual) = N_Explicit_Dereference
+              and then
+                Has_Designated_Storage_Model_Aspect (Etype (Prefix (Actual)))
+              and then
+                (Present (Storage_Model_Copy_To
+                            (Storage_Model_Object (Etype (Prefix (Actual)))))
+                  or else
+                    (Ekind (Formal) = E_In_Out_Parameter
+                      and then
+                        Present (Storage_Model_Copy_From
+                          (Storage_Model_Object (Etype (Prefix (Actual)))))))
+            then
+               Add_Simple_Call_By_Copy_Code (Force => True);
+
             --  If a nonscalar actual is possibly bit-aligned, we need a copy
             --  because the back-end cannot cope with such objects. In other
             --  cases where alignment forces a copy, the back-end generates
@@ -2594,6 +2647,17 @@ package body Exp_Ch6 is
             --  Is this really necessary in all cases???
 
             elsif Is_Ref_To_Bit_Packed_Array (Actual) then
+               Add_Simple_Call_By_Copy_Code (Force => True);
+
+            --  If the actual has a nonnative storage model, we need a copy
+
+            elsif Nkind (Actual) = N_Explicit_Dereference
+              and then
+                Has_Designated_Storage_Model_Aspect (Etype (Prefix (Actual)))
+              and then
+                Present (Storage_Model_Copy_From
+                           (Storage_Model_Object (Etype (Prefix (Actual)))))
+            then
                Add_Simple_Call_By_Copy_Code (Force => True);
 
             --  If we have a C++ constructor call, we need to create the object
@@ -3026,7 +3090,7 @@ package body Exp_Ch6 is
          --  Start of processing for Insert_Level_Assign
 
          begin
-            --  Examine further nested condtionals
+            --  Examine further nested conditionals
 
             pragma Assert (Nkind (Branch) =
                             N_Expression_With_Actions);
@@ -3341,6 +3405,7 @@ package body Exp_Ch6 is
            or else No (Aspect)
 
            --  Do not fold if multiple applicable predicate aspects
+           or else Has_Ghost_Predicate_Aspect (Subt)
            or else Has_Aspect (Subt, Aspect_Static_Predicate)
            or else Has_Aspect (Subt, Aspect_Predicate)
            or else Augments_Other_Dynamic_Predicate (Aspect)
@@ -5124,21 +5189,26 @@ package body Exp_Ch6 is
       --  Optimization: if the returned value is returned again, then no need
       --  to copy/readjust/finalize, we can just pass the value through (see
       --  Expand_N_Simple_Return_Statement), and thus no attachment is needed.
+      --  Note that simple return statements are distributed into conditional
+      --  expressions but we may be invoked before this distribution is done.
 
-      if Nkind (Par) = N_Simple_Return_Statement then
+      if Nkind (Par) = N_Simple_Return_Statement
+        or else (Nkind (Par) = N_If_Expression
+                  and then Nkind (Parent (Par)) = N_Simple_Return_Statement)
+        or else (Nkind (Par) = N_Case_Expression_Alternative
+                  and then
+                    Nkind (Parent (Parent (Par))) = N_Simple_Return_Statement)
+      then
          return;
       end if;
 
       --  Another optimization: if the returned value is used to initialize an
       --  object, then no need to copy/readjust/finalize, we can initialize it
-      --  in place. However, if the call returns on the secondary stack or this
-      --  is a special return object, then we need the expansion because we'll
-      --  be renaming the temporary as the (permanent) object.
+      --  in place. However, if the call returns on the secondary stack, then
+      --  we need the expansion because we'll be renaming the temporary as the
+      --  (permanent) object.
 
-      if Nkind (Par) = N_Object_Declaration
-        and then not Use_Sec_Stack
-        and then not Is_Special_Return_Object (Defining_Entity (Par))
-      then
+      if Nkind (Par) = N_Object_Declaration and then not Use_Sec_Stack then
          return;
       end if;
 
@@ -6183,10 +6253,13 @@ package body Exp_Ch6 is
       --  body subprogram points to itself.
 
       Proc := Current_Scope;
-      while Present (Proc)
-        and then Scope (Proc) /= Scop
-      loop
+      while Present (Proc) and then Scope (Proc) /= Scop loop
          Proc := Scope (Proc);
+         if Is_Subprogram (Proc)
+           and then Present (Protected_Subprogram (Proc))
+         then
+            Proc := Protected_Subprogram (Proc);
+         end if;
       end loop;
 
       Corr := Protected_Body_Subprogram (Proc);
@@ -6435,16 +6508,21 @@ package body Exp_Ch6 is
       --  The result type of the function
 
       Utyp : constant Entity_Id := Underlying_Type (R_Type);
+      --  The underlying result type of the function
 
       Exp : Node_Id := Expression (N);
       pragma Assert (Present (Exp));
 
       Exp_Is_Function_Call : constant Boolean :=
         Nkind (Exp) = N_Function_Call
-          or else (Nkind (Exp) = N_Explicit_Dereference
-                   and then Is_Entity_Name (Prefix (Exp))
-                   and then Ekind (Entity (Prefix (Exp))) = E_Constant
-                   and then Is_Related_To_Func_Return (Entity (Prefix (Exp))));
+          or else
+            (Is_Captured_Function_Call (Exp)
+              and then Is_Related_To_Func_Return (Entity (Prefix (Exp))));
+      --  If the expression is a captured function call, then we need to make
+      --  sure that the object doing the capture is properly recognized by the
+      --  Is_Related_To_Func_Return predicate; otherwise, if it is of a type
+      --  that needs finalization, Requires_Cleanup_Actions would return true
+      --  because of this and Build_Finalizer would finalize it prematurely.
 
       Exp_Typ : constant Entity_Id := Etype (Exp);
       --  The type of the expression (not necessarily the same as R_Type)
@@ -6564,6 +6642,13 @@ package body Exp_Ch6 is
       if Is_Boolean_Type (Exp_Typ) and then Nonzero_Is_True (Exp_Typ) then
          Adjust_Condition (Exp);
          Adjust_Result_Type (Exp, Exp_Typ);
+
+         --  The adjustment of the expression may have rewritten the return
+         --  statement itself, e.g. when it is turned into an if expression.
+
+         if Nkind (N) /= N_Simple_Return_Statement then
+            return;
+         end if;
       end if;
 
       --  Do validity check if enabled for returns
@@ -6628,7 +6713,8 @@ package body Exp_Ch6 is
          --  size. We create an actual subtype for this purpose. However we
          --  need not do it if the expression is a function call since this
          --  will be done in the called function and doing it here too would
-         --  cause a temporary with maximum size to be created.
+         --  cause a temporary with maximum size to be created. Likewise for
+         --  a special return object, since there is no copy in this case.
 
          declare
             Ubt  : constant Entity_Id := Underlying_Type (Base_Type (Exp_Typ));
@@ -6637,6 +6723,8 @@ package body Exp_Ch6 is
 
          begin
             if not Exp_Is_Function_Call
+              and then not (Is_Entity_Name (Exp)
+                             and then Is_Special_Return_Object (Entity (Exp)))
               and then Has_Defaulted_Discriminants (Ubt)
               and then not Is_Constrained (Ubt)
               and then not Has_Unchecked_Union (Ubt)
@@ -6735,7 +6823,7 @@ package body Exp_Ch6 is
             null;
 
          --  Optimize the case where the result is a function call that also
-         --  returns on the secondary stack. In this case the result is already
+         --  returns on the secondary stack; in this case the result is already
          --  on the secondary stack and no further processing is required.
 
          elsif Exp_Is_Function_Call
@@ -6771,13 +6859,14 @@ package body Exp_Ch6 is
          --  gigi is not able to properly allocate class-wide types.
 
          --  But optimize the case where the result is a function call that
-         --  also needs finalization. In this case the result can directly be
+         --  also needs finalization; in this case the result can directly be
          --  allocated on the secondary stack and no further processing is
-         --  required.
+         --  required, unless the returned object is an interface.
 
          elsif CW_Or_Needs_Finalization (Utyp)
-           and then not (Exp_Is_Function_Call
-                          and then Needs_Finalization (Exp_Typ))
+           and then (Is_Interface (R_Type)
+                      or else not (Exp_Is_Function_Call
+                                    and then Needs_Finalization (Exp_Typ)))
          then
             declare
                Acc_Typ : constant Entity_Id := Make_Temporary (Loc, 'A');
@@ -6807,7 +6896,7 @@ package body Exp_Ch6 is
 
                Temp := Make_Temporary (Loc, 'R', Alloc_Node);
 
-               Insert_List_Before_And_Analyze (N, New_List (
+               Insert_Actions (Exp, New_List (
                  Make_Full_Type_Declaration (Loc,
                    Defining_Identifier => Acc_Typ,
                    Type_Definition     =>
@@ -7763,10 +7852,10 @@ package body Exp_Ch6 is
          return False;
       end if;
 
-      --  If the function is imported from a foreign language, we don't do
-      --  build-in-place, whereas Import (Ada) functions can do it. Note also
-      --  that it is OK for a build-in-place function to return a type with a
-      --  foreign convention because the machinery ensures there is no copying.
+      --  We never use build-in-place if the convention is other than Ada,
+      --  but note that it is OK for a build-in-place function to return a
+      --  type with a foreign convention because the machinery ensures there
+      --  is no copying.
 
       return (Kind in E_Function | E_Generic_Function
                or else
@@ -9232,7 +9321,7 @@ package body Exp_Ch6 is
         and then not No_Run_Time_Mode
         and then (Has_Task (Typ)
                     or else (Is_Class_Wide_Type (Typ)
-                               and then Is_Limited_Record (Etype (Typ))
+                               and then Is_Limited_Record (Typ)
                                and then not Has_Aspect
                                  (Etype (Typ), Aspect_No_Task_Parts)));
    end Might_Have_Tasks;
@@ -9344,9 +9433,14 @@ package body Exp_Ch6 is
       --  types, and those can be used to call primitives, so the formal needs
       --  to be passed to all such build-in-place functions, primitive or not.
 
+      --  We never use build-in-place if the function has foreign convention,
+      --  but note that it is OK for a build-in-place function to return a
+      --  type with a foreign convention because the machinery ensures there
+      --  is no copying.
+
       return not Restriction_Active (No_Secondary_Stack)
         and then (Needs_Secondary_Stack (Typ) or else Is_Tagged_Type (Typ))
-        and then not Has_Foreign_Convention (Typ);
+        and then not Has_Foreign_Convention (Func_Id);
    end Needs_BIP_Alloc_Form;
 
    -------------------------------------
@@ -9382,6 +9476,10 @@ package body Exp_Ch6 is
       Preserve_Comes_From_Source (Orig_Id, Orig_Decl);
 
       Set_Comes_From_Source (New_Id, False);
+
+      --  Preserve aliased indication
+
+      Set_Is_Aliased (Orig_Id, Is_Aliased (New_Id));
    end Replace_Renaming_Declaration_Id;
 
    ---------------------------------

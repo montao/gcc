@@ -1,9 +1,8 @@
 /* { dg-additional-options "-Wno-unused-but-set-variable" } */
+/* { dg-require-effective-target alloca } */
 
 #include <string.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <alloca.h>
 #include <stdint.h>
 
 /* Tests with symbolic values.  */
@@ -14,7 +13,7 @@ void test1 (size_t size)
   if (!buf) return;
 
   buf[size] = '\0'; /* { dg-warning "heap-based buffer overflow" } */
-  free (buf);
+  __builtin_free (buf);
 }
 
 void test2 (size_t size)
@@ -23,7 +22,7 @@ void test2 (size_t size)
   if (!buf) return;
 
   buf[size + 1] = '\0'; /* { dg-warning "heap-based buffer overflow" } */
-  free (buf);
+  __builtin_free (buf);
 }
 
 void test3 (size_t size, size_t op)
@@ -32,7 +31,7 @@ void test3 (size_t size, size_t op)
   if (!buf) return;
 
   buf[size + op] = '\0'; /* { dg-warning "heap-based buffer overflow" } */
-  free (buf);
+  __builtin_free (buf);
 }
 
 void test4 (size_t size, unsigned short s)
@@ -69,7 +68,6 @@ void test8 (size_t size, size_t offset)
   char dst[size];
   memcpy (dst, src, size + offset); /* { dg-line test8 } */
   /* { dg-warning "over-read" "warning" { target *-*-* } test8 } */
-  /* { dg-warning "use of uninitialized value" "warning" { target *-*-* } test8 } */
   /* { dg-warning "overflow" "warning" { target *-*-* } test8 } */
 }
 
@@ -79,7 +77,6 @@ void test9 (size_t size, size_t offset)
   int32_t dst[size];
   memcpy (dst, src, 4 * size + 1); /* { dg-line test9 } */
   /* { dg-warning "over-read" "warning" { target *-*-* } test9 } */
-  /* { dg-warning "use of uninitialized value" "warning" { target *-*-* } test9 } */
   /* { dg-warning "overflow" "warning" { target *-*-* } test9 } */
 }
 

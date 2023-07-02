@@ -1,5 +1,5 @@
 /* Name mangling for the 3.0 -*- C++ -*- ABI.
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
    Written by Alex Samuel <samuel@codesourcery.com>
 
    This file is part of GCC.
@@ -805,6 +805,18 @@ write_mangled_name (const tree decl, bool top_level)
     write_string (".pre");
   else if (DECL_IS_POST_FN_P (decl))
     write_string (".post");
+
+  /* If this is a coroutine helper, then append an appropriate string to
+     identify which.  */
+  if (tree ramp = DECL_RAMP_FN (decl))
+    {
+      if (DECL_ACTOR_FN (ramp) == decl)
+	write_string (JOIN_STR "actor");
+      else if (DECL_DESTROY_FN (ramp) == decl)
+	write_string (JOIN_STR "destroy");
+      else
+	gcc_unreachable ();
+    }
 }
 
 /* Returns true if the return type of DECL is part of its signature, and
@@ -863,17 +875,6 @@ write_encoding (const tree decl)
 				mangle_return_type_p (decl),
 				d);
 
-      /* If this is a coroutine helper, then append an appropriate string to
-	 identify which.  */
-      if (tree ramp = DECL_RAMP_FN (decl))
-	{
-	  if (DECL_ACTOR_FN (ramp) == decl)
-	    write_string (JOIN_STR "actor");
-	  else if (DECL_DESTROY_FN (ramp) == decl)
-	    write_string (JOIN_STR "destroy");
-	  else
-	    gcc_unreachable ();
-	}
     }
 }
 
@@ -1388,6 +1389,28 @@ find_decomp_unqualified_name (tree decl, size_t *len)
   return p;
 }
 
+/* "For the purposes of mangling, the name of an anonymous union is considered
+   to be the name of the first named data member found by a pre-order,
+   depth-first, declaration-order walk of the data members of the anonymous
+   union. If there is no such data member (i.e., if all of the data members in
+   the union are unnamed), then there is no way for a program to refer to the
+   anonymous union, and there is therefore no need to mangle its name."  */
+
+static tree
+anon_aggr_naming_decl (tree type)
+{
+  tree field = next_aggregate_field (TYPE_FIELDS (type));
+  for (; field; field = next_aggregate_field (DECL_CHAIN (field)))
+    {
+      if (DECL_NAME (field))
+	return field;
+      if (ANON_AGGR_TYPE_P (TREE_TYPE (field)))
+	if (tree sub = anon_aggr_naming_decl (TREE_TYPE (field)))
+	  return sub;
+    }
+  return NULL_TREE;
+}
+
 /* We don't need to handle thunks, vtables, or VTTs here.  Those are
    mangled through special entry points.
 
@@ -1431,7 +1454,10 @@ write_unqualified_name (tree decl)
 
   bool found = false;
 
-  if (DECL_NAME (decl) == NULL_TREE)
+  if (DECL_NAME (decl) == NULL_TREE
+      && ANON_AGGR_TYPE_P (TREE_TYPE (decl)))
+    decl = anon_aggr_naming_decl (TREE_TYPE (decl));
+  else if (DECL_NAME (decl) == NULL_TREE)
     {
       found = true;
       gcc_assert (DECL_ASSEMBLER_NAME_SET_P (decl));
@@ -1815,7 +1841,7 @@ write_closure_type_name (const tree type)
       if (abi_warn_or_compat_version_crosses (18))
 	G.need_abi_warning = true;
 
-  write_method_parms (parms, /*method_p=*/1, fn);
+  write_method_parms (parms, TREE_CODE (TREE_TYPE (fn)) == METHOD_TYPE, fn);
   write_char ('E');
   if ((LAMBDA_EXPR_SCOPE_SIG_DISCRIMINATOR (lambda)
        != LAMBDA_EXPR_SCOPE_ONLY_DISCRIMINATOR (lambda))
@@ -2731,11 +2757,11 @@ write_builtin_type (tree type)
 	write_char ('d');
       else if (type == long_double_type_node)
 	write_char ('e');
-      else if (type == dfloat32_type_node || type == fallback_dfloat32_type)
+      else if (type == dfloat32_type_node)
 	write_string ("Df");
-      else if (type == dfloat64_type_node || type == fallback_dfloat64_type)
+      else if (type == dfloat64_type_node)
 	write_string ("Dd");
-      else if (type == dfloat128_type_node || type == fallback_dfloat128_type)
+      else if (type == dfloat128_type_node)
 	write_string ("De");
       else if (type == float16_type_node)
 	write_string ("DF16_");
@@ -2751,6 +2777,8 @@ write_builtin_type (tree type)
 	write_string ("DF64x");
       else if (type == float128x_type_node)
 	write_string ("DF128x");
+      else if (type == bfloat16_type_node)
+	write_string ("DF16b");
       else
 	gcc_unreachable ();
       break;
@@ -3106,6 +3134,10 @@ write_expression (tree expr)
   else if (TREE_CODE_CLASS (code) == tcc_constant
 	   || code == CONST_DECL)
     write_template_arg_literal (expr);
+  else if (code == EXCESS_PRECISION_EXPR
+	   && TREE_CODE (TREE_OPERAND (expr, 0)) == REAL_CST)
+    write_template_arg_literal (fold_convert (TREE_TYPE (expr),
+					      TREE_OPERAND (expr, 0)));
   else if (code == PARM_DECL && DECL_ARTIFICIAL (expr))
     {
       gcc_assert (id_equal (DECL_NAME (expr), "this"));
@@ -3369,6 +3401,11 @@ write_expression (tree expr)
 	}
       else
 	write_string ("tr");
+    }
+  else if (code == NOEXCEPT_EXPR)
+    {
+      write_string ("nx");
+      write_expression (TREE_OPERAND (expr, 0));
     }
   else if (code == CONSTRUCTOR)
     {
@@ -3761,7 +3798,7 @@ write_template_arg (tree node)
 	}
     }
 
-  if (TREE_CODE (node) == VAR_DECL && DECL_NTTP_OBJECT_P (node))
+  if (VAR_P (node) && DECL_NTTP_OBJECT_P (node))
     /* We want to mangle the argument, not the var we stored it in.  */
     node = tparm_object_argument (node);
 
@@ -3814,6 +3851,10 @@ write_template_arg (tree node)
 	   || code == CONST_DECL
 	   || null_member_pointer_value_p (node))
     write_template_arg_literal (node);
+  else if (code == EXCESS_PRECISION_EXPR
+	   && TREE_CODE (TREE_OPERAND (node, 0)) == REAL_CST)
+    write_template_arg_literal (fold_convert (TREE_TYPE (node),
+					      TREE_OPERAND (node, 0)));
   else if (DECL_P (node))
     {
       write_char ('L');

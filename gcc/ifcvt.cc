@@ -1,5 +1,5 @@
 /* If-conversion support.
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -2022,7 +2022,7 @@ bbs_ok_for_cmove_arith (basic_block bb_a, basic_block bb_b, rtx to_rename)
 	}
 
       /* Make sure this is a REG and not some instance
-	 of ZERO_EXTRACT or SUBREG or other dangerous stuff.
+	 of ZERO_EXTRACT or non-paradoxical SUBREG or other dangerous stuff.
 	 If we have a memory destination then we have a pair of simple
 	 basic blocks performing an operation of the form [addr] = c ? a : b.
 	 bb_valid_for_noce_process_p will have ensured that these are
@@ -2030,7 +2030,8 @@ bbs_ok_for_cmove_arith (basic_block bb_a, basic_block bb_b, rtx to_rename)
 	 to be renamed.  Assert that the callers set this up properly.  */
       if (MEM_P (SET_DEST (sset_b)))
 	gcc_assert (rtx_equal_p (SET_DEST (sset_b), to_rename));
-      else if (!REG_P (SET_DEST (sset_b)))
+      else if (!REG_P (SET_DEST (sset_b))
+	       && !paradoxical_subreg_p (SET_DEST (sset_b)))
 	{
 	  BITMAP_FREE (bba_sets);
 	  return false;
@@ -3136,14 +3137,17 @@ bb_valid_for_noce_process_p (basic_block test_bb, rtx cond,
 
 	  rtx sset = single_set (insn);
 	  gcc_assert (sset);
+	  rtx dest = SET_DEST (sset);
+	  if (SUBREG_P (dest))
+	    dest = SUBREG_REG (dest);
 
 	  if (contains_mem_rtx_p (SET_SRC (sset))
-	      || !REG_P (SET_DEST (sset))
-	      || reg_overlap_mentioned_p (SET_DEST (sset), cond))
+	      || !REG_P (dest)
+	      || reg_overlap_mentioned_p (dest, cond))
 	    goto free_bitmap_and_fail;
 
 	  potential_cost += pattern_cost (sset, speed_p);
-	  bitmap_set_bit (test_bb_temps, REGNO (SET_DEST (sset)));
+	  bitmap_set_bit (test_bb_temps, REGNO (dest));
 	}
     }
 
@@ -4253,6 +4257,9 @@ cond_move_convert_if_block (struct noce_if_info *if_infop,
 	    e = dest;
 	}
 
+      if (if_infop->cond_inverted)
+	std::swap (t, e);
+
       target = noce_emit_cmove (if_infop, dest, code, cond_arg0, cond_arg1,
 				t, e);
       if (!target)
@@ -4350,7 +4357,7 @@ cond_move_process_if_block (struct noce_if_info *if_info)
       goto done;
     }
   seq = end_ifcvt_sequence (if_info);
-  if (!seq)
+  if (!seq || !targetm.noce_conversion_profitable_p (seq, if_info))
     goto done;
 
   loc_insn = first_active_insn (then_bb);
@@ -4405,7 +4412,6 @@ noce_find_if_block (basic_block test_bb, edge then_edge, edge else_edge,
   basic_block then_bb, else_bb, join_bb;
   bool then_else_reversed = false;
   rtx_insn *jump;
-  rtx cond;
   rtx_insn *cond_earliest;
   struct noce_if_info if_info;
   bool speed_p = optimize_bb_for_speed_p (test_bb);
@@ -4481,25 +4487,28 @@ noce_find_if_block (basic_block test_bb, edge then_edge, edge else_edge,
   if (! onlyjump_p (jump))
     return FALSE;
 
-  /* If this is not a standard conditional jump, we can't parse it.  */
-  cond = noce_get_condition (jump, &cond_earliest, then_else_reversed);
-  if (!cond)
-    return FALSE;
-
-  /* We must be comparing objects whose modes imply the size.  */
-  if (GET_MODE (XEXP (cond, 0)) == BLKmode)
-    return FALSE;
-
   /* Initialize an IF_INFO struct to pass around.  */
   memset (&if_info, 0, sizeof if_info);
   if_info.test_bb = test_bb;
   if_info.then_bb = then_bb;
   if_info.else_bb = else_bb;
   if_info.join_bb = join_bb;
-  if_info.cond = cond;
+  if_info.cond = noce_get_condition (jump, &cond_earliest,
+				     then_else_reversed);
   rtx_insn *rev_cond_earliest;
   if_info.rev_cond = noce_get_condition (jump, &rev_cond_earliest,
 					 !then_else_reversed);
+  if (!if_info.cond && !if_info.rev_cond)
+    return FALSE;
+  if (!if_info.cond)
+    {
+      std::swap (if_info.cond, if_info.rev_cond);
+      std::swap (cond_earliest, rev_cond_earliest);
+      if_info.cond_inverted = true;
+    }
+  /* We must be comparing objects whose modes imply the size.  */
+  if (GET_MODE (XEXP (if_info.cond, 0)) == BLKmode)
+    return FALSE;
   gcc_assert (if_info.rev_cond == NULL_RTX
 	      || rev_cond_earliest == cond_earliest);
   if_info.cond_earliest = cond_earliest;
@@ -4518,7 +4527,9 @@ noce_find_if_block (basic_block test_bb, edge then_edge, edge else_edge,
 
   /* Do the real work.  */
 
-  if (noce_process_if_block (&if_info))
+  /* ??? noce_process_if_block has not yet been updated to handle
+     inverted conditions.  */
+  if (!if_info.cond_inverted && noce_process_if_block (&if_info))
     return TRUE;
 
   if (HAVE_conditional_move

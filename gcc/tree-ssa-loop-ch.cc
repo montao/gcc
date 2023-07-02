@@ -1,5 +1,5 @@
 /* Loop header copying on trees.
-   Copyright (C) 2004-2022 Free Software Foundation, Inc.
+   Copyright (C) 2004-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -59,17 +59,18 @@ edge_range_query (irange &r, edge e, gcond *cond, gimple_ranger &ranger)
     r.set_varying (boolean_type_node);
 }
 
-/* Return true if the condition on the first iteration of the loop can
-   be statically determined.  */
+/* Return edge that is true in the first iteration of the loop
+   and NULL otherwise.  */
 
-static bool
-entry_loop_condition_is_static (class loop *l, gimple_ranger *ranger)
+static edge
+static_loop_exit (class loop *l, gimple_ranger *ranger)
 {
   edge e = loop_preheader_edge (l);
-  gcond *last = safe_dyn_cast <gcond *> (last_stmt (e->dest));
+  gcond *last = safe_dyn_cast <gcond *> (*gsi_last_bb (e->dest));
+  edge ret_e;
 
   if (!last)
-    return false;
+    return NULL;
 
   edge true_e, false_e;
   extract_true_false_edges_from_block (e->dest, &true_e, &false_e);
@@ -77,17 +78,23 @@ entry_loop_condition_is_static (class loop *l, gimple_ranger *ranger)
   /* If neither edge is the exit edge, this is not a case we'd like to
      special-case.  */
   if (!loop_exit_edge_p (l, true_e) && !loop_exit_edge_p (l, false_e))
-    return false;
+    return NULL;
 
-  tree desired_static_value;
+  int_range<1> desired_static_range;
   if (loop_exit_edge_p (l, true_e))
-    desired_static_value = boolean_false_node;
+   {
+      desired_static_range = range_false ();
+      ret_e = true_e;
+   }
   else
-    desired_static_value = boolean_true_node;
+  {
+    desired_static_range = range_true ();
+    ret_e = false_e;
+  }
 
   int_range<2> r;
   edge_range_query (r, e, last, *ranger);
-  return r == int_range<2> (desired_static_value, desired_static_value);
+  return r == desired_static_range ? ret_e : NULL;
 }
 
 /* Check whether we should duplicate HEADER of LOOP.  At most *LIMIT
@@ -133,7 +140,7 @@ should_duplicate_loop_header_p (basic_block header, class loop *loop,
       return false;
     }
 
-  gcond *last = safe_dyn_cast <gcond *> (last_stmt (header));
+  gcond *last = safe_dyn_cast <gcond *> (*gsi_last_bb (header));
   if (!last)
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -244,7 +251,7 @@ should_duplicate_loop_header_p (basic_block header, class loop *loop,
 static bool
 do_while_loop_p (class loop *loop)
 {
-  gimple *stmt = last_stmt (loop->latch);
+  gimple *stmt = last_nondebug_stmt (loop->latch);
 
   /* If the latch of the loop is not empty, it is not a do-while loop.  */
   if (stmt
@@ -381,7 +388,7 @@ unsigned int
 ch_base::copy_headers (function *fun)
 {
   basic_block header;
-  edge exit, entry;
+  edge exit, nonexit, entry;
   basic_block *bbs, *copied_bbs;
   unsigned n_bbs;
   unsigned bbs_size;
@@ -394,8 +401,11 @@ ch_base::copy_headers (function *fun)
   copied_bbs = XNEWVEC (basic_block, n_basic_blocks_for_fn (fun));
   bbs_size = n_basic_blocks_for_fn (fun);
 
-  auto_vec<loop_p> candidates;
+  struct candidate {class loop *loop; edge static_exit;};
+  auto_vec<struct candidate> candidates;
   auto_vec<std::pair<edge, loop_p> > copied;
+  auto_vec<class loop *> loops_to_unloop;
+  auto_vec<int> loops_to_unloop_nunroll;
 
   mark_dfs_back_edges ();
   gimple_ranger *ranger = new gimple_ranger;
@@ -408,6 +418,14 @@ ch_base::copy_headers (function *fun)
 		 "Analyzing loop %i\n", loop->num);
 
       header = loop->header;
+      if (!get_max_loop_iterations_int (loop))
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file, "Loop %d never loops.\n", loop->num);
+	  loops_to_unloop.safe_push (loop);
+	  loops_to_unloop_nunroll.safe_push (0);
+	  continue;
+	}
 
       /* If the loop is already a do-while style one (either because it was
 	 written as such, or because jump threading transformed it into one),
@@ -417,12 +435,14 @@ ch_base::copy_headers (function *fun)
 	  || !process_loop_p (loop))
 	continue;
 
+      edge static_exit = static_loop_exit (loop, ranger);
+
       /* Avoid loop header copying when optimizing for size unless we can
 	 determine that the loop condition is static in the first
 	 iteration.  */
       if (optimize_loop_for_size_p (loop)
 	  && !loop->force_vectorize
-	  && !entry_loop_condition_is_static (loop, ranger))
+	  && !static_exit)
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    fprintf (dump_file,
@@ -432,13 +452,14 @@ ch_base::copy_headers (function *fun)
 	}
 
       if (should_duplicate_loop_header_p (header, loop, &remaining_limit))
-	candidates.safe_push (loop);
+	candidates.safe_push ({loop, static_exit});
     }
   /* Do not use ranger after we change the IL and not have updated SSA.  */
   delete ranger;
 
-  for (auto loop : candidates)
+  for (auto candidate : candidates)
     {
+      class loop *loop = candidate.loop;
       int initial_limit = param_max_loop_header_insns;
       int remaining_limit = initial_limit;
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -453,8 +474,16 @@ ch_base::copy_headers (function *fun)
 	 the header to have just a single successor and copying up to
 	 postdominator.  */
 
-      exit = NULL;
+      nonexit = NULL;
       n_bbs = 0;
+      int nexits = 0;
+      profile_count exit_count = profile_count::zero ();
+      profile_count entry_count = profile_count::zero ();
+      edge e;
+      edge_iterator ei;
+      FOR_EACH_EDGE (e, ei, loop->header->preds)
+	if (e->src != loop->latch)
+	  entry_count += e->count ();
       while (should_duplicate_loop_header_p (header, loop, &remaining_limit))
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -463,34 +492,51 @@ ch_base::copy_headers (function *fun)
 	  /* Find a successor of header that is inside a loop; i.e. the new
 	     header after the condition is copied.  */
 	  if (flow_bb_inside_loop_p (loop, EDGE_SUCC (header, 0)->dest))
-	    exit = EDGE_SUCC (header, 0);
+	    {
+	      nonexit = EDGE_SUCC (header, 0);
+	      exit = EDGE_SUCC (header, 1);
+	    }
 	  else
-	    exit = EDGE_SUCC (header, 1);
+	    {
+	      nonexit = EDGE_SUCC (header, 1);
+	      exit = EDGE_SUCC (header, 0);
+	    }
+	  exit_count += exit->count ();
+	  nexits++;
 	  bbs[n_bbs++] = header;
 	  gcc_assert (bbs_size > n_bbs);
-	  header = exit->dest;
+	  header = nonexit->dest;
 	}
 
-      if (!exit)
+      if (!nonexit)
 	continue;
 
       if (dump_file && (dump_flags & TDF_DETAILS))
-	fprintf (dump_file,
-		 "Duplicating header of the loop %d up to edge %d->%d,"
-		 " %i insns.\n",
-		 loop->num, exit->src->index, exit->dest->index,
-		 initial_limit - remaining_limit);
+	{
+	  fprintf (dump_file,
+		   "Duplicating header of the loop %d up to edge %d->%d,"
+		   " %i insns.\n",
+		   loop->num, exit->src->index, exit->dest->index,
+		   initial_limit - remaining_limit);
+	  if (candidate.static_exit)
+	    fprintf (dump_file,
+		     "  Will eliminate peeled conditional in bb %d.\n",
+		     candidate.static_exit->src->index);
+	}
 
       /* Ensure that the header will have just the latch as a predecessor
 	 inside the loop.  */
-      if (!single_pred_p (exit->dest))
-	exit = single_pred_edge (split_edge (exit));
+      if (!single_pred_p (nonexit->dest))
+	{
+	  header = split_edge (nonexit);
+	  exit = single_pred_edge (header);
+	}
 
       entry = loop_preheader_edge (loop);
 
       propagate_threaded_block_debug_into (exit->dest, entry->dest);
       if (!gimple_duplicate_sese_region (entry, exit, bbs, n_bbs, copied_bbs,
-					 true))
+					 true, candidate.static_exit))
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    fprintf (dump_file, "Duplication failed.\n");
@@ -542,10 +588,20 @@ ch_base::copy_headers (function *fun)
 	    }
 	}
 
-      /* Ensure that the latch and the preheader is simple (we know that they
-	 are not now, since there was the loop exit condition.  */
-      split_edge (loop_preheader_edge (loop));
-      split_edge (loop_latch_edge (loop));
+      /* Update header of the loop.  */
+      loop->header = header;
+      /* Find correct latch.  We only duplicate chain of conditionals so
+	 there should be precisely two edges to the new header.  One entry
+	 edge and one to latch.  */
+      FOR_EACH_EDGE (e, ei, loop->header->preds)
+	if (header != e->src)
+	  {
+	    loop->latch = e->src;
+	    break;
+	  }
+      /* Ensure that the latch is simple.  */
+      if (!single_succ_p (loop_latch_edge (loop)->src))
+	split_edge (loop_latch_edge (loop));
 
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
@@ -554,7 +610,87 @@ ch_base::copy_headers (function *fun)
 	  else
 	    fprintf (dump_file, "Loop %d is still not do-while loop.\n",
 		     loop->num);
+	  fprintf (dump_file, "Exit count: ");
+	  exit_count.dump (dump_file);
+	  fprintf (dump_file, "\nEntry count: ");
+	  entry_count.dump (dump_file);
+	  fprintf (dump_file, "\n");
 	}
+
+      /* We possibly decreased number of itrations by 1.  */
+      auto_vec<edge> exits = get_loop_exit_edges (loop);
+      bool precise = (nexits == (int) exits.length ());
+      /* Check that loop may not terminate in other way than via
+	 basic blocks we duplicated.  */
+      if (precise)
+	{
+	  basic_block *bbs = get_loop_body (loop);
+	  for (unsigned i = 0; i < loop->num_nodes && precise; ++i)
+	   {
+	     basic_block bb = bbs[i];
+	     bool found_exit = false;
+	     FOR_EACH_EDGE (e, ei, bb->succs)
+	      if (!flow_bb_inside_loop_p (loop, e->dest))
+		{
+		  found_exit = true;
+		  break;
+		}
+	     /* If BB has exit, it was duplicated.  */
+	     if (found_exit)
+	       continue;
+	     /* Give up on irreducible loops.  */
+	     if (bb->flags & BB_IRREDUCIBLE_LOOP)
+	       {
+		 precise = false;
+		 break;
+	       }
+	     /* Check that inner loops are finite.  */
+	     for (class loop *l = bb->loop_father; l != loop && precise;
+		  l = loop_outer (l))
+	       if (!l->finite_p)
+		 {
+		   precise = false;
+		   break;
+		 }
+	     /* Verify that there is no statement that may be terminate
+		execution in a way not visible to CFG.  */
+	     for (gimple_stmt_iterator bsi = gsi_start_bb (bb);
+		  !gsi_end_p (bsi); gsi_next (&bsi))
+	       if (stmt_can_terminate_bb_p (gsi_stmt (bsi)))
+		 precise = false;
+	   }
+	  free (bbs);
+	}
+      if (precise
+	  && get_max_loop_iterations_int (loop) == 1)
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file, "Loop %d no longer loops.\n", loop->num);
+	  loops_to_unloop.safe_push (loop);
+	  loops_to_unloop_nunroll.safe_push (0);
+	}
+      else if (precise)
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file,
+		     "Peeled all exits:"
+		     " decreased number of iterations of loop %d by 1.\n",
+		     loop->num);
+	  adjust_loop_info_after_peeling (loop, 1, true);
+	}
+      else if (exit_count >= entry_count.apply_scale (9, 10))
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file,
+		     "Peeled likely exits: likely decreased number "
+		     "of iterations of loop %d by 1.\n", loop->num);
+	  adjust_loop_info_after_peeling (loop, 1, false);
+	}
+      else if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file,
+		 "Not decreased number"
+		 " of iterations of loop %d; likely exits remains.\n",
+		 loop->num);
 
       changed = true;
     }
@@ -580,6 +716,12 @@ ch_base::copy_headers (function *fun)
 	  do_rpo_vn (cfun, entry, exit_bbs);
 	  BITMAP_FREE (exit_bbs);
 	}
+    }
+  if (!loops_to_unloop.is_empty ())
+    {
+      bool irred_invalidated;
+      unloop_loops (loops_to_unloop, loops_to_unloop_nunroll, NULL, &irred_invalidated);
+      changed = true;
     }
   free (bbs);
   free (copied_bbs);

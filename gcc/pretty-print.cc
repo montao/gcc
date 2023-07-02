@@ -1,5 +1,5 @@
 /* Various declarations for language-independent pretty-print subroutines.
-   Copyright (C) 2003-2022 Free Software Foundation, Inc.
+   Copyright (C) 2003-2023 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@integrable-solutions.net>
 
 This file is part of GCC.
@@ -1826,6 +1826,35 @@ pp_string (pretty_printer *pp, const char *str)
 {
   gcc_checking_assert (str);
   pp_maybe_wrap_text (pp, str, str + strlen (str));
+}
+
+/* Append code point C to the output area of PRETTY-PRINTER, encoding it
+   as UTF-8.  */
+
+void
+pp_unicode_character (pretty_printer *pp, unsigned c)
+{
+  static const uchar masks[6] =  { 0x00, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC };
+  static const uchar limits[6] = { 0x80, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE };
+  size_t nbytes;
+  uchar buf[6], *p = &buf[6];
+
+  nbytes = 1;
+  if (c < 0x80)
+    *--p = c;
+  else
+    {
+      do
+	{
+	  *--p = ((c & 0x3F) | 0x80);
+	  c >>= 6;
+	  nbytes++;
+	}
+      while (c >= 0x3F || (c & limits[nbytes-1]));
+      *--p = (c | masks[nbytes-1]);
+    }
+
+  pp_append_r (pp, (const char *)p, nbytes);
 }
 
 /* Append the leading N characters of STRING to the output area of

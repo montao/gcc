@@ -1,5 +1,5 @@
 /* Define builtin-in macros for the C family front ends.
-   Copyright (C) 2002-2022 Free Software Foundation, Inc.
+   Copyright (C) 2002-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1074,11 +1074,18 @@ c_cpp_builtins (cpp_reader *pfile)
 	  /* Set feature test macros for C++23.  */
 	  cpp_define (pfile, "__cpp_size_t_suffix=202011L");
 	  cpp_define (pfile, "__cpp_if_consteval=202106L");
-	  cpp_define (pfile, "__cpp_constexpr=202211L");
+	  cpp_define (pfile, "__cpp_auto_cast=202110L");
+	  if (cxx_dialect <= cxx23)
+	    cpp_define (pfile, "__cpp_constexpr=202211L");
 	  cpp_define (pfile, "__cpp_multidimensional_subscript=202211L");
 	  cpp_define (pfile, "__cpp_named_character_escapes=202207L");
 	  cpp_define (pfile, "__cpp_static_call_operator=202207L");
 	  cpp_define (pfile, "__cpp_implicit_move=202207L");
+	}
+      if (cxx_dialect > cxx23)
+	{
+	  /* Set feature test macros for C++26.  */
+	  cpp_define (pfile, "__cpp_constexpr=202306L");
 	}
       if (flag_concepts)
         {
@@ -1521,6 +1528,9 @@ c_cpp_builtins (cpp_reader *pfile)
 #endif
       builtin_define_with_int_value ("__LIBGCC_DWARF_FRAME_REGISTERS__",
 				     DWARF_FRAME_REGISTERS);
+      builtin_define_with_int_value ("__LIBGCC_DWARF_CIE_DATA_ALIGNMENT__",
+				     DWARF_CIE_DATA_ALIGNMENT);
+
 #ifdef EH_RETURN_STACKADJ_RTX
       cpp_define (pfile, "__LIBGCC_EH_RETURN_STACKADJ_RTX__");
 #endif
@@ -1900,6 +1910,8 @@ type_suffix (tree type)
 	      systems use it anyway.  */
 	   || type == char_type_node)
     is_long = 0;
+  else if (type == wchar_type_node)
+    return type_suffix (underlying_wchar_type_node);
   else
     gcc_unreachable ();
 

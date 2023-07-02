@@ -1,6 +1,6 @@
 /* Support for simple predicate analysis.
 
-   Copyright (C) 2001-2022 Free Software Foundation, Inc.
+   Copyright (C) 2001-2023 Free Software Foundation, Inc.
    Contributed by Xinliang David Li <davidxl@google.com>
    Generalized by Martin Sebor <msebor@redhat.com>
 
@@ -307,7 +307,8 @@ find_var_cmp_const (pred_chain_union preds, gphi *phi, gimple **flag_def,
 	  value_range r;
 	  if (!INTEGRAL_TYPE_P (type)
 	      || !get_range_query (cfun)->range_of_expr (r, cond_rhs)
-	      || r.kind () != VR_RANGE)
+	      || r.undefined_p ()
+	      || r.varying_p ())
 	    continue;
 
 	  wide_int min = r.lower_bound ();
@@ -728,11 +729,11 @@ value_sat_pred_p (tree val, tree boundary, tree_code cmpc,
   if (cmpc != BIT_AND_EXPR)
     return is_value_included_in (val, boundary, cmpc);
 
-  wide_int andw = wi::to_wide (val) & wi::to_wide (boundary);
+  widest_int andw = wi::to_widest (val) & wi::to_widest (boundary);
   if (exact_p)
-    return andw == wi::to_wide (val);
+    return andw == wi::to_widest (val);
 
-  return andw.to_uhwi ();
+  return wi::ne_p (andw, 0);
 }
 
 /* Return true if the domain of single predicate expression PRED1
@@ -1830,7 +1831,7 @@ predicate::init_from_control_deps (const vec<edge> *dep_chains,
 		}
 	    }
 	  /* Get the conditional controlling the bb exit edge.  */
-	  gimple *cond_stmt = last_stmt (guard_bb);
+	  gimple *cond_stmt = *gsi_last_bb (guard_bb);
 	  if (gimple_code (cond_stmt) == GIMPLE_COND)
 	    {
 	      /* The true edge corresponds to the uninteresting condition.
@@ -2215,11 +2216,11 @@ uninit_analysis::is_use_guarded (gimple *use_stmt, basic_block use_bb,
     return false;
 
   use_preds.simplify (use_stmt, /*is_use=*/true);
+  use_preds.normalize (use_stmt, /*is_use=*/true);
   if (use_preds.is_false ())
     return true;
   if (use_preds.is_true ())
     return false;
-  use_preds.normalize (use_stmt, /*is_use=*/true);
 
   /* Try to prune the dead incoming phi edges.  */
   if (!overlap (phi, opnds, visited, use_preds))
@@ -2237,11 +2238,11 @@ uninit_analysis::is_use_guarded (gimple *use_stmt, basic_block use_bb,
 	return false;
 
       m_phi_def_preds.simplify (phi);
+      m_phi_def_preds.normalize (phi);
       if (m_phi_def_preds.is_false ())
 	return false;
       if (m_phi_def_preds.is_true ())
 	return true;
-      m_phi_def_preds.normalize (phi);
     }
 
   /* Return true if the predicate guarding the valid definition (i.e.,

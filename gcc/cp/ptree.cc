@@ -1,5 +1,5 @@
 /* Prints out trees in human readable form.
-   Copyright (C) 1992-2022 Free Software Foundation, Inc.
+   Copyright (C) 1992-2023 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -346,6 +346,9 @@ cxx_print_xnode (FILE *file, tree node, int indent)
     case TEMPLATE_INFO:
       print_node (file, "template", TI_TEMPLATE (node), indent+4);
       print_node (file, "args", TI_ARGS (node), indent+4);
+      if (TI_TEMPLATE (node)
+	  && PRIMARY_TEMPLATE_P (TI_TEMPLATE (node)))
+	print_node (file, "partial", TI_PARTIAL_INFO (node), indent+4);
       if (TI_PENDING_TEMPLATE_FLAG (node))
 	{
 	  indent_to (file, indent + 3);

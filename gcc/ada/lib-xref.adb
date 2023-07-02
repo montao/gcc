@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1998-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -706,7 +706,7 @@ package body Lib.Xref is
             Set_Referenced (E);
 
          --  For the case where the entity is on the left hand side of an
-         --  assignment statment, we do nothing here.
+         --  assignment statement, we do nothing here.
 
          --  The processing for Analyze_Assignment_Statement will set the
          --  Referenced_As_LHS flag.

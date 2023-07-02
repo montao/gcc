@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -557,6 +557,9 @@ package body Sem is
          when N_String_Literal =>
             Analyze_String_Literal (N);
 
+         when N_Interpolated_String_Literal =>
+            Analyze_Interpolated_String_Literal (N);
+
          when N_Subprogram_Body =>
             Analyze_Subprogram_Body (N);
 
@@ -756,6 +759,29 @@ package body Sem is
       end case;
 
       Debug_A_Exit ("analyzing  ", N, "  (done)");
+
+      --  Set Is_Not_Self_Hidden flag. RM-8.3(16) says a declaration
+      --  is no longer hidden from all visibility after "the end of the
+      --  declaration", so we set the flag here (in addition to setting it
+      --  elsewhere to handle the "except..." cases of 8.3(16)). However,
+      --  we implement 3.8(10) using the same flag, so in that case we
+      --  need to defer the setting until the end of the record.
+
+      declare
+         E : constant Entity_Id := Defining_Entity_Or_Empty (N);
+      begin
+         if Present (E) then
+            if Ekind (E) = E_Void
+              and then Nkind (N) = N_Component_Declaration
+              and then Present (Scope (E))
+              and then Ekind (Scope (E)) = E_Record_Type
+            then
+               null; -- Set it later, in Analyze_Component_Declaration
+            elsif not Is_Not_Self_Hidden (E) then
+               Set_Is_Not_Self_Hidden (E);
+            end if;
+         end if;
+      end;
 
       --  Mark relevant use-type and use-package clauses as effective
       --  preferring the original node over the analyzed one in the case that

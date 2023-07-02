@@ -1,5 +1,5 @@
 /* JSON output for diagnostics
-   Copyright (C) 2018-2022 Free Software Foundation, Inc.
+   Copyright (C) 2018-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -324,6 +324,15 @@ json_file_final_cb (diagnostic_context *)
   free (filename);
 }
 
+/* Callback for diagnostic_context::m_diagrams.m_emission_cb.  */
+
+static void
+json_emit_diagram (diagnostic_context *,
+		   const diagnostic_diagram &)
+{
+  /* No-op.  */
+}
+
 /* Populate CONTEXT in preparation for JSON output (either to stderr, or
    to a file).  */
 
@@ -340,6 +349,7 @@ diagnostic_output_format_init_json (diagnostic_context *context)
   context->begin_group_cb = json_begin_group;
   context->end_group_cb =  json_end_group;
   context->print_path = NULL; /* handled in json_end_diagnostic.  */
+  context->m_diagrams.m_emission_cb = json_emit_diagram;
 
   /* The metadata is handled in JSON format, rather than as text.  */
   context->show_cwe = false;

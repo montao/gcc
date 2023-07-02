@@ -1,5 +1,5 @@
 /* Prototypes for exported functions defined in arm.cc and pe.c
-   Copyright (C) 1999-2022 Free Software Foundation, Inc.
+   Copyright (C) 1999-2023 Free Software Foundation, Inc.
    Contributed by Richard Earnshaw (rearnsha@arm.com)
    Minor hacks by Nick Clifton (nickc@cygnus.com)
 
@@ -23,6 +23,8 @@
 #define GCC_ARM_PROTOS_H
 
 #include "sbitmap.h"
+
+rtl_opt_pass *make_pass_insert_bti (gcc::context *ctxt);
 
 extern enum unwind_info_type arm_except_unwind_info (struct gcc_options *);
 extern int use_return_insn (int, rtx);
@@ -122,6 +124,7 @@ extern int arm_coproc_mem_operand_wb (rtx, int);
 extern int neon_vector_mem_operand (rtx, int, bool);
 extern int mve_vector_mem_operand (machine_mode, rtx, bool);
 extern int neon_struct_mem_operand (rtx);
+extern int mve_struct_mem_operand (rtx);
 
 extern rtx *neon_vcmla_lane_prepare_operands (rtx *);
 
@@ -179,6 +182,7 @@ extern bool arm_is_long_call_p (tree);
 extern int    arm_emit_vector_const (FILE *, rtx);
 extern void arm_emit_fp16_const (rtx c);
 extern const char * arm_output_load_gr (rtx *);
+extern const char * arm_output_load_tpidr (rtx, bool);
 extern const char *vfp_output_vstmd (rtx *);
 extern void arm_output_multireg_pop (rtx *, bool, rtx, bool, bool);
 extern void arm_set_return_address (rtx, rtx);
@@ -207,9 +211,33 @@ extern opt_machine_mode arm_get_mask_mode (machine_mode mode);
 
 #endif /* RTX_CODE */
 
+/* It's convenient to divide the built-in function codes into groups,
+   rather than having everything in a single enum.  This type enumerates
+   those groups.  */
+enum arm_builtin_class
+{
+  ARM_BUILTIN_GENERAL,
+  ARM_BUILTIN_MVE
+};
+
+/* Built-in function codes are structured so that the low
+   ARM_BUILTIN_SHIFT bits contain the arm_builtin_class
+   and the upper bits contain a group-specific subcode.  */
+const unsigned int ARM_BUILTIN_SHIFT = 1;
+
+/* Mask that selects the arm part of a function code.  */
+const unsigned int ARM_BUILTIN_CLASS = (1 << ARM_BUILTIN_SHIFT) - 1;
+
 /* MVE functions.  */
 namespace arm_mve {
   void handle_arm_mve_types_h ();
+  void handle_arm_mve_h (bool);
+  tree resolve_overloaded_builtin (location_t, unsigned int,
+				   vec<tree, va_gc> *);
+  bool check_builtin_call (location_t, vec<location_t>, unsigned int,
+			   tree, unsigned int, tree *);
+  gimple *gimple_fold_builtin (unsigned int code, gcall *stmt);
+  rtx expand_builtin (unsigned int, tree, rtx);
 }
 
 /* Thumb functions.  */
@@ -378,6 +406,7 @@ extern int vfp3_const_double_for_bits (rtx);
 extern void arm_emit_coreregs_64bit_shift (enum rtx_code, rtx, rtx, rtx, rtx,
 					   rtx);
 extern bool arm_fusion_enabled_p (tune_params::fuse_ops);
+extern bool arm_current_function_pac_enabled_p (void);
 extern bool arm_valid_symbolic_address_p (rtx);
 extern bool arm_validize_comparison (rtx *, rtx *, rtx *);
 extern bool arm_expand_vector_compare (rtx, rtx_code, rtx, rtx, bool);
@@ -580,6 +609,7 @@ struct cpu_option
 
 extern const arch_option all_architectures[];
 extern const cpu_option all_cores[];
+
 
 const cpu_option *arm_parse_cpu_option_name (const cpu_option *, const char *,
 					     const char *, bool = true);

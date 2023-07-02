@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2022 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2023 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    Namelist transfer functions contributed by Paul Thomas
    F2003 I/O support contributed by Jerry DeLisle
@@ -4522,8 +4522,7 @@ st_read_done_worker (st_parameter_dt *dtp, bool unlock)
 	    {
 	      free (dtp->u.p.current_unit->filename);
 	      dtp->u.p.current_unit->filename = NULL;
-	      if (dtp->u.p.current_unit->ls)
-		free (dtp->u.p.current_unit->ls);
+	      free (dtp->u.p.current_unit->ls);
 	      dtp->u.p.current_unit->ls = NULL;
 	    }
 	  free_newunit = true;
@@ -4619,8 +4618,7 @@ st_write_done_worker (st_parameter_dt *dtp, bool unlock)
 	    {
 	      free (dtp->u.p.current_unit->filename);
 	      dtp->u.p.current_unit->filename = NULL;
-	      if (dtp->u.p.current_unit->ls)
-		free (dtp->u.p.current_unit->ls);
+	      free (dtp->u.p.current_unit->ls);
 	      dtp->u.p.current_unit->ls = NULL;
 	    }
 	  free_newunit = true;

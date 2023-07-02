@@ -1,5 +1,5 @@
 /* Utility functions for the analyzer.
-   Copyright (C) 2019-2022 Free Software Foundation, Inc.
+   Copyright (C) 2019-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -93,7 +93,9 @@ class bounded_ranges_manager;
 class pending_diagnostic;
 class pending_note;
 struct event_loc_info;
-class state_change_event;
+class checker_event;
+  class state_change_event;
+  class warning_event;
 class checker_path;
 class extrinsic_state;
 class sm_state_map;
@@ -123,6 +125,8 @@ class call_summary;
 class call_summary_replay;
 struct per_function_data;
 struct interesting_t;
+
+class feasible_node;
 
 /* Forward decls of functions.  */
 
@@ -179,6 +183,11 @@ extern tree get_field_at_bit_offset (tree record_type, bit_offset_t bit_offset);
 class region_offset
 {
 public:
+  region_offset ()
+  : m_base_region (NULL), m_offset (0), m_sym_offset (NULL)
+  {
+  }
+
   static region_offset make_concrete (const region *base_region,
 				      bit_offset_t offset)
   {
@@ -189,9 +198,12 @@ public:
   {
     return region_offset (base_region, 0, sym_offset);
   }
+  static region_offset make_byte_offset (const region *base_region,
+					 const svalue *num_bytes_sval);
 
   const region *get_base_region () const { return m_base_region; }
 
+  bool concrete_p () const { return m_sym_offset == NULL; }
   bool symbolic_p () const { return m_sym_offset != NULL; }
 
   bit_offset_t get_bit_offset () const
@@ -200,11 +212,25 @@ public:
     return m_offset;
   }
 
+  bool get_concrete_byte_offset (byte_offset_t *out) const
+  {
+    gcc_assert (!symbolic_p ());
+    if (m_offset % BITS_PER_UNIT == 0)
+      {
+	*out = m_offset / BITS_PER_UNIT;
+	return true;
+      }
+    return false;
+  }
+
   const svalue *get_symbolic_byte_offset () const
   {
     gcc_assert (symbolic_p ());
     return m_sym_offset;
   }
+
+  tree calc_symbolic_bit_offset (const region_model &model) const;
+  const svalue *calc_symbolic_byte_offset (region_model_manager *mgr) const;
 
   bool operator== (const region_offset &other) const
   {
@@ -212,6 +238,9 @@ public:
 	    && m_offset == other.m_offset
 	    && m_sym_offset == other.m_sym_offset);
   }
+
+  void dump_to_pp (pretty_printer *pp, bool) const;
+  void dump (bool) const;
 
 private:
   region_offset (const region *base_region, bit_offset_t offset,
@@ -223,6 +252,11 @@ private:
   bit_offset_t m_offset;
   const svalue *m_sym_offset;
 };
+
+extern bool operator< (const region_offset &, const region_offset &);
+extern bool operator<= (const region_offset &, const region_offset &);
+extern bool operator> (const region_offset &, const region_offset &);
+extern bool operator>= (const region_offset &, const region_offset &);
 
 extern location_t get_stmt_location (const gimple *stmt, function *fun);
 

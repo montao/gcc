@@ -1,3 +1,407 @@
+2023-06-19  Andrew Stubbs  <ams@codesourcery.com>
+
+	* config/gcn/lib2-divmod-di.c: Reimplement like lib2-divmod.c.
+	* config/gcn/lib2-divmod.c: Likewise.
+	* config/gcn/lib2-gcn.h: Add new types and prototypes for all the
+	new vector libfuncs.
+	* config/gcn/t-amdgcn: Add new files.
+	* config/gcn/amdgcn_veclib.h: New file.
+	* config/gcn/lib2-vec_divmod-di.c: New file.
+	* config/gcn/lib2-vec_divmod-hi.c: New file.
+	* config/gcn/lib2-vec_divmod-qi.c: New file.
+	* config/gcn/lib2-vec_divmod.c: New file.
+
+2023-06-19  Andrew Stubbs  <ams@codesourcery.com>
+
+	* config/gcn/lib2-gcn.h (QItype, UQItype, HItype, UHItype): Delete.
+	(__divhi3, __modhi3, __udivhi3, __umodhi3): Delete.
+	* config/gcn/t-amdgcn: Don't build lib2-divmod-hi.c.
+	* config/gcn/lib2-divmod-hi.c: Removed.
+
+2023-06-07  Florian Weimer  <fweimer@redhat.com>
+
+	PR libgcc/109712
+	* unwind-dw2-fde-dip.c (find_fde_tail): Correct fast path for
+	parsing eh_frame.
+
+2023-06-05  Kewen Lin  <linkw@linux.ibm.com>
+
+	* config/i386/morestack.S: Use @init_array rather than
+	@progbits for section type of section .init_array.
+	* config/rs6000/morestack.S: Likewise.
+	* config/s390/morestack.S: Likewise.
+
+2023-06-05  YunQiang Su  <yunqiang.su@cipunited.com>
+
+	* config/mips/lib1funcs.S: New file.
+	define __speculation_barrier and include mips16.S.
+	* config/mips/t-mips: define LIB1ASMSRC as mips/lib1funcs.S.
+	define LIB1ASMFUNCS as _speculation_barrier.
+	set version info for __speculation_barrier.
+	* config/mips/libgcc-mips.ver: New file.
+	* config/mips/t-mips16: don't define LIB1ASMSRC as mips16.S
+	included in lib1funcs.S now.
+
+2023-06-03  Thomas Neumann  <tneumann@users.sourceforge.net>
+
+	PR libgcc/109670
+	* unwind-dw2-fde.c: Fix radix sort buffer management.
+
+2023-06-03  Thomas Neumann  <tneumann@users.sourceforge.net>
+
+	PR libgcc/109685
+	* unwind-dw2-fde.c: Free sort array in atomic fast path.
+
+2023-05-19  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* config.host: Arrange to set min Darwin OS versions from
+	the configured host version.
+	* config/darwin10-unwind-find-enc-func.c: Do not use current
+	headers, but declare the nexessary structures locally to the
+	versions in use for Mac OSX 10.6.
+	* config/t-darwin: Amend to handle configured min OS
+	versions.
+	* config/t-darwin-min-1: New.
+	* config/t-darwin-min-5: New.
+	* config/t-darwin-min-8: New.
+
+2023-05-15  Thomas Neumann  <tneumann@users.sourceforge.net>
+
+	* unwind-dw2-fde.c: Fix assert in non-atomic path.
+
+2023-05-15  Sören Tempel  <soeren+git@soeren-tempel.net>
+
+	* unwind-dw2-fde.c: Accept empty ranges when deregistering frames.
+
+2023-05-02  Patrick O'Neill  <patrick@rivosinc.com>
+
+	* config/riscv/atomic.c: Change LR.aq/SC.rl pairs into
+	sequentially consistent LR.aqrl/SC.rl pairs.
+
+2023-05-01  Dimitar Dimitrov  <dimitar@dinux.eu>
+
+	* config/pru/t-pru (HOST_LIBGCC2_CFLAGS): Add
+	-DTARGET_HAS_NO_HW_DIVIDE.
+
+2023-04-27  Hans-Peter Nilsson  <hp@axis.com>
+
+	* config/cris/t-cris (HOST_LIBGCC2_CFLAGS): Add
+	-DTARGET_HAS_NO_HW_DIVIDE.
+
+2023-04-26  Patrick O'Neill  <patrick@rivosinc.com>
+
+	PR target/104338
+	* config/riscv/atomic.c: Add reference to duplicate logic.
+
+2023-04-08  Tetsuma Hoshino  <t-hoshino@pony-e.jp>
+
+	PR target/109402
+	* config/v850/lib1funcs.S (___muldi3): Remove unnecessary
+	stack manipulations.
+
+2023-04-05  John David Anglin  <danglin@gcc.gnu.org>
+
+	PR target/109374
+	* config/pa/milli64.S (RETURN_COLUMN): Define.
+	($$divI): Add CFI directives.
+	($$divU): Likewise.
+	($$remI): Likewise.
+	($$remU): Likewise.
+
+2023-03-19  Stafford Horne  <shorne@gmail.com>
+
+	* config/or1k/sfp-machine.h (FP_HANDLE_EXCEPTIONS): Remove
+	statement clearing existing exceptions.
+
+2023-03-13  Max Filippov  <jcmvbkbc@gmail.com>
+
+	* config/xtensa/crti.S: Add .note.GNU-stack section on linux.
+	* config/xtensa/crtn.S: Likewise.
+	* config/xtensa/lib1funcs.S: Likewise.
+	* config/xtensa/lib2funcs.S: Likewise.
+
+2023-03-12  Jakub Jelinek  <jakub@redhat.com>
+
+	* config/aarch64/t-softfp (softfp_extensions): Add bfsf.
+	(softfp_truncations): Add tfbf dfbf sfbf hfbf.
+	(softfp_extras): Add floatdibf floatundibf floattibf floatuntibf.
+	* config/aarch64/libgcc-softfp.ver (GCC_13.0.0): Export
+	__extendbfsf2 and __trunc{s,d,t,h}fbf2.
+	* config/aarch64/sfp-machine.h (_FP_NANFRAC_B, _FP_NANSIGN_B): Define.
+	* soft-fp/floatundibf.c: New file.
+	* soft-fp/floatdibf.c: New file.
+
+2023-03-10  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/107703
+	* soft-fp/floattibf.c: New file.
+	* soft-fp/floatuntibf.c: New file.
+	* config/i386/libgcc-glibc.ver: Export __float{,un}tibf @ GCC_13.0.0.
+	* config/i386/64/t-softfp (softfp_extras): Add floattibf and
+	floatuntibf.
+	(CFLAGS-floattibf.c, CFLAGS-floatunstibf.c): Add -msse2.
+
+2023-03-08  Kewen Lin  <linkw@linux.ibm.com>
+
+	PR libgcc/108727
+	* config/rs6000/morestack.S (__morestack): Use PARAMS for new stack
+	bump size.
+
+2023-03-06   Michael Meissner  <meissner@linux.ibm.com>
+
+	PR target/107299
+	* config/rs6000/_divkc3.c (COPYSIGN): Use the correct built-in based on
+	whether long double is IBM or IEEE.
+	(INFINITY): Likewise.
+	(FABS): Likewise.
+	* config/rs6000/_mulkc3.c (COPYSIGN): Likewise.
+	(INFINITY): Likewise.
+	* config/rs6000/quad-float128.h (TF): Remove definition.
+	(TFtype): Define to be long double or _Float128.
+	(TCtype): Define to be _Complex long double or _Complex _Float128.
+	* libgcc2.h (TFtype): Allow machine config files to override this.
+	(TCtype): Likewise.
+	* soft-fp/quad.h (TFtype): Likewise.
+
+2023-02-13  Kito Cheng  <kito.cheng@sifive.com>
+
+	* config.host (riscv*-*-*): Add config/riscv/value-unwind.h.
+	* config/riscv/value-unwind.h: New.
+
+2023-02-03  Christophe Lyon  <christophe.lyon@arm.com>
+
+	* config/arm/pr-support.c (__gnu_unwind_execute): Use
+	TARGET_HAVE_PACBTI to define set_pac and set_pac_sp.
+
+2023-01-30  Flavio Cruz  <flaviocruz@gmail.com>
+
+	* config.host: Recognize x86_64-*-gnu* targets.
+	* config/i386/gnu-unwind.h: Update to handle __x86_64__ with a
+	TODO for now.
+
+2023-01-23  Srinath Parvathaneni  <srinath.parvathaneni@arm.com>
+
+	* config/arm/pr-support.c (__gnu_unwind_execute): Decode opcode
+	"0xb5".
+
+2023-01-23  Andrea Corallo  <andrea.corallo@arm.com>
+	    Tejas Belagod   <tbelagod@arm.com>
+	    Srinath Parvathaneni  <srinath.parvathaneni@arm.com>
+
+	* config/arm/pr-support.c (__gnu_unwind_execute): Decode
+	exception opcode (0xb4) for saving RA_AUTH_CODE and authenticate
+	with AUTG if found.
+	* config/arm/unwind-arm.c (struct pseudo_regs): New.
+	(phase1_vrs): Introduce new field to store pseudo-reg state.
+	(phase2_vrs): Likewise.
+	(_Unwind_VRS_Get): Load pseudo register state from virtual reg set.
+	(_Unwind_VRS_Set): Store pseudo register state to virtual reg set.
+	(_Unwind_VRS_Pop): Load pseudo register value from stack into VRS.
+
+2023-01-18  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	PR target/107678
+	* unwind-dw2.h (REG_UNSAVED_ARCHEXT): Add new enum.
+	* unwind-dw2.c (uw_update_context_1): Add REG_UNSAVED_ARCHEXT case.
+	* unwind-dw2-execute_cfa.h: Use REG_UNSAVED_ARCHEXT/REG_UNSAVED to
+	encode the return address signing state.
+	* config/aarch64/aarch64-unwind.h (aarch64_demangle_return_addr)
+	Check current return address signing state.
+	(aarch64_frob_update_contex): Remove.
+
+2023-01-13  John David Anglin  <danglin@gcc.gnu.org>
+
+	* config.host (hppa*64*-*-linux*): Adjust tmake_file to use
+	pa/t-pa64-linux.
+	(hppa*64*-*-hpux11*): Adjust tmake_file to use pa/t-pa64-hpux
+	instead of pa/t-hpux and pa/t-pa64.
+	* config/pa/linux-atomic.c: Define u32 type.
+	(ATOMIC_LOAD): Define new macro to implement atomic_load_1,
+	atomic_load_2, atomic_load_4 and atomic_load_8.  Update sync
+	defines to use atomic_load calls for type.
+	(SYNC_LOCK_LOAD_2): New macro to implement __sync_lock_load_8.
+	* config/pa/sync-libfuncs.c: New file.
+	* config/pa/t-netbsd (LIB2ADD_ST): Define.
+	* config/pa/t-openbsd (LIB2ADD_ST): Define.
+	* config/pa/t-pa64-hpux: New file.
+	* config/pa/t-pa64-linux: New file.
+
+2023-01-13  Jonathan Wakely  <jwakely@redhat.com>
+
+	PR libstdc++/108331
+	* config/i386/gthr-win32.h (__gthr_win32_legacy_mutex_t): New
+	struct matching the previous __gthread_mutex_t struct.
+	(__GTHREAD_LEGACY_MUTEX_T): Define.
+
+2023-01-13  Seija Kijin  <doremylover456@gmail.com>
+
+	* config/arm/lib1funcs.S (clear_cache): Use SVC to conform to
+	unified syntax.
+
+2023-01-07  LIU Hao  <lh_mouse@126.com>
+
+	PR middle-end/108300
+	* config/i386/enable-execute-stack-mingw32.c: Define
+	`WIN32_LEAN_AND_MEAN` before <windows.h>.
+	* libgcc2.c: Likewise.
+	* unwind-generic.h: Likewise.
+
+2023-01-03  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2-execute_cfa.h: New file.  Extracted from
+	the execute_cfa_program function in unwind-dw2.c.
+	* unwind-dw2.c (execute_cfa_program_generic): New function.
+	(execute_cfa_program_specialized): Likewise.
+	(execute_cfa_program): Call execute_cfa_program_specialized
+	or execute_cfa_program_generic, as appropriate.
+
+2023-01-03  Florian Weimer  <fweimer@redhat.com>
+
+	Revert:
+	2023-01-03  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2.c (dwarf_reg_size): New function.
+	(_Unwind_GetGR, _Unwind_SetGR, _Unwind_SetGRPtr)
+	(_Unwind_SetSpColumn, uw_install_context_1): Use it.
+	(uw_init_context_1): Do not initialize dwarf_reg_size_table
+	if not in use.
+
+2023-01-03  Florian Weimer  <fweimer@redhat.com>
+
+	Revert:
+	2023-01-03  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2-execute_cfa.h: New file.  Extracted from
+	the execute_cfa_program function in unwind-dw2.c.
+	* unwind-dw2.c (execute_cfa_program_generic): New function.
+	(execute_cfa_program_specialized): Likewise.
+	(execute_cfa_program): Call execute_cfa_program_specialized
+	or execute_cfa_program_generic, as appropriate.
+
+2023-01-02  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2-execute_cfa.h: New file.  Extracted from
+	the execute_cfa_program function in unwind-dw2.c.
+	* unwind-dw2.c (execute_cfa_program_generic): New function.
+	(execute_cfa_program_specialized): Likewise.
+	(execute_cfa_program): Call execute_cfa_program_specialized
+	or execute_cfa_program_generic, as appropriate.
+
+2023-01-02  Florian Weimer  <fweimer@redhat.com>
+
+	* unwind-dw2.c (dwarf_reg_size): New function.
+	(_Unwind_GetGR, _Unwind_SetGR, _Unwind_SetGRPtr)
+	(_Unwind_SetSpColumn, uw_install_context_1): Use it.
+	(uw_init_context_1): Do not initialize dwarf_reg_size_table
+	if not in use.
+
+2022-12-25  Jonathan Yong  <10walls@gmail.com>
+
+	* config/i386/gthr-win32.h: undef CC_NONE
+
+2022-12-24  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* config/t-slibgcc-darwin (install-darwin-libgcc-stubs): Skip the
+	install of libgcc_s.1.dylib when the installation is into the build
+	gcc directory.
+
+2022-12-23  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* config.host (i[34567]86-*-mingw*): Add thread fragment after EH one
+	as well as new i386/t-slibgcc-mingw fragment.
+	(x86_64-*-mingw*): Likewise.
+	* config/i386/gthr-win32.h: If _WIN32_WINNT is at least 0x0600, define
+	both __GTHREAD_HAS_COND and __GTHREADS_CXX0X to 1.
+	Error out if _GTHREAD_USE_MUTEX_TIMEDLOCK is 1.
+	Include stdlib.h instead of errno.h and do not include _mingw.h.
+	(CONST_CAST2): Add specific definition for C++.
+	(ATTRIBUTE_UNUSED): New macro.
+	(__UNUSED_PARAM): Delete.
+	Define WIN32_LEAN_AND_MEAN before including windows.h.
+	(__gthread_objc_data_tls): Use TLS_OUT_OF_INDEXES instead of (DWORD)-1.
+	(__gthread_objc_init_thread_system): Likewise.
+	(__gthread_objc_thread_get_data): Minor tweak.
+	(__gthread_objc_condition_allocate): Use ATTRIBUTE_UNUSED.
+	(__gthread_objc_condition_deallocate): Likewise.
+	(__gthread_objc_condition_wait): Likewise.
+	(__gthread_objc_condition_broadcast): Likewise.
+	(__gthread_objc_condition_signal): Likewise.
+	Include sys/time.h.
+	(__gthr_win32_DWORD): New typedef.
+	(__gthr_win32_HANDLE): Likewise.
+	(__gthr_win32_CRITICAL_SECTION): Likewise.
+	(__gthr_win32_CONDITION_VARIABLE): Likewise.
+	(__gthread_t): Adjust.
+	(__gthread_key_t): Likewise.
+	(__gthread_mutex_t): Likewise.
+	(__gthread_recursive_mutex_t): Likewise.
+	(__gthread_cond_t): New typedef.
+	(__gthread_time_t): Likewise.
+	(__GTHREAD_MUTEX_INIT_DEFAULT): Delete.
+	(__GTHREAD_RECURSIVE_MUTEX_INIT_DEFAULT): Likewise.
+	(__GTHREAD_COND_INIT_FUNCTION): Define.
+	(__GTHREAD_TIME_INIT): Likewise.
+	(__gthr_i486_lock_cmp_xchg): Delete.
+	(__gthr_win32_create): Declare.
+	(__gthr_win32_join): Likewise.
+	(__gthr_win32_self): Likewise.
+	(__gthr_win32_detach): Likewise.
+	(__gthr_win32_equal): Likewise.
+	(__gthr_win32_yield): Likewise.
+	(__gthr_win32_mutex_destroy): Likewise.
+	(__gthr_win32_cond_init_function): Likewise if __GTHREADS_HAS_COND is 1.
+	(__gthr_win32_cond_broadcast): Likewise.
+	(__gthr_win32_cond_signal): Likewise.
+	(__gthr_win32_cond_wait): Likewise.
+	(__gthr_win32_cond_timedwait): Likewise.
+	(__gthr_win32_recursive_mutex_init_function): Delete.
+	(__gthr_win32_recursive_mutex_lock): Likewise.
+	(__gthr_win32_recursive_mutex_unlock): Likewise.
+	(__gthr_win32_recursive_mutex_destroy): Likewise.
+	(__gthread_create): New inline function.
+	(__gthread_join): Likewise.
+	(__gthread_self): Likewise.
+	(__gthread_detach): Likewise.
+	(__gthread_equal): Likewise.
+	(__gthread_yield): Likewise.
+	(__gthread_cond_init_function): Likewise if __GTHREADS_HAS_COND is 1.
+	(__gthread_cond_broadcast): Likewise.
+	(__gthread_cond_signal): Likewise.
+	(__gthread_cond_wait): Likewise.
+	(__gthread_cond_timedwait): Likewise.
+	(__GTHREAD_WIN32_INLINE): New macro.
+	(__GTHREAD_WIN32_COND_INLINE): Likewise.
+	(__GTHREAD_WIN32_ACTIVE_P): Likewise.
+	Define WIN32_LEAN_AND_MEAN before including windows.h.
+	(__gthread_once): Minor tweaks.
+	(__gthread_key_create): Use ATTRIBUTE_UNUSED and TLS_OUT_OF_INDEXES.
+	(__gthread_key_delete): Minor tweak.
+	(__gthread_getspecific): Likewise.
+	(__gthread_setspecific): Likewise.
+	(__gthread_mutex_init_function): Reimplement.
+	(__gthread_mutex_destroy): Likewise.
+	(__gthread_mutex_lock): Likewise.
+	(__gthread_mutex_trylock): Likewise.
+	(__gthread_mutex_unlock): Likewise.
+	(__gthr_win32_abs_to_rel_time): Declare.
+	(__gthread_recursive_mutex_init_function): Reimplement.
+	(__gthread_recursive_mutex_destroy): Likewise.
+	(__gthread_recursive_mutex_lock): Likewise.
+	(__gthread_recursive_mutex_trylock): Likewise.
+	(__gthread_recursive_mutex_unlock): Likewise.
+	(__gthread_cond_destroy): New inline function.
+	(__gthread_cond_wait_recursive): Likewise.
+	* config/i386/gthr-win32.c: Delete everything.
+	Include gthr-win32.h to get the out-of-line version of inline routines.
+	Add compile-time checks for the local version of the Win32 types.
+	* config/i386/gthr-win32-cond.c: New file.
+	* config/i386/gthr-win32-thread.c: Likewise.
+	* config/i386/t-gthr-win32: Add config/i386/gthr-win32-thread.c to the
+	EH part, config/i386/gthr-win32-cond.c and config/i386/gthr-win32.c to
+	the static version of libgcc.
+	* config/i386/t-slibgcc-mingw: New file.
+	* config/i386/libgcc-mingw.ver: Likewise.
+
 2022-12-16  Thomas Neumann  <tneumann@users.sourceforge.net>
 
 	* unwind-dw2-fde.c: Initialize fde object lazily when
@@ -12554,7 +12958,7 @@
 	shared-object.mk, siditi-object.mk, static-object.mk: New files.
 	* configure: Generated.
 
-Copyright (C) 2007-2022 Free Software Foundation, Inc.
+Copyright (C) 2007-2023 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

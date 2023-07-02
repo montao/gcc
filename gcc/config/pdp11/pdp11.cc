@@ -1,5 +1,5 @@
 /* Subroutines for gcc2 for pdp11.
-   Copyright (C) 1994-2022 Free Software Foundation, Inc.
+   Copyright (C) 1994-2023 Free Software Foundation, Inc.
    Contributed by Michael K. Gschwind (mike@vlsivie.tuwien.ac.at).
 
 This file is part of GCC.
@@ -1881,7 +1881,7 @@ pdp11_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
      in registers.  The rest go into memory.  */
   return (TYPE_MODE (type) == DImode
 	  || (FLOAT_MODE_P (TYPE_MODE (type)) && ! TARGET_AC0)
-	  || TREE_CODE (type) == VECTOR_TYPE
+	  || VECTOR_TYPE_P (type)
 	  || COMPLEX_MODE_P (TYPE_MODE (type)));
 }
 

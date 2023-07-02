@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 1992-2022, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2023, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -245,11 +245,12 @@ extern void gigi (Node_Id gnat_root,
 		  struct List_Header *list_headers_ptr,
 		  Nat number_file,
 		  struct File_Info_Type *file_info_ptr,
+		  Entity_Id standard_address,
 		  Entity_Id standard_boolean,
-		  Entity_Id standard_integer,
 		  Entity_Id standard_character,
-		  Entity_Id standard_long_long_float,
 		  Entity_Id standard_exception_type,
+		  Entity_Id standard_integer,
+		  Entity_Id standard_long_long_float,
 		  Int gigi_operating_mode);
 
 #ifdef __cplusplus

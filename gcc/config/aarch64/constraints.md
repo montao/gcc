@@ -1,5 +1,5 @@
 ;; Machine description for AArch64 architecture.
-;; Copyright (C) 2009-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2009-2023 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -287,7 +287,7 @@
 ;; Used for storing or loading pairs in an AdvSIMD register using an STP/LDP
 ;; as a vector-concat.  The address mode uses the same constraints as if it
 ;; were for a single value.
-(define_memory_constraint "Umn"
+(define_relaxed_memory_constraint "Umn"
   "@internal
   A memory address suitable for a load/store pair operation."
   (and (match_code "mem")

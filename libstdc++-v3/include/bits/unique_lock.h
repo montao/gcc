@@ -1,6 +1,6 @@
 // std::unique_lock implementation -*- C++ -*-
 
-// Copyright (C) 2008-2022 Free Software Foundation, Inc.
+// Copyright (C) 2008-2023 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -37,6 +37,7 @@
 #else
 
 #include <bits/chrono.h>
+#include <bits/error_constants.h> // for std::errc
 #include <bits/move.h> // for std::swap
 #include <bits/std_mutex.h> // for std::defer_lock_t
 

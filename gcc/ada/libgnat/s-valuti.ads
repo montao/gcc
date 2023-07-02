@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -51,7 +51,8 @@ is
 
    procedure Bad_Value (S : String)
    with
-     Depends => (null => S);
+     Depends => (null => S),
+     Exceptional_Cases => (others => Standard.False);
    pragma No_Return (Bad_Value);
    --  Raises constraint error with message: bad input for 'Value: "xxx"
 

@@ -1,5 +1,5 @@
 /* LoongArch definitions.
-   Copyright (C) 2021-2022 Free Software Foundation, Inc.
+   Copyright (C) 2021-2023 Free Software Foundation, Inc.
    Contributed by Loongson Ltd.
 
 This file is part of GCC.
@@ -144,6 +144,7 @@ extern int loongarch_cpu_issue_rate[];
 extern int loongarch_cpu_multipass_dfa_lookahead[];
 
 extern struct loongarch_cache loongarch_cpu_cache[];
+extern struct loongarch_align loongarch_cpu_align[];
 extern struct loongarch_rtx_cost_data loongarch_cpu_rtx_cost_data[];
 
 #ifdef __cplusplus

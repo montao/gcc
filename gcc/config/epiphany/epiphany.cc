@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the EPIPHANY cpu.
-   Copyright (C) 1994-2022 Free Software Foundation, Inc.
+   Copyright (C) 1994-2023 Free Software Foundation, Inc.
    Contributed by Embecosm on behalf of Adapteva, Inc.
 
 This file is part of GCC.
@@ -105,8 +105,6 @@ static rtx_insn *frame_insn (rtx);
 
 #define TARGET_SCHED_ISSUE_RATE epiphany_issue_rate
 #define TARGET_SCHED_ADJUST_COST epiphany_adjust_cost
-
-#define TARGET_LRA_P hook_bool_void_false
 
 #define TARGET_LEGITIMATE_ADDRESS_P epiphany_legitimate_address_p
 
@@ -2161,8 +2159,7 @@ epiphany_function_ok_for_sibcall (tree decl, tree exp)
 
       gcc_assert (POINTER_TYPE_P (fn_type));
       fn_type = TREE_TYPE (fn_type);
-      gcc_assert (TREE_CODE (fn_type) == FUNCTION_TYPE
-		  || TREE_CODE (fn_type) == METHOD_TYPE);
+      gcc_assert (FUNC_OR_METHOD_TYPE_P (fn_type));
       call_interrupt_p
 	= lookup_attribute ("interrupt", TYPE_ATTRIBUTES (fn_type)) != NULL;
     }

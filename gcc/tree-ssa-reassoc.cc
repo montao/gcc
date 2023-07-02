@@ -1,5 +1,5 @@
 /* Reassociation for trees.
-   Copyright (C) 2005-2022 Free Software Foundation, Inc.
+   Copyright (C) 2005-2023 Free Software Foundation, Inc.
    Contributed by Daniel Berlin <dan@dberlin.org>
 
 This file is part of GCC.
@@ -54,6 +54,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa-reassoc.h"
 #include "tree-ssa-math-opts.h"
 #include "gimple-range.h"
+#include "internal-fn.h"
 
 /*  This is a simple global reassociation pass.  It is, in part, based
     on the LLVM pass of the same name (They do some things more/less
@@ -1564,6 +1565,15 @@ build_and_add_sum (tree type, tree op1, tree op2, enum tree_code opcode)
       && (!op2def || gimple_nop_p (op2def)))
     {
       gsi = gsi_after_labels (single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun)));
+      if (!gsi_end_p (gsi)
+	  && is_gimple_call (gsi_stmt (gsi))
+	  && (gimple_call_flags (gsi_stmt (gsi)) & ECF_RETURNS_TWICE))
+	{
+	  /* Don't add statements before a returns_twice call at the start
+	     of a function.  */
+	  split_edge (single_succ_edge (ENTRY_BLOCK_PTR_FOR_FN (cfun)));
+	  gsi = gsi_after_labels (single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun)));
+	}
       if (gsi_end_p (gsi))
 	{
 	  gimple_stmt_iterator gsi2
@@ -2272,6 +2282,15 @@ eliminate_redundant_comparison (enum tree_code opcode,
 	  STRIP_USELESS_TYPE_CONVERSION (newop2);
 	  if (!is_gimple_val (newop1) || !is_gimple_val (newop2))
 	    continue;
+	  if (lcode == TREE_CODE (t)
+	      && operand_equal_p (op1, newop1, 0)
+	      && operand_equal_p (op2, newop2, 0))
+	    t = curr->op;
+	  else if ((TREE_CODE (newop1) == SSA_NAME
+		    && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (newop1))
+		   || (TREE_CODE (newop2) == SSA_NAME
+		       && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (newop2)))
+	    continue;
 	}
 
       if (dump_file && (dump_flags & TDF_DETAILS))
@@ -2817,7 +2836,7 @@ update_range_test (struct range_entry *range, struct range_entry *otherrange,
   operand_entry *oe = (*ops)[idx];
   tree op = oe->op;
   gimple *stmt = op ? SSA_NAME_DEF_STMT (op)
-		    : last_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id));
+		    : last_nondebug_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id));
   location_t loc = gimple_location (stmt);
   tree optype = op ? TREE_TYPE (op) : boolean_type_node;
   tree tem = build_range_check (loc, optype, unshare_expr (exp),
@@ -3354,7 +3373,8 @@ optimize_range_tests_to_bit_test (enum tree_code opcode, int first, int length,
       value_range r;
       if (TREE_CODE (exp) == SSA_NAME
 	  && get_range_query (cfun)->range_of_expr (r, exp)
-	  && r.kind () == VR_RANGE
+	  && !r.undefined_p ()
+	  && !r.varying_p ()
 	  && wi::leu_p (r.upper_bound () - r.lower_bound (), prec - 1))
 	{
 	  wide_int min = r.lower_bound ();
@@ -3381,7 +3401,8 @@ optimize_range_tests_to_bit_test (enum tree_code opcode, int first, int length,
 	  operand_entry *oe = (*ops)[ranges[i].idx];
 	  tree op = oe->op;
 	  gimple *stmt = op ? SSA_NAME_DEF_STMT (op)
-			    : last_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id));
+			    : last_nondebug_stmt (BASIC_BLOCK_FOR_FN
+							  (cfun, oe->id));
 	  location_t loc = gimple_location (stmt);
 	  tree optype = op ? TREE_TYPE (op) : boolean_type_node;
 
@@ -3812,7 +3833,7 @@ optimize_range_tests_var_bound (enum tree_code opcode, int first, int length,
       else
 	{
 	  operand_entry *oe = (*ops)[ranges[i].idx];
-	  stmt = last_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id));
+	  stmt = last_nondebug_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id));
 	  if (gimple_code (stmt) != GIMPLE_COND)
 	    continue;
 	  ccode = gimple_cond_code (stmt);
@@ -4077,7 +4098,7 @@ optimize_range_tests (enum tree_code opcode,
       init_range_entry (ranges + i, oe->op,
 			oe->op
 			? NULL
-			: last_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id)));
+			: last_nondebug_stmt (BASIC_BLOCK_FOR_FN (cfun, oe->id)));
       /* For | invert it now, we will invert it again before emitting
 	 the optimized expression.  */
       if (opcode == BIT_IOR_EXPR
@@ -4424,7 +4445,7 @@ suitable_cond_bb (basic_block bb, basic_block test_bb, basic_block *other_bb,
   if (test_bb == bb)
     return false;
   /* Check last stmt first.  */
-  stmt = last_stmt (bb);
+  stmt = last_nondebug_stmt (bb);
   if (stmt == NULL
       || (gimple_code (stmt) != GIMPLE_COND
 	  && (backward || !final_range_test_p (stmt)))
@@ -4502,7 +4523,7 @@ suitable_cond_bb (basic_block bb, basic_block test_bb, basic_block *other_bb,
 	    }
 	  else
 	    {
-	      gimple *test_last = last_stmt (test_bb);
+	      gimple *test_last = last_nondebug_stmt (test_bb);
 	      if (gimple_code (test_last) == GIMPLE_COND)
 		{
 		  if (backward ? e2->src != test_bb : e->src != bb)
@@ -4570,7 +4591,7 @@ no_side_effect_bb (basic_block bb)
 
   if (!gimple_seq_empty_p (phi_nodes (bb)))
     return false;
-  last = last_stmt (bb);
+  last = last_nondebug_stmt (bb);
   for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
     {
       gimple *stmt = gsi_stmt (gsi);
@@ -4678,6 +4699,9 @@ update_ops (tree var, enum tree_code code, const vec<operand_entry *> &ops,
       gimple_set_uid (g, gimple_uid (stmt));
       gimple_set_visited (g, true);
       gsi_insert_before (&gsi, g, GSI_SAME_STMT);
+      gimple_stmt_iterator gsi2 = gsi_for_stmt (g);
+      if (fold_stmt_inplace (&gsi2))
+	update_stmt (g);
     }
   return var;
 }
@@ -4762,7 +4786,7 @@ maybe_optimize_range_tests (gimple *stmt)
 	  return cfg_cleanup_needed;
 	else if (single_pred_p (e->dest))
 	  {
-	    stmt = last_stmt (e->dest);
+	    stmt = last_nondebug_stmt (e->dest);
 	    if (stmt
 		&& gimple_code (stmt) == GIMPLE_COND
 		&& EDGE_COUNT (e->dest->succs) == 2)
@@ -4820,7 +4844,7 @@ maybe_optimize_range_tests (gimple *stmt)
       bb_ent.first_idx = ops.length ();
       bb_ent.last_idx = bb_ent.first_idx;
       e = find_edge (bb, other_bb);
-      stmt = last_stmt (bb);
+      stmt = last_nondebug_stmt (bb);
       gimple_set_visited (stmt, true);
       if (gimple_code (stmt) != GIMPLE_COND)
 	{
@@ -4996,7 +5020,7 @@ maybe_optimize_range_tests (gimple *stmt)
 	      tree new_op;
 
 	      max_idx = idx;
-	      stmt = last_stmt (bb);
+	      stmt = last_nondebug_stmt (bb);
 	      new_op = update_ops (bbinfo[idx].op,
 				   (enum tree_code)
 				   ops[bbinfo[idx].first_idx]->rank,
@@ -5073,7 +5097,7 @@ maybe_optimize_range_tests (gimple *stmt)
 	      && bbinfo[idx].op == NULL_TREE
 	      && ops[bbinfo[idx].first_idx]->op != NULL_TREE)
 	    {
-	      gcond *cond_stmt = as_a <gcond *> (last_stmt (bb));
+	      gcond *cond_stmt = as_a <gcond *> (*gsi_last_bb (bb));
 
 	      if (idx > max_idx)
 		max_idx = idx;
@@ -5117,35 +5141,6 @@ maybe_optimize_range_tests (gimple *stmt)
   return cfg_cleanup_needed;
 }
 
-/* Return true if OPERAND is defined by a PHI node which uses the LHS
-   of STMT in it's operands.  This is also known as a "destructive
-   update" operation.  */
-
-static bool
-is_phi_for_stmt (gimple *stmt, tree operand)
-{
-  gimple *def_stmt;
-  gphi *def_phi;
-  tree lhs;
-  use_operand_p arg_p;
-  ssa_op_iter i;
-
-  if (TREE_CODE (operand) != SSA_NAME)
-    return false;
-
-  lhs = gimple_assign_lhs (stmt);
-
-  def_stmt = SSA_NAME_DEF_STMT (operand);
-  def_phi = dyn_cast <gphi *> (def_stmt);
-  if (!def_phi)
-    return false;
-
-  FOR_EACH_PHI_ARG (arg_p, def_phi, i, SSA_OP_USE)
-    if (lhs == USE_FROM_PTR (arg_p))
-      return true;
-  return false;
-}
-
 /* Remove def stmt of VAR if VAR has zero uses and recurse
    on rhs1 operand if so.  */
 
@@ -5177,24 +5172,11 @@ remove_visited_stmt_chain (tree var)
    swaps two operands if it is profitable for binary operation
    consuming OPINDEX + 1 abnd OPINDEX + 2 operands.
 
-   We pair ops with the same rank if possible.
-
-   The alternative we try is to see if STMT is a destructive
-   update style statement, which is like:
-   b = phi (a, ...)
-   a = c + b;
-   In that case, we want to use the destructive update form to
-   expose the possible vectorizer sum reduction opportunity.
-   In that case, the third operand will be the phi node. This
-   check is not performed if STMT is null.
-
-   We could, of course, try to be better as noted above, and do a
-   lot of work to try to find these opportunities in >3 operand
-   cases, but it is unlikely to be worth it.  */
+   We pair ops with the same rank if possible.  */
 
 static void
 swap_ops_for_binary_stmt (const vec<operand_entry *> &ops,
-			  unsigned int opindex, gimple *stmt)
+			  unsigned int opindex)
 {
   operand_entry *oe1, *oe2, *oe3;
 
@@ -5202,17 +5184,9 @@ swap_ops_for_binary_stmt (const vec<operand_entry *> &ops,
   oe2 = ops[opindex + 1];
   oe3 = ops[opindex + 2];
 
-  if ((oe1->rank == oe2->rank
-       && oe2->rank != oe3->rank)
-      || (stmt && is_phi_for_stmt (stmt, oe3->op)
-	  && !is_phi_for_stmt (stmt, oe1->op)
-	  && !is_phi_for_stmt (stmt, oe2->op)))
+  if (oe1->rank == oe2->rank && oe2->rank != oe3->rank)
     std::swap (*oe1, *oe3);
-  else if ((oe1->rank == oe3->rank
-	    && oe2->rank != oe3->rank)
-	   || (stmt && is_phi_for_stmt (stmt, oe2->op)
-	       && !is_phi_for_stmt (stmt, oe1->op)
-	       && !is_phi_for_stmt (stmt, oe3->op)))
+  else if (oe1->rank == oe3->rank && oe2->rank != oe3->rank)
     std::swap (*oe1, *oe2);
 }
 
@@ -5497,26 +5471,62 @@ get_reassociation_width (int ops_num, enum tree_code opc,
   return width;
 }
 
-/* Recursively rewrite our linearized statements so that the operators
-   match those in OPS[OPINDEX], putting the computation in rank
-   order and trying to allow operations to be executed in
-   parallel.  */
+#define SPECIAL_BIASED_END_STMT 0 /* It is the end stmt of all ops.  */
+#define BIASED_END_STMT 1 /* It is the end stmt of normal or biased ops.  */
+#define NORMAL_END_STMT 2 /* It is the end stmt of normal ops.  */
 
+/* Rewrite statements with dependency chain with regard the chance to generate
+   FMA.
+   For the chain with FMA: Try to keep fma opportunity as much as possible.
+   For the chain without FMA: Putting the computation in rank order and trying
+   to allow operations to be executed in parallel.
+   E.g.
+   e + f + a * b + c * d;
+
+   ssa1 = e + a * b;
+   ssa2 = f + c * d;
+   ssa3 = ssa1 + ssa2;
+
+   This reassociation approach preserves the chance of fma generation as much
+   as possible.
+
+   Another thing is to avoid adding loop-carried ops to long chains, otherwise
+   the whole chain will have dependencies across the loop iteration.  Just keep
+   loop-carried ops in a separate chain.
+   E.g.
+   x_1 = phi (x_0, x_2)
+   y_1 = phi (y_0, y_2)
+
+   a + b + c + d + e + x1 + y1
+
+   SSA1 = a + b;
+   SSA2 = c + d;
+   SSA3 = SSA1 + e;
+   SSA4 = SSA3 + SSA2;
+   SSA5 = x1 + y1;
+   SSA6 = SSA4 + SSA5;
+ */
 static void
-rewrite_expr_tree_parallel (gassign *stmt, int width,
+rewrite_expr_tree_parallel (gassign *stmt, int width, bool has_fma,
 			    const vec<operand_entry *> &ops)
 {
   enum tree_code opcode = gimple_assign_rhs_code (stmt);
   int op_num = ops.length ();
+  int op_normal_num = op_num;
   gcc_assert (op_num > 0);
   int stmt_num = op_num - 1;
   gimple **stmts = XALLOCAVEC (gimple *, stmt_num);
-  int op_index = op_num - 1;
-  int stmt_index = 0;
-  int ready_stmts_end = 0;
-  int i = 0;
-  gimple *stmt1 = NULL, *stmt2 = NULL;
+  int i = 0, j = 0;
+  tree tmp_op[2], op1;
+  operand_entry *oe;
+  gimple *stmt1 = NULL;
   tree last_rhs1 = gimple_assign_rhs1 (stmt);
+  int last_rhs1_stmt_index = 0, last_rhs2_stmt_index = 0;
+  int width_active = 0, width_count = 0;
+  bool has_biased = false, ops_changed = false;
+  auto_vec<operand_entry *> ops_normal;
+  auto_vec<operand_entry *> ops_biased;
+  vec<operand_entry *> *ops1;
 
   /* We start expression rewriting from the top statements.
      So, in this loop we create a full list of statements
@@ -5525,84 +5535,162 @@ rewrite_expr_tree_parallel (gassign *stmt, int width,
   for (i = stmt_num - 2; i >= 0; i--)
     stmts[i] = SSA_NAME_DEF_STMT (gimple_assign_rhs1 (stmts[i+1]));
 
-  for (i = 0; i < stmt_num; i++)
+  /* Avoid adding loop-carried ops to long chains, first filter out the
+     loop-carried.  But we need to make sure that the length of the remainder
+     is not less than 4, which is the smallest ops length we can break the
+     dependency.  */
+  FOR_EACH_VEC_ELT (ops, i, oe)
     {
-      tree op1, op2;
-
-      /* Determine whether we should use results of
-	 already handled statements or not.  */
-      if (ready_stmts_end == 0
-	  && (i - stmt_index >= width || op_index < 1))
-	ready_stmts_end = i;
-
-      /* Now we choose operands for the next statement.  Non zero
-	 value in ready_stmts_end means here that we should use
-	 the result of already generated statements as new operand.  */
-      if (ready_stmts_end > 0)
+      if (TREE_CODE (oe->op) == SSA_NAME
+	  && bitmap_bit_p (biased_names, SSA_NAME_VERSION (oe->op))
+	  && op_normal_num > 4)
 	{
-	  op1 = gimple_assign_lhs (stmts[stmt_index++]);
-	  if (ready_stmts_end > stmt_index)
-	    op2 = gimple_assign_lhs (stmts[stmt_index++]);
-	  else if (op_index >= 0)
-	    {
-	      operand_entry *oe = ops[op_index--];
-	      stmt2 = oe->stmt_to_insert;
-	      op2 = oe->op;
-	    }
-	  else
-	    {
-	      gcc_assert (stmt_index < i);
-	      op2 = gimple_assign_lhs (stmts[stmt_index++]);
-	    }
-
-	  if (stmt_index >= ready_stmts_end)
-	    ready_stmts_end = 0;
+	  ops_biased.safe_push (oe);
+	  has_biased = true;
+	  op_normal_num --;
 	}
       else
-	{
-	  if (op_index > 1)
-	    swap_ops_for_binary_stmt (ops, op_index - 2, NULL);
-	  operand_entry *oe2 = ops[op_index--];
-	  operand_entry *oe1 = ops[op_index--];
-	  op2 = oe2->op;
-	  stmt2 = oe2->stmt_to_insert;
-	  op1 = oe1->op;
-	  stmt1 = oe1->stmt_to_insert;
-	}
+	ops_normal.safe_push (oe);
+    }
 
-      /* If we emit the last statement then we should put
-	 operands into the last statement.  It will also
-	 break the loop.  */
-      if (op_index < 0 && stmt_index == i)
-	i = stmt_num - 1;
+  /* Width should not be larger than ops length / 2, since we can not create
+     more parallel dependency chains that exceeds such value.  */
+  int width_normal = op_normal_num / 2;
+  int width_biased = (op_num - op_normal_num) / 2;
+  width_normal = width <= width_normal ? width : width_normal;
+  width_biased = width <= width_biased ? width : width_biased;
 
+  ops1 = &ops_normal;
+  width_count = width_active = width_normal;
+
+  /* Build parallel dependency chain according to width.  */
+  for (i = 0; i < stmt_num; i++)
+    {
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
 	  fprintf (dump_file, "Transforming ");
 	  print_gimple_stmt (dump_file, stmts[i], 0);
 	}
 
-      /* If the stmt that defines operand has to be inserted, insert it
-	 before the use.  */
-      if (stmt1)
-	insert_stmt_before_use (stmts[i], stmt1);
-      if (stmt2)
-	insert_stmt_before_use (stmts[i], stmt2);
-      stmt1 = stmt2 = NULL;
-
-      /* We keep original statement only for the last one.  All
-	 others are recreated.  */
-      if (i == stmt_num - 1)
+      /* When the work of normal ops is over, but the loop is not over,
+	 continue to do biased ops.  */
+      if (width_count == 0 && ops1 == &ops_normal)
 	{
-	  gimple_assign_set_rhs1 (stmts[i], op1);
-	  gimple_assign_set_rhs2 (stmts[i], op2);
-	  update_stmt (stmts[i]);
+	  ops1 = &ops_biased;
+	  width_count = width_active = width_biased;
+	  ops_changed = true;
+	}
+
+      /* Swap the operands if no FMA in the chain.  */
+      if (ops1->length () > 2 && !has_fma)
+	swap_ops_for_binary_stmt (*ops1, ops1->length () - 3);
+
+      if (i < width_active
+	  || (ops_changed && i <= (last_rhs1_stmt_index + width_active)))
+	{
+	  for (j = 0; j < 2; j++)
+	    {
+	      oe = ops1->pop ();
+	      tmp_op[j] = oe->op;
+	      /* If the stmt that defines operand has to be inserted, insert it
+		 before the use.  */
+	      stmt1 = oe->stmt_to_insert;
+	      if (stmt1)
+		insert_stmt_before_use (stmts[i], stmt1);
+	      stmt1 = NULL;
+	    }
+	  stmts[i] = build_and_add_sum (TREE_TYPE (last_rhs1),
+					tmp_op[1],
+					tmp_op[0],
+					opcode);
+	  gimple_set_visited (stmts[i], true);
+
 	}
       else
 	{
-	  stmts[i] = build_and_add_sum (TREE_TYPE (last_rhs1), op1, op2, opcode);
-	  gimple_set_visited (stmts[i], true);
+	  /* We keep original statement only for the last one.  All others are
+	     recreated.  */
+	  if (!ops1->length ())
+	    {
+	      /* For biased length equal to 2.  */
+	      if (width_count == BIASED_END_STMT && !last_rhs2_stmt_index)
+		last_rhs2_stmt_index = i - 1;
+
+	      /* When width_count == 2 and there is no biased, just finish.  */
+	      if (width_count == NORMAL_END_STMT && !has_biased)
+		{
+		  last_rhs1_stmt_index = i - 1;
+		  last_rhs2_stmt_index = i - 2;
+		}
+	      if (last_rhs1_stmt_index && (last_rhs2_stmt_index || !has_biased))
+		{
+		  /* We keep original statement only for the last one.  All
+		     others are recreated.  */
+		  gimple_assign_set_rhs1 (stmts[i], gimple_assign_lhs
+					  (stmts[last_rhs1_stmt_index]));
+		  gimple_assign_set_rhs2 (stmts[i], gimple_assign_lhs
+					  (stmts[last_rhs2_stmt_index]));
+		  update_stmt (stmts[i]);
+		}
+	      else
+		{
+		  stmts[i] =
+		    build_and_add_sum (TREE_TYPE (last_rhs1),
+				       gimple_assign_lhs (stmts[i-width_count]),
+				       gimple_assign_lhs
+				       (stmts[i-width_count+1]),
+				       opcode);
+		  gimple_set_visited (stmts[i], true);
+		  width_count--;
+
+		  /* It is the end of normal or biased ops.
+		     last_rhs1_stmt_index used to record the last stmt index
+		     for normal ops.  last_rhs2_stmt_index used to record the
+		     last stmt index for biased ops.  */
+		  if (width_count == BIASED_END_STMT)
+		    {
+		      gcc_assert (has_biased);
+		      if (ops_biased.length ())
+			last_rhs1_stmt_index = i;
+		      else
+			last_rhs2_stmt_index = i;
+		      width_count--;
+		    }
+		}
+	    }
+	  else
+	    {
+	      /* Attach the rest ops to the parallel dependency chain.  */
+	      oe = ops1->pop ();
+	      op1 = oe->op;
+	      stmt1 = oe->stmt_to_insert;
+	      if (stmt1)
+		insert_stmt_before_use (stmts[i], stmt1);
+	      stmt1 = NULL;
+
+	      /* For only one biased ops.  */
+	      if (width_count == SPECIAL_BIASED_END_STMT)
+		{
+		  /* We keep original statement only for the last one.  All
+		     others are recreated.  */
+		  gcc_assert (has_biased);
+		  gimple_assign_set_rhs1 (stmts[i], gimple_assign_lhs
+					  (stmts[last_rhs1_stmt_index]));
+		  gimple_assign_set_rhs2 (stmts[i], op1);
+		  update_stmt (stmts[i]);
+		}
+	      else
+		{
+		  stmts[i] = build_and_add_sum (TREE_TYPE (last_rhs1),
+						gimple_assign_lhs
+						(stmts[i-width_active]),
+						op1,
+						opcode);
+		  gimple_set_visited (stmts[i], true);
+		}
+	    }
 	}
+
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
 	  fprintf (dump_file, " into ");
@@ -6678,6 +6766,73 @@ transform_stmt_to_multiply (gimple_stmt_iterator *gsi, gimple *stmt,
     }
 }
 
+/* Rearrange ops may have more FMA when the chain may has more than 2 FMAs.
+   Put no-mult ops and mult ops alternately at the end of the queue, which is
+   conducive to generating more FMA and reducing the loss of FMA when breaking
+   the chain.
+   E.g.
+   a * b + c * d + e generates:
+
+   _4  = c_9(D) * d_10(D);
+   _12 = .FMA (a_7(D), b_8(D), _4);
+   _11 = e_6(D) + _12;
+
+   Rearrange ops to -> e + a * b + c * d generates:
+
+   _4  = .FMA (c_7(D), d_8(D), _3);
+   _11 = .FMA (a_5(D), b_6(D), _4);  */
+static bool
+rank_ops_for_fma (vec<operand_entry *> *ops)
+{
+  operand_entry *oe;
+  unsigned int i;
+  unsigned int ops_length = ops->length ();
+  auto_vec<operand_entry *> ops_mult;
+  auto_vec<operand_entry *> ops_others;
+
+  FOR_EACH_VEC_ELT (*ops, i, oe)
+    {
+      if (TREE_CODE (oe->op) == SSA_NAME)
+	{
+	  gimple *def_stmt = SSA_NAME_DEF_STMT (oe->op);
+	  if (is_gimple_assign (def_stmt)
+	      && gimple_assign_rhs_code (def_stmt) == MULT_EXPR)
+	    ops_mult.safe_push (oe);
+	  else
+	    ops_others.safe_push (oe);
+	}
+      else
+	ops_others.safe_push (oe);
+    }
+  /* 1. When ops_mult.length == 2, like the following case,
+
+     a * b + c * d + e.
+
+     we need to rearrange the ops.
+
+     Putting ops that not def from mult in front can generate more FMAs.
+
+     2. If all ops are defined with mult, we don't need to rearrange them.  */
+  if (ops_mult.length () >= 2 && ops_mult.length () != ops_length)
+    {
+      /* Put no-mult ops and mult ops alternately at the end of the
+	 queue, which is conducive to generating more FMA and reducing the
+	 loss of FMA when breaking the chain.  */
+      ops->truncate (0);
+      ops->splice (ops_mult);
+      int j, opindex = ops->length ();
+      int others_length = ops_others.length ();
+      for (j = 0; j < others_length; j++)
+	{
+	  oe = ops_others.pop ();
+	  ops->quick_insert (opindex, oe);
+	  if (opindex > 0)
+	    opindex--;
+	}
+      return true;
+    }
+  return false;
+}
 /* Reassociate expressions in basic block BB and its post-dominator as
    children.
 
@@ -6688,7 +6843,7 @@ reassociate_bb (basic_block bb)
 {
   gimple_stmt_iterator gsi;
   basic_block son;
-  gimple *stmt = last_stmt (bb);
+  gimple *stmt = last_nondebug_stmt (bb);
   bool cfg_cleanup_needed = false;
 
   if (stmt && !gimple_visited_p (stmt))
@@ -6842,6 +6997,7 @@ reassociate_bb (basic_block bb)
 		  machine_mode mode = TYPE_MODE (TREE_TYPE (lhs));
 		  int ops_num = ops.length ();
 		  int width;
+		  bool has_fma = false;
 
 		  /* For binary bit operations, if there are at least 3
 		     operands and the last operand in OPS is a constant,
@@ -6850,10 +7006,22 @@ reassociate_bb (basic_block bb)
 		     often match a canonical bit test when we get to RTL.  */
 		  if (ops.length () > 2
 		      && (rhs_code == BIT_AND_EXPR
-		          || rhs_code == BIT_IOR_EXPR
-		          || rhs_code == BIT_XOR_EXPR)
+			  || rhs_code == BIT_IOR_EXPR
+			  || rhs_code == BIT_XOR_EXPR)
 		      && TREE_CODE (ops.last ()->op) == INTEGER_CST)
 		    std::swap (*ops[0], *ops[ops_num - 1]);
+
+		  optimization_type opt_type = bb_optimization_type (bb);
+
+		  /* If the target support FMA, rank_ops_for_fma will detect if
+		     the chain has fmas and rearrange the ops if so.  */
+		  if (direct_internal_fn_supported_p (IFN_FMA,
+						      TREE_TYPE (lhs),
+						      opt_type)
+		      && (rhs_code == PLUS_EXPR || rhs_code == MINUS_EXPR))
+		    {
+		      has_fma = rank_ops_for_fma (&ops);
+		    }
 
 		  /* Only rewrite the expression tree to parallel in the
 		     last reassoc pass to avoid useless work back-and-forth
@@ -6868,22 +7036,24 @@ reassociate_bb (basic_block bb)
 				 "Width = %d was chosen for reassociation\n",
 				 width);
 		      rewrite_expr_tree_parallel (as_a <gassign *> (stmt),
-						  width, ops);
+						  width,
+						  has_fma,
+						  ops);
 		    }
 		  else
-                    {
-                      /* When there are three operands left, we want
-                         to make sure the ones that get the double
-                         binary op are chosen wisely.  */
-                      int len = ops.length ();
-                      if (len >= 3)
-                        swap_ops_for_binary_stmt (ops, len - 3, stmt);
+		    {
+		      /* When there are three operands left, we want
+			 to make sure the ones that get the double
+			 binary op are chosen wisely.  */
+		      int len = ops.length ();
+		      if (len >= 3 && !has_fma)
+			swap_ops_for_binary_stmt (ops, len - 3);
 
 		      new_lhs = rewrite_expr_tree (stmt, rhs_code, 0, ops,
 						   powi_result != NULL
 						   || negate_result,
 						   len != orig_len);
-                    }
+		    }
 
 		  /* If we combined some repeated factors into a 
 		     __builtin_powi call, multiply that result by the

@@ -1,5 +1,5 @@
 /* Scalar evolution detector.
-   Copyright (C) 2003-2022 Free Software Foundation, Inc.
+   Copyright (C) 2003-2023 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <s.pop@laposte.net>
 
 This file is part of GCC.
@@ -1300,13 +1300,7 @@ get_loop_exit_condition (const class loop *loop)
     fprintf (dump_file, "(get_loop_exit_condition \n  ");
 
   if (exit_edge)
-    {
-      gimple *stmt;
-
-      stmt = last_stmt (exit_edge->src);
-      if (gcond *cond_stmt = safe_dyn_cast <gcond *> (stmt))
-	res = cond_stmt;
-    }
+    res = safe_dyn_cast <gcond *> (*gsi_last_bb (exit_edge->src));
 
   if (dump_file && (dump_flags & TDF_SCEV))
     {
@@ -3038,7 +3032,8 @@ iv_can_overflow_p (class loop *loop, tree type, tree base, tree step)
 
   if (!INTEGRAL_TYPE_P (TREE_TYPE (base))
       || !get_range_query (cfun)->range_of_expr (r, base)
-      || r.kind () != VR_RANGE)
+      || r.varying_p ()
+      || r.undefined_p ())
     return true;
 
   base_min = r.lower_bound ();
@@ -3046,7 +3041,8 @@ iv_can_overflow_p (class loop *loop, tree type, tree base, tree step)
 
   if (!INTEGRAL_TYPE_P (TREE_TYPE (step))
       || !get_range_query (cfun)->range_of_expr (r, step)
-      || r.kind () != VR_RANGE)
+      || r.varying_p ()
+      || r.undefined_p ())
     return true;
 
   step_min = r.lower_bound ();
@@ -3397,12 +3393,21 @@ expression_expensive_p (tree expr, hash_map<tree, uint64_t> &cache,
 	 library call for popcount when backend does not have an instruction
 	 to do so.  We consider this to be expensive and generate
 	 __builtin_popcount only when backend defines it.  */
+      optab optab;
       combined_fn cfn = get_call_combined_fn (expr);
       switch (cfn)
 	{
 	CASE_CFN_POPCOUNT:
+	  optab = popcount_optab;
+	  goto bitcount_call;
+	CASE_CFN_CLZ:
+	  optab = clz_optab;
+	  goto bitcount_call;
+	CASE_CFN_CTZ:
+	  optab = ctz_optab;
+bitcount_call:
 	  /* Check if opcode for popcount is available in the mode required.  */
-	  if (optab_handler (popcount_optab,
+	  if (optab_handler (optab,
 			     TYPE_MODE (TREE_TYPE (CALL_EXPR_ARG (expr, 0))))
 	      == CODE_FOR_nothing)
 	    {
@@ -3415,7 +3420,7 @@ expression_expensive_p (tree expr, hash_map<tree, uint64_t> &cache,
 		 instructions.  */
 	      if (is_a <scalar_int_mode> (mode, &int_mode)
 		  && GET_MODE_SIZE (int_mode) == 2 * UNITS_PER_WORD
-		  && (optab_handler (popcount_optab, word_mode)
+		  && (optab_handler (optab, word_mode)
 		      != CODE_FOR_nothing))
 		  break;
 	      return true;

@@ -1,6 +1,6 @@
 (* Builtins.mod provides access to all built-in functions.
 
-Copyright (C) 2001-2021 Free Software Foundation, Inc.
+Copyright (C) 2001-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -57,19 +57,19 @@ BEGIN
    RETURN cbuiltin.memcpy (dest, src, nbytes)
 END memcpy ;
 
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinitef (x: SHORTREAL) : BOOLEAN ;
+PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinitef (x: SHORTREAL) : INTEGER ;
 BEGIN
-   RETURN wrapc.isfinitef (x)=1
+   RETURN wrapc.isfinitef (x)
 END isfinitef ;
 
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinite (x: REAL) : BOOLEAN ;
+PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinite (x: REAL) : INTEGER ;
 BEGIN
-   RETURN wrapc.isfinite (x)=1
+   RETURN wrapc.isfinite (x)
 END isfinite ;
 
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinitel (x: LONGREAL) : BOOLEAN ;
+PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_isfinite)) isfinitel (x: LONGREAL) : INTEGER ;
 BEGIN
-   RETURN wrapc.isfinitel (x)=1
+   RETURN wrapc.isfinitel (x)
 END isfinitel ;
 
 PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_sin)) sin (x: REAL) : REAL ;
@@ -222,21 +222,6 @@ BEGIN
    RETURN cbuiltin.ilogbl (x)
 END ilogbl ;
 
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_significand)) significand (r: REAL) : REAL ;
-BEGIN
-   RETURN cbuiltin.significand (r)
-END significand ;
-
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_significandf)) significandf (s: SHORTREAL) : SHORTREAL ;
-BEGIN
-   RETURN cbuiltin.significandf (s)
-END significandf ;
-
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_significandl)) significandl (l: LONGREAL) : LONGREAL ;
-BEGIN
-   RETURN cbuiltin.significandl (l)
-END significandl ;
-
 PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_modf)) modf (x: REAL; VAR y: REAL) : REAL ;
 BEGIN
    RETURN cbuiltin.modf (x, y)
@@ -296,21 +281,6 @@ PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_nexttowardl)) nexttowardl (x, y
 BEGIN
    RETURN cbuiltin.nexttowardl (x, y)
 END nexttowardl ;
-
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_scalb)) scalb (x, n: REAL) : REAL ;
-BEGIN
-   RETURN cbuiltin.scalb (x, n)
-END scalb ;
-
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_scalbf)) scalbf (x, n: SHORTREAL) : SHORTREAL ;
-BEGIN
-   RETURN cbuiltin.scalbf (x, n)
-END scalbf ;
-
-PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_scalbl)) scalbl (x, n: LONGREAL) : LONGREAL ;
-BEGIN
-   RETURN cbuiltin.scalbl (x, n)
-END scalbl ;
 
 PROCEDURE __ATTRIBUTE__  __BUILTIN__ ((__builtin_scalbln)) scalbln (x: REAL; n: LONGINT) : REAL ;
 BEGIN

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -1713,7 +1713,7 @@ package body Ch6 is
 
          if Style.Mode_In_Check and then Token /= Tok_Out then
             Error_Msg_SP -- CODEFIX
-              ("(style) IN should be omitted");
+              ("(style) IN should be omitted?I?");
          end if;
 
          --  Since Ada 2005, formal objects can have an anonymous access type,

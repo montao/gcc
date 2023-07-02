@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright (C) 2020 Free Software Foundation, Inc.
+# Copyright (C) 2020-2023 Free Software Foundation, Inc.
 #
 # This file is part of GCC.
 #
@@ -163,9 +163,9 @@ author_line_regex = \
         re.compile(r'^(?P<datetime>\d{4}-\d{2}-\d{2})\ {2}(?P<name>.*  <.*>)')
 additional_author_regex = re.compile(r'^\t(?P<spaces>\ *)?(?P<name>.*  <.*>)')
 changelog_regex = re.compile(r'^(?:[fF]or +)?([a-z0-9+-/]*)ChangeLog:?')
-subject_pr_regex = re.compile(r'(^|\W)PR\s+(?P<component>[a-zA-Z+-]+)/(?P<pr>\d{4,7})')
+subject_pr_regex = re.compile(r'(^|\W)PR\s+(?P<component>[a-zA-Z0-9+-]+)/(?P<pr>\d{4,7})')
 subject_pr2_regex = re.compile(r'[(\[]PR\s*(?P<pr>\d{4,7})[)\]]')
-pr_regex = re.compile(r'\tPR (?P<component>[a-z+-]+\/)?(?P<pr>[0-9]+)$')
+pr_regex = re.compile(r'\tPR (?P<component>[a-z0-9+-]+\/)?(?P<pr>[0-9]+)$')
 dr_regex = re.compile(r'\tDR ([0-9]+)$')
 star_prefix_regex = re.compile(r'\t\*(?P<spaces>\ *)(?P<content>.*)')
 end_of_location_regex = re.compile(r'[\[<(:]')

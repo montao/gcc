@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the DEC Alpha.
-   Copyright (C) 1992-2022 Free Software Foundation, Inc.
+   Copyright (C) 1992-2023 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
 This file is part of GCC.
@@ -784,10 +784,10 @@ alpha_in_small_data_p (const_tree exp)
     return false;
 
   /* COMMON symbols are never small data.  */
-  if (TREE_CODE (exp) == VAR_DECL && DECL_COMMON (exp))
+  if (VAR_P (exp) && DECL_COMMON (exp))
     return false;
 
-  if (TREE_CODE (exp) == VAR_DECL && DECL_SECTION_NAME (exp))
+  if (VAR_P (exp) && DECL_SECTION_NAME (exp))
     {
       const char *section = DECL_SECTION_NAME (exp);
       if (strcmp (section, ".sdata") == 0
@@ -6253,7 +6253,7 @@ alpha_gimplify_va_arg_1 (tree type, tree base, tree offset,
 
       return build2 (COMPLEX_EXPR, type, real_temp, imag_part);
     }
-  else if (TREE_CODE (type) == REAL_TYPE)
+  else if (SCALAR_FLOAT_TYPE_P (type))
     {
       tree fpaddend, cond, fourtyeight;
 

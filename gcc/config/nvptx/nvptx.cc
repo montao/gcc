@@ -1,5 +1,5 @@
 /* Target code for NVPTX.
-   Copyright (C) 2014-2022 Free Software Foundation, Inc.
+   Copyright (C) 2014-2023 Free Software Foundation, Inc.
    Contributed by Bernd Schmidt <bernds@codesourcery.com>
 
    This file is part of GCC.
@@ -452,7 +452,7 @@ nvptx_encode_section_info (tree decl, rtx rtl, int first)
 
       if (TREE_CONSTANT (decl))
 	area = DATA_AREA_CONST;
-      else if (TREE_CODE (decl) == VAR_DECL)
+      else if (VAR_P (decl))
 	{
 	  if (lookup_attribute ("shared", DECL_ATTRIBUTES (decl)))
 	    {
@@ -635,7 +635,7 @@ pass_in_memory (machine_mode mode, const_tree type, bool for_return)
     {
       if (AGGREGATE_TYPE_P (type))
 	return true;
-      if (TREE_CODE (type) == VECTOR_TYPE)
+      if (VECTOR_TYPE_P (type))
 	return true;
     }
 
@@ -2883,6 +2883,7 @@ nvptx_mem_maybe_shared_p (const_rtx x)
    t -- print a type opcode suffix, promoting QImode to 32 bits
    T -- print a type size in bits
    u -- print a type opcode suffix without promotions.
+   p -- print a '!' for constant 0.
    x -- print a destination operand that may also be a bit bucket.  */
 
 static void
@@ -3015,6 +3016,11 @@ nvptx_print_operand (FILE *file, rtx x, int code)
     case 'J':
       fprintf (file, "@!");
       goto common;
+
+    case 'p':
+      if (INTVAL (x) == 0)
+	fprintf (file, "!");
+      break;
 
     case 'c':
       mode = GET_MODE (XEXP (x, 0));
@@ -6041,6 +6047,29 @@ nvptx_expand_shuffle (tree exp, rtx target, machine_mode mode, int ignore)
   return target;
 }
 
+/* Expander for the bit reverse builtins.  */
+
+static rtx
+nvptx_expand_brev (tree exp, rtx target, machine_mode mode, int ignore)
+{
+  if (ignore)
+    return target;
+  
+  rtx arg = expand_expr (CALL_EXPR_ARG (exp, 0),
+			 NULL_RTX, mode, EXPAND_NORMAL);
+  if (!REG_P (arg))
+    arg = copy_to_mode_reg (mode, arg);
+  if (!target)
+    target = gen_reg_rtx (mode);
+  rtx pat;
+  if (mode == SImode)
+    pat = gen_bitrevsi2 (target, arg);
+  else
+    pat = gen_bitrevdi2 (target, arg);
+  emit_insn (pat);
+  return target;
+}
+
 const char *
 nvptx_output_red_partition (rtx dst, rtx offset)
 {
@@ -6155,8 +6184,91 @@ enum nvptx_builtins
   NVPTX_BUILTIN_CMP_SWAPLL,
   NVPTX_BUILTIN_MEMBAR_GL,
   NVPTX_BUILTIN_MEMBAR_CTA,
+  NVPTX_BUILTIN_BAR_RED_AND,
+  NVPTX_BUILTIN_BAR_RED_OR,
+  NVPTX_BUILTIN_BAR_RED_POPC,
+  NVPTX_BUILTIN_BREV,
+  NVPTX_BUILTIN_BREVLL,
   NVPTX_BUILTIN_MAX
 };
+
+/* Expander for 'bar.red' instruction builtins.  */
+
+static rtx
+nvptx_expand_bar_red (tree exp, rtx target,
+		      machine_mode ARG_UNUSED (m), int ARG_UNUSED (ignore))
+{
+  int code = DECL_MD_FUNCTION_CODE (TREE_OPERAND (CALL_EXPR_FN (exp), 0));
+  machine_mode mode = TYPE_MODE (TREE_TYPE (exp));
+
+  if (!target)
+    target = gen_reg_rtx (mode);
+
+  rtx pred, dst;
+  rtx bar = expand_expr (CALL_EXPR_ARG (exp, 0),
+			 NULL_RTX, SImode, EXPAND_NORMAL);
+  rtx nthr = expand_expr (CALL_EXPR_ARG (exp, 1),
+			  NULL_RTX, SImode, EXPAND_NORMAL);
+  rtx cpl = expand_expr (CALL_EXPR_ARG (exp, 2),
+			 NULL_RTX, SImode, EXPAND_NORMAL);
+  rtx redop = expand_expr (CALL_EXPR_ARG (exp, 3),
+			   NULL_RTX, SImode, EXPAND_NORMAL);
+  if (CONST_INT_P (bar))
+    {
+      if (INTVAL (bar) < 0 || INTVAL (bar) > 15)
+	{
+	  error_at (EXPR_LOCATION (exp),
+		    "barrier value must be within [0,15]");
+	  return const0_rtx;
+	}
+    }
+  else if (!REG_P (bar))
+    bar = copy_to_mode_reg (SImode, bar);
+
+  if (!CONST_INT_P (nthr) && !REG_P (nthr))
+    nthr = copy_to_mode_reg (SImode, nthr);
+
+  if (!CONST_INT_P (cpl))
+    {
+      error_at (EXPR_LOCATION (exp),
+		"complement argument must be constant");
+      return const0_rtx;
+    }
+
+  pred = gen_reg_rtx (BImode);
+  if (!REG_P (redop))
+    redop = copy_to_mode_reg (SImode, redop);
+  emit_insn (gen_rtx_SET (pred, gen_rtx_NE (BImode, redop, GEN_INT (0))));
+  redop = pred;
+
+  rtx pat;
+  switch (code)
+    {
+    case NVPTX_BUILTIN_BAR_RED_AND:
+      dst = gen_reg_rtx (BImode);
+      pat = gen_nvptx_barred_and (dst, bar, nthr, cpl, redop);
+      break;
+    case NVPTX_BUILTIN_BAR_RED_OR:
+      dst = gen_reg_rtx (BImode);
+      pat = gen_nvptx_barred_or (dst, bar, nthr, cpl, redop);
+      break;
+    case NVPTX_BUILTIN_BAR_RED_POPC:
+      dst = gen_reg_rtx (SImode);
+      pat = gen_nvptx_barred_popc (dst, bar, nthr, cpl, redop);
+      break;
+    default:
+      gcc_unreachable ();
+    }
+  emit_insn (pat);
+  if (GET_MODE (dst) == BImode)
+    {
+      rtx tmp = gen_reg_rtx (mode);
+      emit_insn (gen_rtx_SET (tmp, gen_rtx_NE (mode, dst, GEN_INT (0))));
+      dst = tmp;
+    }
+  emit_move_insn (target, dst);
+  return target;
+}
 
 static GTY(()) tree nvptx_builtin_decls[NVPTX_BUILTIN_MAX];
 
@@ -6197,6 +6309,16 @@ nvptx_init_builtins (void)
   DEF (CMP_SWAPLL, "cmp_swapll", (LLUINT, PTRVOID, LLUINT, LLUINT, NULL_TREE));
   DEF (MEMBAR_GL, "membar_gl", (VOID, VOID, NULL_TREE));
   DEF (MEMBAR_CTA, "membar_cta", (VOID, VOID, NULL_TREE));
+
+  DEF (BAR_RED_AND, "bar_red_and",
+       (UINT, UINT, UINT, UINT, UINT, NULL_TREE));
+  DEF (BAR_RED_OR, "bar_red_or",
+       (UINT, UINT, UINT, UINT, UINT, NULL_TREE));
+  DEF (BAR_RED_POPC, "bar_red_popc",
+       (UINT, UINT, UINT, UINT, UINT, NULL_TREE));
+
+  DEF (BREV, "brev", (UINT, UINT, NULL_TREE));
+  DEF (BREVLL, "brevll", (LLUINT, LLUINT, NULL_TREE));
 
 #undef DEF
 #undef ST
@@ -6239,6 +6361,15 @@ nvptx_expand_builtin (tree exp, rtx target, rtx ARG_UNUSED (subtarget),
     case NVPTX_BUILTIN_MEMBAR_CTA:
       emit_insn (gen_nvptx_membar_cta ());
       return NULL_RTX;
+
+    case NVPTX_BUILTIN_BAR_RED_AND:
+    case NVPTX_BUILTIN_BAR_RED_OR:
+    case NVPTX_BUILTIN_BAR_RED_POPC:
+      return nvptx_expand_bar_red (exp, target, mode, ignore);
+
+    case NVPTX_BUILTIN_BREV:
+    case NVPTX_BUILTIN_BREVLL:
+      return nvptx_expand_brev (exp, target, mode, ignore);
 
     default: gcc_unreachable ();
     }
@@ -6600,7 +6731,7 @@ nvptx_generate_vector_shuffle (location_t loc,
   if (TREE_CODE (var_type) == COMPLEX_TYPE)
     var_type = TREE_TYPE (var_type);
 
-  if (TREE_CODE (var_type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (var_type))
     code = VIEW_CONVERT_EXPR;
 
   if (TYPE_SIZE (var_type)
@@ -6690,7 +6821,7 @@ nvptx_lockless_update (location_t loc, gimple_stmt_iterator *gsi,
   tree var_type = TREE_TYPE (var);
 
   if (TREE_CODE (var_type) == COMPLEX_TYPE
-      || TREE_CODE (var_type) == REAL_TYPE)
+      || SCALAR_FLOAT_TYPE_P (var_type))
     code = VIEW_CONVERT_EXPR;
 
   if (TYPE_SIZE (var_type) == TYPE_SIZE (long_long_unsigned_type_node))
@@ -7501,9 +7632,6 @@ nvptx_asm_output_def_from_decls (FILE *stream, tree name, tree value)
 
 #undef TARGET_ATTRIBUTE_TABLE
 #define TARGET_ATTRIBUTE_TABLE nvptx_attribute_table
-
-#undef TARGET_LRA_P
-#define TARGET_LRA_P hook_bool_void_false
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P nvptx_legitimate_address_p

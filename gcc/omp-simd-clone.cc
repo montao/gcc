@@ -1,6 +1,6 @@
 /* OMP constructs' SIMD clone supporting code.
 
-Copyright (C) 2005-2022 Free Software Foundation, Inc.
+Copyright (C) 2005-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -150,7 +150,7 @@ auto_simd_check_stmt (gimple *stmt, tree outer)
 static bool
 plausible_type_for_simd_clone (tree t)
 {
-  if (TREE_CODE (t) == VOID_TYPE)
+  if (VOID_TYPE_P (t))
     return true;
   else if (RECORD_OR_UNION_TYPE_P (t) || !is_a <scalar_mode> (TYPE_MODE (t)))
     /* Small record/union types may fit into a scalar mode, but are
@@ -702,6 +702,11 @@ simd_clone_create (struct cgraph_node *old_node, bool force_local)
 	= old_node->calls_declare_variant_alt;
     }
 
+  /* Mark clones with internal linkage as gc'able, so they will not be
+     emitted unless the vectorizer can actually use them.  */
+  if (!TREE_PUBLIC (new_node->decl))
+    new_node->gc_candidate = true;
+
   return new_node;
 }
 
@@ -937,6 +942,7 @@ simd_clone_adjust_argument_types (struct cgraph_node *node)
 	}
       sc->args[i].orig_type = base_type;
       sc->args[i].arg_type = SIMD_CLONE_ARG_TYPE_MASK;
+      sc->args[i].vector_type = adj.type;
     }
 
   if (node->definition)
@@ -1224,6 +1230,7 @@ ipa_simd_modify_function_body (struct cgraph_node *node,
 	j += vector_unroll_factor (node->simdclone->simdlen,
 				   simd_clone_subparts (vectype)) - 1;
     }
+  adjustments->sort_replacements ();
 
   tree name;
   FOR_EACH_SSA_NAME (i, name, cfun)

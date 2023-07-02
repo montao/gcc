@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2002-2022 Free Software Foundation, Inc.
+   Copyright (C) 2002-2023 Free Software Foundation, Inc.
    Contributed by Neil Booth.
 
 This file is part of GCC.
@@ -34,9 +34,14 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic-color.h"
 #include "version.h"
 #include "selftest.h"
+#include "file-prefix-map.h"
+#include "diagnostic-text-art.h"
 
 /* In this file all option sets are explicit.  */
 #undef OPTION_SET_P
+
+/* Set by -fcanon-prefix-map.  */
+bool flag_canon_prefix_map;
 
 static void set_Wstrict_aliasing (struct gcc_options *opts, int onoff);
 
@@ -1380,6 +1385,7 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
 	}
       opts->x_flag_var_tracking = 0;
       opts->x_flag_var_tracking_uninit = 0;
+      opts->x_flag_var_tracking_assignments = 0;
     }
 
   /* One could use EnabledBy, but it would lead to a circular dependency.  */
@@ -2109,6 +2115,10 @@ const struct zero_call_used_regs_opts_s zero_call_used_regs_opts[] =
   ZERO_CALL_USED_REGS_OPT (all-gpr, zero_regs_flags::ALL_GPR),
   ZERO_CALL_USED_REGS_OPT (all-arg, zero_regs_flags::ALL_ARG),
   ZERO_CALL_USED_REGS_OPT (all, zero_regs_flags::ALL),
+  ZERO_CALL_USED_REGS_OPT (leafy-gpr-arg, zero_regs_flags::LEAFY_GPR_ARG),
+  ZERO_CALL_USED_REGS_OPT (leafy-gpr, zero_regs_flags::LEAFY_GPR),
+  ZERO_CALL_USED_REGS_OPT (leafy-arg, zero_regs_flags::LEAFY_ARG),
+  ZERO_CALL_USED_REGS_OPT (leafy, zero_regs_flags::LEAFY),
 #undef ZERO_CALL_USED_REGS_OPT
   {NULL, 0U}
 };
@@ -2246,7 +2256,14 @@ parse_sanitizer_options (const char *p, location_t loc, int scode,
 		  flags |= sanitizer_opts[i].flag;
 	      }
 	    else
-	      flags &= ~sanitizer_opts[i].flag;
+	      {
+		flags &= ~sanitizer_opts[i].flag;
+		/* Don't always clear SANITIZE_ADDRESS if it was previously
+		   set: -fsanitize=address -fno-sanitize=kernel-address should
+		   leave SANITIZE_ADDRESS set.  */
+		if (flags & (SANITIZE_KERNEL_ADDRESS | SANITIZE_USER_ADDRESS))
+		  flags |= SANITIZE_ADDRESS;
+	      }
 	    found = true;
 	    break;
 	  }
@@ -2812,6 +2829,10 @@ common_handle_option (struct gcc_options *opts,
       /* Deferred.  */
       break;
 
+    case OPT_fcanon_prefix_map:
+      flag_canon_prefix_map = value;
+      break;
+
     case OPT_fcallgraph_info:
       opts->x_flag_callgraph_info = CALLGRAPH_INFO_NAKED;
       break;
@@ -2863,8 +2884,17 @@ common_handle_option (struct gcc_options *opts,
       break;
 
     case OPT_fdiagnostics_format_:
-      diagnostic_output_format_init (dc, opts->x_dump_base_name,
-				     (enum diagnostics_output_format)value);
+	{
+	  const char *basename = (opts->x_dump_base_name ? opts->x_dump_base_name
+				  : opts->x_main_input_basename);
+	  diagnostic_output_format_init (dc, basename,
+					 (enum diagnostics_output_format)value);
+	  break;
+	}
+
+    case OPT_fdiagnostics_text_art_charset_:
+      diagnostics_text_art_charset_init (dc,
+					 (enum diagnostic_text_art_charset)value);
       break;
 
     case OPT_fdiagnostics_parseable_fixits:
@@ -3112,6 +3142,9 @@ common_handle_option (struct gcc_options *opts,
     case OPT_g:
       set_debug_level (NO_DEBUG, DEFAULT_GDB_EXTENSIONS, arg, opts, opts_set,
                        loc);
+      break;
+
+    case OPT_gcodeview:
       break;
 
     case OPT_gbtf:
@@ -3718,6 +3751,7 @@ gen_command_line_string (cl_decoded_option *options,
       case OPT_fmacro_prefix_map_:
       case OPT_ffile_prefix_map_:
       case OPT_fprofile_prefix_map_:
+      case OPT_fcanon_prefix_map:
       case OPT_fcompare_debug:
       case OPT_fchecking:
       case OPT_fchecking_:

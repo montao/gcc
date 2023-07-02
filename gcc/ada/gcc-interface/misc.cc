@@ -6,7 +6,7 @@
  *                                                                          *
  *                           C Implementation File                          *
  *                                                                          *
- *          Copyright (C) 1992-2021, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2023, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -267,9 +267,6 @@ gnat_post_options (const char **pfilename ATTRIBUTE_UNUSED)
   /* No return type warnings for Ada.  */
   warn_return_type = 0;
 
-  /* No string overflow warnings for Ada.  */
-  warn_stringop_overflow = 0;
-
   /* No caret by default for Ada.  */
   if (!OPTION_SET_P (flag_diagnostics_show_caret))
     global_dc->show_caret = false;
@@ -333,13 +330,23 @@ internal_error_function (diagnostic_context *context, const char *msgid,
   sp.Bounds = &temp;
   sp.Array = buffer;
 
-  xloc = expand_location (input_location);
-  if (context->show_column && xloc.column != 0)
-    loc = xasprintf ("%s:%d:%d", xloc.file, xloc.line, xloc.column);
+  if (input_location == UNKNOWN_LOCATION)
+    {
+      loc = NULL;
+      temp_loc.Low_Bound = 1;
+      temp_loc.High_Bound = 0;
+    }
   else
-    loc = xasprintf ("%s:%d", xloc.file, xloc.line);
-  temp_loc.Low_Bound = 1;
-  temp_loc.High_Bound = strlen (loc);
+    {
+      xloc = expand_location (input_location);
+      if (context->show_column && xloc.column != 0)
+	loc = xasprintf ("%s:%d:%d", xloc.file, xloc.line, xloc.column);
+      else
+	loc = xasprintf ("%s:%d", xloc.file, xloc.line);
+      temp_loc.Low_Bound = 1;
+      temp_loc.High_Bound = strlen (loc);
+    }
+
   sp_loc.Bounds = &temp_loc;
   sp_loc.Array = loc;
 

@@ -1,5 +1,5 @@
 /* Darwin support needed only by C/C++ frontends.
-   Copyright (C) 2001-2022 Free Software Foundation, Inc.
+   Copyright (C) 2001-2023 Free Software Foundation, Inc.
    Contributed by Apple Computer Inc.
 
 This file is part of GCC.
@@ -139,7 +139,7 @@ darwin_pragma_unused (cpp_reader *pfile ATTRIBUTE_UNUSED)
 	{
 	  tree local = lookup_name (decl);
 	  if (local && (TREE_CODE (local) == PARM_DECL
-			|| TREE_CODE (local) == VAR_DECL))
+			|| VAR_P (local)))
 	    {
 	      TREE_USED (local) = 1;
 	      DECL_READ_P (local) = 1;

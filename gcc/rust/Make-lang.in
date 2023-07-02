@@ -1,6 +1,6 @@
 # Make-lang.in -- Top level -*- makefile -*- fragment for GCC Rust frontend.
 
-# Copyright (C) 2009-2022 Free Software Foundation, Inc.
+# Copyright (C) 2009-2023 Free Software Foundation, Inc.
 
 # This file is part of GCC.
 
@@ -34,6 +34,8 @@ GCCRS_TARGET_INSTALL_NAME := $(target_noncanonical)-$(shell echo gccrs|sed '$(pr
 
 # Define the names for selecting rust in LANGUAGES.
 rust: rust1$(exeext)
+
+rust.serial = rust1$(exeext)
 
 # Tell GNU make to ignore files by these names if they exist.
 .PHONY: rust
@@ -71,7 +73,8 @@ GRS_OBJS = \
     rust/rust-lex.o \
     rust/rust-cfg-parser.o \
     rust/rust-parse.o \
-    rust/rust-ast-full-test.o \
+    rust/rust-ast.o \
+    rust/rust-ast-fragment.o \
     rust/rust-ast-dump.o \
     rust/rust-hir-dump.o \
     rust/rust-session-manager.o \
@@ -83,14 +86,18 @@ GRS_OBJS = \
     rust/rust-macro-invoc-lexer.o \
     rust/rust-macro-substitute-ctx.o \
     rust/rust-macro-builtins.o \
-    rust/rust-hir-full-test.o \
+    rust/rust-hir.o \
     rust/rust-hir-map.o \
     rust/rust-attributes.o \
     rust/rust-abi.o \
+	rust/rust-macro.o \
     rust/rust-ast-lower.o \
     rust/rust-ast-lower-base.o \
     rust/rust-ast-lower-pattern.o \
     rust/rust-ast-lower-item.o \
+    rust/rust-ast-lower-expr.o \
+    rust/rust-ast-lower-type.o \
+    rust/rust-early-name-resolver.o \
     rust/rust-name-resolver.o \
     rust/rust-ast-resolve.o \
     rust/rust-ast-resolve-base.o \
@@ -109,12 +116,14 @@ GRS_OBJS = \
     rust/rust-pub-restricted-visitor.o \
     rust/rust-privacy-reporter.o \
     rust/rust-tyty.o \
+    rust/rust-tyty-util.o \
     rust/rust-tyty-call.o \
-    rust/rust-tyctx.o \
+    rust/rust-tyty-subst.o \
+    rust/rust-typecheck-context.o \
     rust/rust-tyty-bounds.o \
     rust/rust-hir-type-check-util.o \
     rust/rust-hir-trait-resolve.o \
-    rust/rust-hir-type-check-toplevel.o \
+    rust/rust-hir-trait-reference.o \
     rust/rust-hir-type-check-item.o \
     rust/rust-hir-type-check-type.o \
     rust/rust-hir-type-check-struct.o \
@@ -124,8 +133,11 @@ GRS_OBJS = \
     rust/rust-hir-type-check-enumitem.o \
     rust/rust-hir-type-check-implitem.o \
     rust/rust-hir-dot-operator.o \
+    rust/rust-hir-path-probe.o \
+    rust/rust-type-util.o \
     rust/rust-coercion.o \
     rust/rust-casts.o \
+    rust/rust-unify.o \
     rust/rust-hir-type-check-base.o \
     rust/rust-autoderef.o \
     rust/rust-substitution-mapper.o \
@@ -154,6 +166,9 @@ GRS_OBJS = \
     rust/rust-imports.o \
     rust/rust-import-archive.o \
     rust/rust-extern-crate.o \
+    rust/rust-builtins.o \
+    rust/rust-feature.o \
+    rust/rust-feature-gate.o \
     $(END)
 # removed object files from here
 
@@ -163,9 +178,11 @@ RUST_ALL_OBJS = $(GRS_OBJS) $(RUST_TARGET_OBJS)
 rust_OBJS = $(RUST_ALL_OBJS) rust/rustspec.o
 
 # The compiler itself is called rust1 (formerly grs1)
-rust1$(exeext): $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBDEPS)
+rust1$(exeext): $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBDEPS) $(rust.prev)
+	@$(call LINK_PROGRESS,$(INDEX.rust),start)
 	+$(LLINKER) $(ALL_LINKERFLAGS) $(LDFLAGS) -o $@ \
 	      $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBS) $(BACKENDLIBS)
+	@$(call LINK_PROGRESS,$(INDEX.rust),end)
 
 # Build hooks.
 
@@ -274,6 +291,18 @@ RUST_SELFTEST_DEPS = rust1$(exeext) $(SELFTEST_DEPS)
 s-selftest-rust: $(RUST_SELFTEST_DEPS)
 	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS)
 	$(STAMP) $@
+
+# Convenience methods for running rust selftests under gdb:
+.PHONY: selftest-rust-gdb
+selftest-rust-gdb: $(RUST_SELFTEST_DEPS)
+	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS) \
+	  -wrapper gdb,--args
+
+# Convenience methods for running rust selftests under valgrind:
+.PHONY: selftest-rust-valgrind
+selftest-rust-valgrind: $(RUST_SELFTEST_DEPS)
+	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS) \
+	  -wrapper valgrind,--leak-check=full
 
 # Install info documentation for the front end, if it is present in the source directory. This target
 # should have dependencies on info files that should be installed.

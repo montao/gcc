@@ -137,7 +137,7 @@ namespace __format
   template<typename _Tp, typename _CharT = char>
     struct formatter
     {
-      formatter() = delete;
+      formatter() = delete; // No std::formatter specialization for this type.
       formatter(const formatter&) = delete;
       formatter& operator=(const formatter&) = delete;
     };
@@ -185,7 +185,7 @@ namespace __format
   __failed_to_parse_format_spec()
   { __throw_format_error("format error: failed to parse format-spec"); }
 } // namespace __format
-/// @endcond
+  /// @endcond
 
   // [format.parse.ctx], class template basic_format_parse_context
   template<typename _CharT> class basic_format_parse_context;
@@ -269,39 +269,26 @@ namespace __format
       if (__first == __last)
 	__builtin_unreachable();
 
-      // TODO: use this loop unconditionally?
-      // Most integers used for arg-id, width or precision will be small.
-      if (is_constant_evaluated())
-	{
-	  auto __next = __first;
-	  unsigned short __val = 0;
-	  while (__next != __last && '0' <= *__next && *__next <= '9')
-	    {
-	      __val = (__val * 10) + (*__next - '0'); // TODO check overflow?
-	      ++__next;
-	    }
-	  if (__next == __first)
-	    return {0, nullptr};
-	  return {__val, __next};
-	}
-
-      unsigned short __val = 0;
       if constexpr (is_same_v<_CharT, char>)
 	{
-	  auto [ptr, ec] = std::from_chars(__first, __last, __val);
-	  if (ec == errc{})
-	    return {__val, ptr};
-	  return {0, nullptr};
+	  const auto __start = __first;
+	  unsigned short __val = 0;
+	  // N.B. std::from_chars is not constexpr in C++20.
+	  if (__detail::__from_chars_alnum<true>(__first, __last, __val, 10)
+		&& __first != __start) [[likely]]
+	    return {__val, __first};
 	}
       else
 	{
+	  unsigned short __val = 0;
 	  constexpr int __n = 32;
 	  char __buf[__n]{};
-	  for (int __i = 0; __i < __n && __first != __last; ++__i)
+	  for (int __i = 0; __i < __n && (__first + __i) != __last; ++__i)
 	    __buf[__i] = __first[__i];
 	  auto [__v, __ptr] = __format::__parse_integer(__buf, __buf + __n);
 	  return {__v, __first + (__ptr - __buf)};
 	}
+      return {0, nullptr};
     }
 
   template<typename _CharT>
@@ -597,6 +584,7 @@ namespace __format
       return __dest;
     }
 
+  // Write STR to OUT (and do so efficiently if OUT is a _Sink_iter).
   template<typename _Out, typename _CharT>
     requires output_iterator<_Out, const _CharT&>
     inline _Out
@@ -666,6 +654,30 @@ namespace __format
       __pad(__r, __out);
 
       return __out;
+    }
+
+  // Write STR to OUT, with alignment and padding as determined by SPEC.
+  // pre: __spec._M_align != _Align_default || __align != _Align_default
+  template<typename _CharT, typename _Out>
+    _Out
+    __write_padded_as_spec(basic_string_view<type_identity_t<_CharT>> __str,
+			   size_t __estimated_width,
+			   basic_format_context<_Out, _CharT>& __fc,
+			   const _Spec<_CharT>& __spec,
+			   _Align __align = _Align_left)
+    {
+      size_t __width = __spec._M_get_width(__fc);
+
+      if (__width <= __estimated_width)
+	return __format::__write(__fc.out(), __str);
+
+      const size_t __nfill = __width - __estimated_width;
+
+      if (__spec._M_align)
+	__align = __spec._M_align;
+
+      return __format::__write_padded(__fc.out(), __str, __align, __nfill,
+				      __spec._M_fill);
     }
 
   // A lightweight optional<locale>.
@@ -799,13 +811,13 @@ namespace __format
       }
 
       template<typename _Out>
-	typename basic_format_context<_Out, _CharT>::iterator
+	_Out
 	format(basic_string_view<_CharT> __s,
 	       basic_format_context<_Out, _CharT>& __fc) const
 	{
 	  if (_M_spec._M_type == _Pres_esc)
 	    {
-	      // TODO: C++20 escaped string presentation
+	      // TODO: C++23 escaped string presentation
 	    }
 
 	  if (_M_spec._M_width_kind == _WP_none
@@ -824,16 +836,8 @@ namespace __format
 		}
 	    }
 
-	  size_t __width = _M_spec._M_get_width(__fc);
-
-	  if (__width <= __estimated_width)
-	    return __format::__write(__fc.out(), __s);
-
-	  const size_t __nfill = __width - __estimated_width;
-	  _Align __align = _M_spec._M_align ? _M_spec._M_align : _Align_left;
-
-	  return __format::__write_padded(__fc.out(), __s,
-					  __align, __nfill, _M_spec._M_fill);
+	  return __format::__write_padded_as_spec(__s, __estimated_width,
+						  __fc, _M_spec);
 	}
 
 #if __cpp_lib_format_ranges
@@ -1089,32 +1093,16 @@ namespace __format
 	      __est_width = __s.size();
 	    }
 
-	  return _M_format_str(__s, __est_width, __fc);
+	  return __format::__write_padded_as_spec(__s, __est_width, __fc,
+						  _M_spec);
 	}
 
       template<typename _Out>
 	typename basic_format_context<_Out, _CharT>::iterator
 	_M_format_character(_CharT __c,
 		      basic_format_context<_Out, _CharT>& __fc) const
-	{ return _M_format_str({&__c, 1u}, 1, __fc); }
-
-      template<typename _Out>
-	typename basic_format_context<_Out, _CharT>::iterator
-	_M_format_str(basic_string_view<_CharT> __str, size_t __est_width,
-		      basic_format_context<_Out, _CharT>& __fc) const
 	{
-	  // TODO: this is identical to last part of __formatter_str::format
-	  // so refactor to reuse the same code.
-
-	  size_t __width = _M_spec._M_get_width(__fc);
-
-	  if (__width <= __est_width)
-	    return __format::__write(__fc.out(), __str);
-
-	  size_t __nfill = __width - __est_width;
-	  _Align __align = _M_spec._M_align ? _M_spec._M_align : _Align_left;
-	  return __format::__write_padded(__fc.out(), __str,
-					  __align, __nfill, _M_spec._M_fill);
+	  return __format::__write_padded_as_spec({&__c, 1u}, 1, __fc, _M_spec);
 	}
 
       template<typename _Int>
@@ -1295,15 +1283,27 @@ namespace __format
   // Make them available as std::__format::to_chars.
   to_chars_result
   to_chars(char*, char*, _Float128) noexcept
+#  if _GLIBCXX_INLINE_VERSION
+    __asm("_ZNSt3__88to_charsEPcS0_DF128_");
+#  else
     __asm("_ZSt8to_charsPcS_DF128_");
+#  endif
 
   to_chars_result
   to_chars(char*, char*, _Float128, chars_format) noexcept
+#  if _GLIBCXX_INLINE_VERSION
+    __asm("_ZNSt3__88to_charsEPcS0_DF128_NS_12chars_formatE");
+#  else
     __asm("_ZSt8to_charsPcS_DF128_St12chars_format");
+#  endif
 
   to_chars_result
   to_chars(char*, char*, _Float128, chars_format, int) noexcept
+#  if _GLIBCXX_INLINE_VERSION
+    __asm("_ZNSt3__88to_charsEPcS0_DF128_NS_12chars_formatEi");
+#  else
     __asm("_ZSt8to_charsPcS_DF128_St12chars_formati");
+#  endif
 # endif
 #endif
 
@@ -1869,28 +1869,6 @@ namespace __format
       __format::__formatter_str<_CharT> _M_f;
     };
 
-  template<__format::__char _CharT, size_t _Nm>
-    struct formatter<const _CharT[_Nm], _CharT>
-    {
-      formatter() = default;
-
-      [[__gnu__::__always_inline__]]
-      constexpr typename basic_format_parse_context<_CharT>::iterator
-      parse(basic_format_parse_context<_CharT>& __pc)
-      { return _M_f.parse(__pc); }
-
-      template<typename _Out>
-	typename basic_format_context<_Out, _CharT>::iterator
-	format(const _CharT (&__u)[_Nm],
-	       basic_format_context<_Out, _CharT>& __fc) const
-	{ return _M_f.format({__u, _Nm}, __fc); }
-
-      constexpr void set_debug_format() noexcept { _M_f.set_debug_format(); }
-
-    private:
-      __format::__formatter_str<_CharT> _M_f;
-    };
-
   template<typename _Traits, typename _Alloc>
     struct formatter<basic_string<char, _Traits, _Alloc>, char>
     {
@@ -2090,19 +2068,31 @@ namespace __format
 	if (__finished())
 	  return __first;
 
-	// _GLIBCXX_RESOLVE_LIB_DEFECTS
-	// P2519R3 Formatting pointers
+// _GLIBCXX_RESOLVE_LIB_DEFECTS
+// P2510R3 Formatting pointers
+#define _GLIBCXX_P2518R3 (__cplusplus > 202302L || ! defined __STRICT_ANSI__)
+
+#if _GLIBCXX_P2518R3
 	__first = __spec._M_parse_zero_fill(__first, __last);
 	if (__finished())
 	  return __first;
+#endif
 
 	__first = __spec._M_parse_width(__first, __last, __pc);
 
-	if (__first != __last && (*__first == 'p' || *__first == 'P'))
+	if (__first != __last)
 	  {
-	    if (*__first == 'P')
+	    if (*__first == 'p')
+	      ++__first;
+#if _GLIBCXX_P2518R3
+	    else if (*__first == 'P')
+	    {
+	      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+	      // P2510R3 Formatting pointers
 	      __spec._M_type = __format::_Pres_P;
-	    ++__first;
+	      ++__first;
+	    }
+#endif
 	  }
 
 	if (__finished())
@@ -2115,13 +2105,25 @@ namespace __format
 	typename basic_format_context<_Out, _CharT>::iterator
 	format(const void* __v, basic_format_context<_Out, _CharT>& __fc) const
 	{
-	  auto __u = reinterpret_cast<__UINT64_TYPE__>(__v);
+	  auto __u = reinterpret_cast<__UINTPTR_TYPE__>(__v);
 	  char __buf[2 + sizeof(__v) * 2];
 	  auto [__ptr, __ec] = std::to_chars(__buf + 2, std::end(__buf),
 					     __u, 16);
-	  const int __n = __ptr - __buf;
+	  int __n = __ptr - __buf;
 	  __buf[0] = '0';
 	  __buf[1] = 'x';
+#if _GLIBCXX_P2518R3
+	  if (_M_spec._M_type == __format::_Pres_P)
+	    {
+	      __buf[1] = 'X';
+	      for (auto __p = __buf + 2; __p != __ptr; ++__p)
+#if __has_builtin(__builtin_toupper)
+		*__p = __builtin_toupper(*__p);
+#else
+		*__p = std::toupper(*__p);
+#endif
+	    }
+#endif
 
 	  basic_string_view<_CharT> __str;
 	  if constexpr (is_same_v<_CharT, char>)
@@ -2135,20 +2137,30 @@ namespace __format
 	      __str = wstring_view(__p, __n);
 	    }
 
-	  size_t __width = _M_spec._M_get_width(__fc);
+#if _GLIBCXX_P2518R3
+	  if (_M_spec._M_zero_fill)
+	    {
+	      size_t __width = _M_spec._M_get_width(__fc);
+	      if (__width <= __str.size())
+		return __format::__write(__fc.out(), __str);
 
-	  if (__width <= (size_t)__n)
-	    return __format::__write(__fc.out(), __str);
+	      auto __out = __fc.out();
+	      // Write "0x" or "0X" prefix before zero-filling.
+	      __out = __format::__write(std::move(__out), __str.substr(0, 2));
+	      __str.remove_prefix(2);
+	      size_t __nfill = __width - __n;
+	      return __format::__write_padded(std::move(__out), __str,
+					      __format::_Align_right,
+					      __nfill, _CharT('0'));
+	    }
+#endif
 
-	  size_t __nfill = __width - __n;
-	  __format::_Align __align
-	    = _M_spec._M_align ? _M_spec._M_align : __format::_Align_right;
-	  return __format::__write_padded(__fc.out(), __str,
-					  __align, __nfill, _M_spec._M_fill);
+	  return __format::__write_padded_as_spec(__str, __n, __fc, _M_spec,
+						  __format::_Align_right);
 	}
 
     private:
-      __format::_Spec<_CharT> _M_spec{}; // XXX don't need full spec?
+      __format::_Spec<_CharT> _M_spec{};
     };
 
   template<__format::__char _CharT>
@@ -2752,6 +2764,10 @@ namespace __format
 	}
       };
 
+  // [format.arg.store], class template format-arg-store
+  template<typename _Context, typename... _Args>
+    class _Arg_store;
+
 } // namespace __format
 /// @endcond
 
@@ -2827,6 +2843,9 @@ namespace __format
     private:
       template<typename _Ctx>
 	friend class basic_format_args;
+
+      template<typename _Ctx, typename... _Args>
+	friend class __format::_Arg_store;
 
       static_assert(is_trivially_copyable_v<__format::_Arg_value<_Context>>);
 
@@ -3041,6 +3060,7 @@ namespace __format
 	      return std::forward<_Visitor>(__vis)(_M_val._M_ll);
 	    case _Arg_ull:
 	      return std::forward<_Visitor>(__vis)(_M_val._M_ull);
+#if __cpp_lib_to_chars // FIXME: need to be able to format these types!
 	    case _Arg_flt:
 	      return std::forward<_Visitor>(__vis)(_M_val._M_flt);
 	    case _Arg_dbl:
@@ -3053,6 +3073,7 @@ namespace __format
 	      return std::forward<_Visitor>(__vis)(_M_val._M_f128);
 	    case _Arg_ibm128:
 	      return std::forward<_Visitor>(__vis)(_M_val._M_ibm128);
+#endif
 #endif
 	    case _Arg_str:
 	      return std::forward<_Visitor>(__vis)(_M_val._M_str);
@@ -3105,6 +3126,8 @@ namespace __format
 	// 3721. Allow an arg-id with a value of zero for width
 	else if constexpr (sizeof(_Tp) <= sizeof(long long))
 	  {
+	    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+	    // 3720. Restrict the valid types of arg-id for width and precision
 	    if constexpr (__is_unsigned_integer<_Tp>::value)
 	      return __arg;
 	    else if constexpr (__is_signed_integer<_Tp>::value)
@@ -3143,11 +3166,11 @@ namespace __format
 
       static_assert( __format::_Arg_max_ <= (1 << _S_packed_type_bits) );
 
-      // [format.arg.store], class template format-arg-store
-      // XXX: Should this be defined outside the class, so basic_format_args
-      // can use CTAD with a _Store argument?
       template<typename... _Args>
-	class _Store;
+	using _Store = __format::_Arg_store<_Context, _Args...>;
+
+      template<typename _Ctx, typename... _Args>
+	friend class __format::_Arg_store;
 
       using uint64_t = __UINT64_TYPE__;
       using _Format_arg = basic_format_arg<_Context>;
@@ -3208,52 +3231,60 @@ namespace __format
       }
     };
 
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 3810. CTAD for std::basic_format_args
+  template<typename _Context, typename... _Args>
+    basic_format_args(__format::_Arg_store<_Context, _Args...>)
+      -> basic_format_args<_Context>;
+
+  template<typename _Context, typename... _Args>
+    auto
+    make_format_args(_Args&&... __fmt_args) noexcept;
+
   // An array of type-erased formatting arguments.
+  template<typename _Context, typename... _Args>
+    class __format::_Arg_store
+    {
+      friend std::basic_format_args<_Context>;
+
+      template<typename _Ctx, typename... _Argz>
+	friend auto
+	std::make_format_args(_Argz&&...) noexcept;
+
+      // For a sufficiently small number of arguments we only store values.
+      // basic_format_args can get the types from the _Args pack.
+      static constexpr bool _S_values_only
+	= sizeof...(_Args) <= basic_format_args<_Context>::_S_max_packed_args;
+
+      using _Element_t
+	= __conditional_t<_S_values_only,
+			  __format::_Arg_value<_Context>,
+			  basic_format_arg<_Context>>;
+
+      _Element_t _M_args[sizeof...(_Args)];
+
+      template<typename _Tp>
+	static _Element_t
+	_S_make_elt(_Tp& __v)
+	{
+	  basic_format_arg<_Context> __arg(__v);
+	  if constexpr (_S_values_only)
+	    return __arg._M_val;
+	  else
+	    return __arg;
+	}
+
+      template<typename... _Tp>
+	requires (sizeof...(_Tp) == sizeof...(_Args))
+	[[__gnu__::__always_inline__]]
+	_Arg_store(_Tp&... __a) noexcept
+	: _M_args{_S_make_elt(__a)...}
+	{ }
+    };
+
   template<typename _Context>
-    template<typename... _Args>
-      class basic_format_args<_Context>::_Store
-      {
-	friend class basic_format_args;
-
-	template<typename _Ctx, typename... _Argz>
-	  friend auto
-	  make_format_args(_Argz&&...) noexcept;
-
-	// For a sufficiently small number of arguments we only store values.
-	// basic_format_args can get the types from the _Args pack.
-	static constexpr bool _S_values_only
-	  = sizeof...(_Args) <= _S_max_packed_args;
-
-	using _Element_t
-	  = __conditional_t<_S_values_only,
-			    __format::_Arg_value<_Context>,
-			    basic_format_arg<_Context>>;
-
-	_Element_t _M_args[sizeof...(_Args)];
-
-	template<typename _Tp>
-	  static _Element_t
-	  _S_make_elt(_Tp& __v)
-	  {
-	    basic_format_arg<_Context> __arg(__v);
-	    if constexpr (_S_values_only)
-	      return __arg._M_val;
-	    else
-	      return __arg;
-	  }
-
-	template<typename... _Tp>
-	  requires (sizeof...(_Tp) == sizeof...(_Args))
-	  [[__gnu__::__always_inline__]]
-	  _Store(_Tp&... __a) noexcept
-	  : _M_args{_S_make_elt(__a)...}
-	  { }
-      };
-
-  template<typename _Context>
-    template<typename... _Args> requires (sizeof...(_Args) == 0)
-      class basic_format_args<_Context>::_Store<_Args...>
-      { };
+    class __format::_Arg_store<_Context>
+    { };
 
   template<typename _Context>
     template<typename... _Args>
@@ -3293,10 +3324,8 @@ namespace __format
     inline auto
     make_format_args(_Args&&... __fmt_args) noexcept
     {
-      using _Fmt_args = basic_format_args<_Context>;
       using _Fmt_arg = basic_format_arg<_Context>;
-      using _Store = typename _Fmt_args::template
-		     _Store<typename _Fmt_arg::template
+      using _Store = __format::_Arg_store<_Context, typename _Fmt_arg::template
 		     _Normalize<remove_reference_t<_Args>>...>;
       return _Store(__fmt_args...);
     }
@@ -3560,6 +3589,10 @@ namespace __format
   template<typename _CharT, typename... _Args>
     class _Checking_scanner : public _Scanner<_CharT>
     {
+      static_assert(
+	(is_default_constructible_v<formatter<_Args, _CharT>> && ...),
+	"std::formatter must be specialized for each type being formatted");
+
     public:
       constexpr
       _Checking_scanner(basic_string_view<_CharT> __str)
@@ -3581,17 +3614,17 @@ namespace __format
 	__builtin_unreachable();
       }
 
-      template<typename _Head, typename... _Tail>
+      template<typename _Tp, typename... _OtherArgs>
 	constexpr void
 	_M_parse_format_spec(size_t __id)
 	{
 	  if (__id == 0)
 	    {
-	      formatter<_Head, _CharT> __f;
+	      formatter<_Tp, _CharT> __f;
 	      this->_M_pc.advance_to(__f.parse(this->_M_pc));
 	    }
-	  else if constexpr (sizeof...(_Tail) != 0)
-	    _M_parse_format_spec<_Tail...>(__id - 1);
+	  else if constexpr (sizeof...(_OtherArgs) != 0)
+	    _M_parse_format_spec<_OtherArgs...>(__id - 1);
 	  else
 	    __builtin_unreachable();
 	}
@@ -3866,7 +3899,7 @@ namespace __format
     };
 #endif
 } // namespace __format
-/// @@endcond
+/// @endcond
 
   template<typename... _Args>
     [[nodiscard]]

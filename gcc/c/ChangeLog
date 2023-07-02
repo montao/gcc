@@ -1,3 +1,306 @@
+2023-06-29  Qing Zhao  <qing.zhao@oracle.com>
+
+	PR c/77650
+	* c-decl.cc (finish_struct): Issue warnings for new option.
+
+2023-06-29  Qing Zhao  <qing.zhao@oracle.com>
+
+	* c-decl.cc (finish_struct): Set TYPE_INCLUDES_FLEXARRAY for
+	struct/union type.
+
+2023-06-29  Richard Biener  <rguenther@suse.de>
+
+	PR c/110454
+	* c-typeck.cc (convert_argument): Sink formal_prec compute
+	to where TYPE_PRECISION is valid to use.
+
+2023-06-29  Eugene Rozenfeld  <erozen@microsoft.com>
+
+	* Make-lang.in: Pass correct stage cc1 when processing
+	profile data collected while building target libraries
+
+2023-06-16  David Malcolm  <dmalcolm@redhat.com>
+
+	PR c/107583
+	* c-parser.cc (c_parser_declspecs): Add hints to "unknown type
+	name" error.
+
+2023-06-12  Tobias Burnus  <tobias@codesourcery.com>
+
+	* c-parser.cc (c_parser_omp_clause_map): Reword error message for
+	clearness especially with 'omp target (enter/exit) data.'
+
+2023-06-06  Kwok Cheung Yeung  <kcy@codesourcery.com>
+	    Tobias Burnus  <tobias@codesourcery.com>
+
+	* c-parser.cc (c_parser_omp_clause_defaultmap,
+	c_parser_omp_clause_map): Parse 'present'.
+	(c_parser_omp_clause_to, c_parser_omp_clause_from): Remove.
+	(c_parser_omp_clause_from_to): New; parse to/from clauses with
+	optional present modifer.
+	(c_parser_omp_all_clauses): Update call.
+	(c_parser_omp_target_data, c_parser_omp_target_enter_data,
+	c_parser_omp_target_exit_data): Handle new map enum values
+	for 'present' mapping.
+
+2023-05-30  Tobias Burnus  <tobias@codesourcery.com>
+
+	PR c/109999
+	* c-parser.cc (c_parser_oacc_all_clauses,
+	c_parser_omp_all_clauses): Improve error wording.
+
+2023-05-23  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/109450
+	* c-decl.cc (add_decl_expr): New function.
+	(grokdeclarator): Add decl expr for size expression in
+	types pointed to by parameters declared as arrays.
+
+2023-05-23  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/70418
+	PR c/106465
+	PR c/107557
+	PR c/108423
+	* c-decl.cc (start_decl): Make sure size expression are
+	evaluated only in correct context.
+	(grokdeclarator): Size expression in fields may need a bind
+	expression, make sure DECL_EXPR is always created.
+	(grokfield, declspecs_add_type): Pass along size expressions.
+	(finish_struct): Remove unneeded DECL_EXPR.
+	(start_function): Evaluate size expressions for nested functions.
+	* c-parser.cc (c_parser_struct_declarations,
+	c_parser_struct_or_union_specifier): Pass along size expressions.
+	(c_parser_declaration_or_fndef): Evaluate size expression.
+	(c_parser_objc_at_property_declaration,
+	c_parser_objc_class_instance_variables): Adapt.
+	* c-tree.h (grokfield): Adapt declaration.
+
+2023-05-19  Martin Uecker  <uecker@tugraz.at>
+
+	* c-decl.cc (set_type_context): Remove.
+	(pop_scope, diagnose_mismatched_decls, pushdecl):
+	Remove dead code.
+	* c-typeck.cc (comptypes_internal): Remove dead code.
+	(same_translation_unit_p): Remove.
+	(tagged_types_tu_compatible_p): Some fixes.
+
+2023-05-19  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-decl.cc (diagnose_mismatched_decls): Do not handle
+	thread-local declarations as tentative definitions for C2x.
+	(finish_decl): Do not allow thread-local definition with
+	incomplete type for C2x.
+
+2023-05-18  Bernhard Reutner-Fischer  <aldot@gcc.gnu.org>
+
+	* c-convert.cc (c_convert): Ditto.
+	* c-decl.cc (merge_decls): Ditto.
+	* c-parser.cc (c_parser_omp_clause_reduction): Ditto.
+	(c_parser_omp_declare_reduction): Ditto.
+	* c-typeck.cc (build_component_ref): Ditto.
+	(convert_argument): Ditto.
+	(pointer_diff): Ditto.
+	(build_unary_op): Ditto.
+	(build_c_cast): Ditto.
+	(build_modify_expr): Ditto.
+	(store_init_value): Ditto.
+	(constexpr_init_fits_real_type): Ditto.
+	(check_constexpr_init): Ditto.
+	(c_finish_return): Ditto.
+	(handle_omp_array_sections_1): Ditto.
+	(c_finish_omp_clauses): Ditto.
+	* gimple-parser.cc (c_finish_gimple_return): Ditto.
+
+2023-05-16  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-decl.cc (check_for_loop_decls): Use pedwarn_c11 for
+	diagnostics.
+
+2023-05-15  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-decl.cc (grokdeclarator): Ignore _Atomic on function return
+	type for C2x.
+
+2023-04-30  Andrew Pinski  <apinski@marvell.com>
+
+	* c-typeck.cc (process_init_element): Print out array type
+	for excessive elements.
+
+2023-04-30  Andrew Pinski  <apinski@marvell.com>
+
+	PR c/107926
+	* c-typeck.cc (process_init_element): Move the check
+	for string cst until after the error message.
+
+2023-04-28  Eugene Rozenfeld  <erozen@microsoft.com>
+
+	* Make-lang.in: Merge perf data collected when compiling cc1 and runtime libraries
+
+2023-04-27  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/109409
+	* c-parser.cc (c_parser_initializer): Move diagnostics about
+	initialization of variable sized object with non-empty initializer
+	after c_parser_expr_no_commas call and ret.set_error (); after it.
+
+2023-04-27  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/107682
+	PR c/109412
+	* c-typeck.cc (pop_init_level): If constructor_type is FUNCTION_TYPE,
+	reject empty initializer as invalid.
+
+2023-04-26  Richard Biener  <rguenther@suse.de>
+
+	* gimple-parser.cc (c_parser_parse_gimple_body): Avoid
+	last_stmt.
+
+2023-04-25  Tobias Burnus  <tobias@codesourcery.com>
+
+	* c-parser.cc (c_parser_omp_scan_loop_body): Handle
+	zero exec statements before/after 'omp scan'.
+
+2023-04-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/107041
+	* c-decl.cc (diagnose_mismatched_decls): Avoid -Wenum-int-mismatch
+	warning on acc_on_device declaration.
+
+2023-03-28  David Malcolm  <dmalcolm@redhat.com>
+
+	PR c/107002
+	* c-typeck.cc (parser_build_binary_op): Update for new param of
+	check_for_xor_used_as_pow.
+
+2023-03-10  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/108079
+	* c-decl.cc (pop_scope): Suppress OPT_Wunused_variable warning
+	after diagnosing it.
+
+2023-02-28  Jakub Jelinek  <jakub@redhat.com>
+
+	PR sanitizer/108894
+	* c-decl.cc (strict_flex_array_level_of): Move to c-common.cc
+	and rename to c_strict_flex_array_level_of.
+	(is_flexible_array_member_p): Adjust caller.
+
+2023-02-18  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/108375
+	* c-decl.cc (decl_jump_unsafe): Use c_type_variably_modified_p.
+	(diagnose_mismatched_decl): Dito.
+	(warn_about_goto): Dito:
+	(c_check_switch_jump_warnings): Dito.
+	(finish_decl): Dito.
+	(finish_struct): Dito.
+	(grokdeclarator): Set C_TYPE_VARIABLY_MODIFIED.
+	(finish_struct): Set C_TYPE_VARIABLY_MODIFIED.
+	* c-objc-common.cc (c_var_mod_p): New function.
+	(c_var_unspec_p): Remove.
+	* c-objc-common.h: Set lang hook.
+	* c-parser.cc (c_parser_declararion_or_fndef): Use c_type_variably_modified_p.
+	(c_parser_typeof_specifier): Dito.
+	(c_parser_has_attribute_expression): Dito.
+	(c_parser_generic_selection): Dito.
+	* c-tree.h: Define C_TYPE_VARIABLY_MODIFIED and define c_var_mode_p.
+	* c-typeck.cc: Remove c_vla_mod_p and use C_TYPE_VARIABLY_MODIFIED.
+
+2023-02-16  Patrick Palka  <ppalka@redhat.com>
+
+	* c-parser.h: Mechanically drop static from static inline
+	functions via s/^static inline/inline/g.
+
+2023-02-10  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-convert.cc (c_convert): Allow conversion of a null pointer
+	constant to nullptr_t.
+	* c-typeck.cc (null_pointer_constant_p): Remove static.
+	(convert_for_assignment): Allow conversion of a null pointer
+	constant to nullptr_t.
+	(digest_init): Handle NULLPTR_TYPE among scalar conversions.
+	* c-tree.h (null_pointer_constant_p): Declare.
+
+2023-02-09  Tobias Burnus  <tobias@codesourcery.com>
+
+	* c-parser.cc (c_parser_omp_allocate): Parse align
+	clause and check for restrictions.
+
+2023-02-08  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-typeck.cc (check_constexpr_init): Remove argument
+	null_pointer_constant.  Only check pointer initializers for being
+	null.
+	(digest_init): Update calls to check_constexpr_init.
+
+2023-02-02  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-typeck.cc (build_binary_op): Allow comparisons between
+	pointers and nullptr_t values that are not null pointer constants.
+
+2023-02-02  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-typeck.cc: Include "realmpfr.h".
+	(constexpr_init_fits_real_type): Do not allow signaling NaN
+	conversions to different types with the same mode.  Handle
+	conversions from binary to decimal types.
+	(check_constexpr_init): Do not disallow real initializers for
+	complex types.  Do not disallow binary initializers for decimal
+	floating types.
+
+2023-01-31  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/107593
+	PR c++/108597
+	* c-objc-common.cc (instantiation_dependent_expression_p): New.
+
+2023-01-27  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-parser.cc (c_parser_declaration_or_fndef): Do not allow braces
+	around auto initializer.
+
+2023-01-16  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/105593
+	* c-parser.cc (c_parser_initializer): Check warning_enabled_at
+	at the DECL_SOURCE_LOCATION (decl) for OPT_Winit_self instead
+	of warn_init_self.
+
+2023-01-14  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/108365
+	* c-typeck.cc (build_binary_op): Use may_shorten_divmod for integral
+	division or modulo.
+
+2023-01-13  Qing Zhao  <qing.zhao@oracle.com>
+
+	* c-decl.cc (strict_flex_array_level_of): ... here.
+
+2023-01-11  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/105972
+	* c-parser.cc (c_parser_declaration_or_fndef): Disable debug non-bind
+	markers for K&R function parameter declarations of nested functions.
+
+2023-01-09  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-decl.cc (build_compound_literal): Call record_inline_static.
+
+2023-01-06  Joseph Myers  <joseph@codesourcery.com>
+
+	* c-parser.cc (c_parser_postfix_expression): Handle integer
+	generic arguments to functions passed to __builtin_tgmath as
+	_Float32x if any argument has _FloatNx or _Complex _FloatNx type.
+	Do not handle integer arguments to some narrowing functions as
+	_Float64.
+
+2022-12-19  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/108043
+	* c-parser.cc (c_parser_postfix_expression_after_paren_type): Diagnose
+	compound literals with function type.
+
 2022-12-07  Joseph Myers  <joseph@codesourcery.com>
 
 	* c-decl.cc (declspecs_add_type, declspecs_add_scspec): Check for
@@ -8976,7 +9279,7 @@
 	* c-decl.c: Likewise.  Include gt-c-c-decl.h, not gt-c-decl.h.
 	* c-parser.c: Likewise.  Include gt-c-c-parser.h, not gt-c-parser.h.
 
-Copyright (C) 2012-2022 Free Software Foundation, Inc.
+Copyright (C) 2012-2023 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

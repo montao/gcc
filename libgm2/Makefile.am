@@ -25,14 +25,14 @@ AUTOMAKE_OPTIONS = 1.8 foreign
 
 SUFFIXES = .c .mod .def .o .obj .lo .a
 
-ACLOCAL_AMFLAGS = -I . -I .. -I ../config
+ACLOCAL_AMFLAGS = -I .. -I ../config
 
 # Multilib support.
 MAKEOVERRIDES=
 
 AM_CFLAGS = -I $(srcdir)/../libgcc -I $(MULTIBUILDTOP)../../gcc/include
 
-gcc_version := $(shell cat $(top_srcdir)/../gcc/BASE-VER)
+gcc_version := $(shell @get_gcc_base_ver@ $(top_srcdir)/../gcc/BASE-VER)
 TOP_GCCDIR := $(shell cd $(top_srcdir) && cd .. && pwd)
 
 GCC_DIR = $(TOP_GCCDIR)/gcc
@@ -69,10 +69,6 @@ AM_MAKEFLAGS = \
 	"LIBCFLAGS_FOR_TARGET=$(LIBCFLAGS_FOR_TARGET)" \
 	"MAKE=$(MAKE)" \
 	"MAKEINFO=$(MAKEINFO) $(MAKEINFOFLAGS)" \
-        "MULTIBUILDTOP=$(MULTIBUILDTOP)" \
-        "MULTISUBDIR=$(MULTISUBDIR)" \
-        "MULTIOSDIR=$(MULTIDIR)" \
-        "MULTIFLAGS=$(MULTIFLAGS)" \
 	"PICFLAG=$(PICFLAG)" \
 	"PICFLAG_FOR_TARGET=$(PICFLAG_FOR_TARGET)" \
 	"SHELL=$(SHELL)" \

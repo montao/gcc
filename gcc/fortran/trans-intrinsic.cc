@@ -1,5 +1,5 @@
 /* Intrinsic translation
-   Copyright (C) 2002-2022 Free Software Foundation, Inc.
+   Copyright (C) 2002-2023 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
    and Steven Bosscher <s.bosscher@student.tudelft.nl>
 
@@ -4112,7 +4112,7 @@ gfc_conv_intrinsic_minmax (gfc_se * se, gfc_expr * expr, enum tree_code op)
       /* Handle absent optional arguments by ignoring the comparison.  */
       if (argexpr->expr->expr_type == EXPR_VARIABLE
 	  && argexpr->expr->symtree->n.sym->attr.optional
-	  && TREE_CODE (val) == INDIRECT_REF)
+	  && INDIRECT_REF_P (val))
 	{
 	  cond = fold_build2_loc (input_location,
 				NE_EXPR, logical_type_node,
@@ -4126,7 +4126,7 @@ gfc_conv_intrinsic_minmax (gfc_se * se, gfc_expr * expr, enum tree_code op)
       tree calc;
       /* For floating point types, the question is what MAX(a, NaN) or
 	 MIN(a, NaN) should return (where "a" is a normal number).
-	 There are valid usecase for returning either one, but the
+	 There are valid use case for returning either one, but the
 	 Fortran standard doesn't specify which one should be chosen.
 	 Also, there is no consensus among other tested compilers.  In
 	 short, it's a mess.  So lets just do whatever is fastest.  */
@@ -6638,6 +6638,7 @@ gfc_conv_intrinsic_ibits (gfc_se * se, gfc_expr * expr)
   tree type;
   tree tmp;
   tree mask;
+  tree num_bits, cond;
 
   gfc_conv_intrinsic_function_args (se, expr, args, 3);
   type = TREE_TYPE (args[0]);
@@ -6678,8 +6679,17 @@ gfc_conv_intrinsic_ibits (gfc_se * se, gfc_expr * expr)
 			       "in intrinsic IBITS", tmp1, tmp2, nbits);
     }
 
+  /* The Fortran standard allows (shift width) LEN <= BIT_SIZE(I), whereas
+     gcc requires a shift width < BIT_SIZE(I), so we have to catch this
+     special case.  See also gfc_conv_intrinsic_ishft ().  */
+  num_bits = build_int_cst (TREE_TYPE (args[2]), TYPE_PRECISION (type));
+
   mask = build_int_cst (type, -1);
   mask = fold_build2_loc (input_location, LSHIFT_EXPR, type, mask, args[2]);
+  cond = fold_build2_loc (input_location, GE_EXPR, logical_type_node, args[2],
+			  num_bits);
+  mask = fold_build3_loc (input_location, COND_EXPR, type, cond,
+			  build_int_cst (type, 0), mask);
   mask = fold_build1_loc (input_location, BIT_NOT_EXPR, type, mask);
 
   tmp = fold_build2_loc (input_location, RSHIFT_EXPR, type, args[0], args[1]);
@@ -10145,7 +10155,7 @@ conv_intrinsic_ieee_value (gfc_se *se, gfc_expr *expr)
   arg = gfc_evaluate_now (arg, &se->pre);
 
   type = gfc_typenode_for_spec (&expr->ts);
-  gcc_assert (TREE_CODE (type) == REAL_TYPE);
+  gcc_assert (SCALAR_FLOAT_TYPE_P (type));
   ret = gfc_create_var (type, NULL);
 
   gfc_init_block (&body);
@@ -10253,6 +10263,119 @@ conv_intrinsic_ieee_fma (gfc_se * se, gfc_expr * expr)
 }
 
 
+/* Generate code for IEEE_{MIN,MAX}_NUM{,_MAG}.  */
+
+static void
+conv_intrinsic_ieee_minmax (gfc_se * se, gfc_expr * expr, int max,
+			    const char *name)
+{
+  tree args[2], func;
+  built_in_function fn;
+
+  conv_ieee_function_args (se, expr, args, 2);
+  gcc_assert (TYPE_PRECISION (TREE_TYPE (args[0])) == TYPE_PRECISION (TREE_TYPE (args[1])));
+  args[0] = gfc_evaluate_now (args[0], &se->pre);
+  args[1] = gfc_evaluate_now (args[1], &se->pre);
+
+  if (startswith (name, "mag"))
+    {
+      /* IEEE_MIN_NUM_MAG and IEEE_MAX_NUM_MAG translate to C functions
+	 fminmag() and fmaxmag(), which do not exist as built-ins.
+
+	 Following glibc, we emit this:
+
+	   fminmag (x, y) {
+	     ax = ABS (x);
+	     ay = ABS (y);
+	     if (isless (ax, ay))
+	       return x;
+	     else if (isgreater (ax, ay))
+	       return y;
+	     else if (ax == ay)
+	       return x < y ? x : y;
+	     else if (issignaling (x) || issignaling (y))
+	       return x + y;
+	     else
+	       return isnan (y) ? x : y;
+	   }
+
+	   fmaxmag (x, y) {
+	     ax = ABS (x);
+	     ay = ABS (y);
+	     if (isgreater (ax, ay))
+	       return x;
+	     else if (isless (ax, ay))
+	       return y;
+	     else if (ax == ay)
+	       return x > y ? x : y;
+	     else if (issignaling (x) || issignaling (y))
+	       return x + y;
+	     else
+	       return isnan (y) ? x : y;
+	   }
+
+	 */
+
+      tree abs0, abs1, sig0, sig1;
+      tree cond1, cond2, cond3, cond4, cond5;
+      tree res;
+      tree type = TREE_TYPE (args[0]);
+
+      func = gfc_builtin_decl_for_float_kind (BUILT_IN_FABS, expr->ts.kind);
+      abs0 = build_call_expr_loc (input_location, func, 1, args[0]);
+      abs1 = build_call_expr_loc (input_location, func, 1, args[1]);
+      abs0 = gfc_evaluate_now (abs0, &se->pre);
+      abs1 = gfc_evaluate_now (abs1, &se->pre);
+
+      cond5 = build_call_expr_loc (input_location,
+				   builtin_decl_explicit (BUILT_IN_ISNAN),
+				   1, args[1]);
+      res = fold_build3_loc (input_location, COND_EXPR, type, cond5,
+			     args[0], args[1]);
+
+      sig0 = build_call_expr_loc (input_location,
+				  builtin_decl_explicit (BUILT_IN_ISSIGNALING),
+				  1, args[0]);
+      sig1 = build_call_expr_loc (input_location,
+				  builtin_decl_explicit (BUILT_IN_ISSIGNALING),
+				  1, args[1]);
+      cond4 = fold_build2_loc (input_location, TRUTH_ORIF_EXPR,
+			       logical_type_node, sig0, sig1);
+      res = fold_build3_loc (input_location, COND_EXPR, type, cond4,
+			     fold_build2_loc (input_location, PLUS_EXPR,
+					      type, args[0], args[1]),
+			     res);
+
+      cond3 = fold_build2_loc (input_location, EQ_EXPR, logical_type_node,
+			       abs0, abs1);
+      res = fold_build3_loc (input_location, COND_EXPR, type, cond3,
+			     fold_build2_loc (input_location,
+					      max ? MAX_EXPR : MIN_EXPR,
+					      type, args[0], args[1]),
+			     res);
+
+      func = builtin_decl_explicit (max ? BUILT_IN_ISLESS : BUILT_IN_ISGREATER);
+      cond2 = build_call_expr_loc (input_location, func, 2, abs0, abs1);
+      res = fold_build3_loc (input_location, COND_EXPR, type, cond2,
+			     args[1], res);
+
+      func = builtin_decl_explicit (max ? BUILT_IN_ISGREATER : BUILT_IN_ISLESS);
+      cond1 = build_call_expr_loc (input_location, func, 2, abs0, abs1);
+      res = fold_build3_loc (input_location, COND_EXPR, type, cond1,
+			     args[0], res);
+
+      se->expr = res;
+    }
+  else
+    {
+      /* IEEE_MIN_NUM and IEEE_MAX_NUM translate to fmin() and fmax().  */
+      fn = max ? BUILT_IN_FMAX : BUILT_IN_FMIN;
+      func = gfc_builtin_decl_for_float_kind (fn, expr->ts.kind);
+      se->expr = build_call_expr_loc_array (input_location, func, 2, args);
+    }
+}
+
+
 /* Generate code for an intrinsic function from the IEEE_ARITHMETIC
    module.  */
 
@@ -10291,6 +10414,10 @@ gfc_conv_ieee_arithmetic_function (gfc_se * se, gfc_expr * expr)
     conv_intrinsic_ieee_value (se, expr);
   else if (startswith (name, "_gfortran_ieee_fma"))
     conv_intrinsic_ieee_fma (se, expr);
+  else if (startswith (name, "_gfortran_ieee_min_num_"))
+    conv_intrinsic_ieee_minmax (se, expr, 0, name + 23);
+  else if (startswith (name, "_gfortran_ieee_max_num_"))
+    conv_intrinsic_ieee_minmax (se, expr, 1, name + 23);
   else
     /* It is not among the functions we translate directly.  We return
        false, so a library function call is emitted.  */

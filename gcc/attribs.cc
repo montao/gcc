@@ -1,5 +1,5 @@
 /* Functions dealing with attribute handling, used by most front ends.
-   Copyright (C) 1992-2022 Free Software Foundation, Inc.
+   Copyright (C) 1992-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -526,7 +526,7 @@ diag_attr_exclusions (tree last_decl, tree node, tree attrname,
 	    continue;
 
 	  if ((TREE_CODE (node) == FIELD_DECL
-	       || TREE_CODE (node) == VAR_DECL)
+	       || VAR_P (node))
 	      && !excl->variable)
 	    continue;
 
@@ -783,8 +783,7 @@ decl_attributes (tree *node, tree attributes, int flags,
 	  && TREE_CODE (*anode) != METHOD_TYPE)
 	{
 	  if (TREE_CODE (*anode) == POINTER_TYPE
-	      && (TREE_CODE (TREE_TYPE (*anode)) == FUNCTION_TYPE
-		  || TREE_CODE (TREE_TYPE (*anode)) == METHOD_TYPE))
+	      && FUNC_OR_METHOD_TYPE_P (TREE_TYPE (*anode)))
 	    {
 	      /* OK, this is a bit convoluted.  We can't just make a copy
 		 of the pointer type and modify its TREE_TYPE, because if
@@ -820,7 +819,7 @@ decl_attributes (tree *node, tree attributes, int flags,
 
       if (TYPE_P (*anode)
 	  && (flags & (int) ATTR_FLAG_TYPE_IN_PLACE)
-	  && TYPE_SIZE (*anode) != NULL_TREE)
+	  && COMPLETE_TYPE_P (*anode))
 	{
 	  warning (OPT_Wattributes, "type attributes ignored after type is already defined");
 	  continue;
@@ -846,6 +845,7 @@ decl_attributes (tree *node, tree attributes, int flags,
 	      || !DECL_P (*anode)
 	      || DECL_BUILT_IN_CLASS (*anode) != BUILT_IN_NORMAL
 	      || (DECL_FUNCTION_CODE (*anode) != BUILT_IN_UNREACHABLE
+		  && DECL_FUNCTION_CODE (*anode) != BUILT_IN_UNREACHABLE_TRAP
 		  && (DECL_FUNCTION_CODE (*anode)
 		      != BUILT_IN_UBSAN_HANDLE_BUILTIN_UNREACHABLE)))
 	    {
@@ -1277,9 +1277,7 @@ build_type_attribute_qual_variant (tree otype, tree attribute, int quals)
 	 build_duplicate_type is another solution (as used in
 	 handle_transparent_union_attribute), but that doesn't play well
 	 with the stronger C++ type identity model.  */
-      if (TREE_CODE (ttype) == RECORD_TYPE
-	  || TREE_CODE (ttype) == UNION_TYPE
-	  || TREE_CODE (ttype) == QUAL_UNION_TYPE
+      if (RECORD_OR_UNION_TYPE_P (ttype)
 	  || TREE_CODE (ttype) == ENUMERAL_TYPE)
 	{
 	  warning (OPT_Wattributes,
@@ -2455,36 +2453,6 @@ init_attr_rdwr_indices (rdwr_map *rwm, tree attrs)
 	}
     }
 }
-
-/* Get the LEVEL of the strict_flex_array for the ARRAY_FIELD based on the
-   values of attribute strict_flex_array and the flag_strict_flex_arrays.  */
-unsigned int
-strict_flex_array_level_of (tree array_field)
-{
-  gcc_assert (TREE_CODE (array_field) == FIELD_DECL);
-  unsigned int strict_flex_array_level = flag_strict_flex_arrays;
-
-  tree attr_strict_flex_array
-    = lookup_attribute ("strict_flex_array", DECL_ATTRIBUTES (array_field));
-  /* If there is a strict_flex_array attribute attached to the field,
-     override the flag_strict_flex_arrays.  */
-  if (attr_strict_flex_array)
-    {
-      /* Get the value of the level first from the attribute.  */
-      unsigned HOST_WIDE_INT attr_strict_flex_array_level = 0;
-      gcc_assert (TREE_VALUE (attr_strict_flex_array) != NULL_TREE);
-      attr_strict_flex_array = TREE_VALUE (attr_strict_flex_array);
-      gcc_assert (TREE_VALUE (attr_strict_flex_array) != NULL_TREE);
-      attr_strict_flex_array = TREE_VALUE (attr_strict_flex_array);
-      gcc_assert (tree_fits_uhwi_p (attr_strict_flex_array));
-      attr_strict_flex_array_level = tree_to_uhwi (attr_strict_flex_array);
-
-      /* The attribute has higher priority than flag_struct_flex_array.  */
-      strict_flex_array_level = attr_strict_flex_array_level;
-    }
-  return strict_flex_array_level;
-}
-
 
 /* Return the access specification for a function parameter PARM
    or null if the current function has no such specification.  */

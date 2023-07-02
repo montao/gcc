@@ -1,5 +1,5 @@
 /* Matching subroutines in all sizes, shapes and colors.
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -1084,7 +1084,8 @@ gfc_match_char (char c, bool gobble_ws)
 
    %%  Literal percent sign
    %e  Expression, pointer to a pointer is set
-   %s  Symbol, pointer to the symbol is set
+   %s  Symbol, pointer to the symbol is set (host_assoc = 0)
+   %S  Symbol, pointer to the symbol is set (host_assoc = 1)
    %n  Name, character buffer is set to name
    %t  Matches end of statement.
    %o  Matches an intrinsic operator, returned as an INTRINSIC enum.
@@ -1151,8 +1152,9 @@ loop:
 	  goto loop;
 
 	case 's':
+	case 'S':
 	  vp = va_arg (argp, void **);
-	  n = gfc_match_symbol ((gfc_symbol **) vp, 0);
+	  n = gfc_match_symbol ((gfc_symbol **) vp, c == 'S');
 	  if (n != MATCH_YES)
 	    {
 	      m = n;
@@ -5345,6 +5347,16 @@ gfc_match_common (void)
 		goto cleanup;
 	    }
 
+	  /* F2018:R874:  common-block-object is variable-name [ (array-spec) ]
+	     F2018:C8121: A variable-name shall not be a name made accessible
+	     by use association.  */
+	  if (sym->attr.use_assoc)
+	    {
+	      gfc_error ("Symbol %qs at %C is USE associated from module %qs "
+			 "and cannot occur in COMMON", sym->name, sym->module);
+	      goto cleanup;
+	    }
+
 	  /* Deal with an optional array specification after the
 	     symbol name.  */
 	  m = gfc_match_array_spec (&as, true, true);
@@ -5524,17 +5536,20 @@ gfc_free_namelist (gfc_namelist *name)
 /* Free an OpenMP namelist structure.  */
 
 void
-gfc_free_omp_namelist (gfc_omp_namelist *name, bool free_ns, bool free_align)
+gfc_free_omp_namelist (gfc_omp_namelist *name, bool free_ns,
+		       bool free_align_allocator)
 {
   gfc_omp_namelist *n;
 
   for (; name; name = n)
     {
       gfc_free_expr (name->expr);
-      if (free_align)
+      if (free_align_allocator)
 	gfc_free_expr (name->u.align);
       if (free_ns)
 	gfc_free_namespace (name->u2.ns);
+      else if (free_align_allocator)
+	gfc_free_expr (name->u2.allocator);
       else if (name->u2.udr)
 	{
 	  if (name->u2.udr->combiner)
@@ -5726,7 +5741,7 @@ gfc_match_equivalence (void)
 
   /* EQUIVALENCE has been matched.  After gobbling any possible whitespace,
      the next character needs to be '('.  Check that here, and return
-     MATCH_NO for a variable of the form equivalencej.  */
+     MATCH_NO for a variable of the form equivalence.  */
   gfc_gobble_whitespace ();
   c = gfc_peek_ascii_char ();
   if (c != '(')
@@ -5915,6 +5930,30 @@ recursive_stmt_fcn (gfc_expr *e, gfc_symbol *sym)
 }
 
 
+/* Check for invalid uses of statement function dummy arguments in body.  */
+
+static bool
+chk_stmt_fcn_body (gfc_expr *e, gfc_symbol *sym, int *f ATTRIBUTE_UNUSED)
+{
+  gfc_formal_arglist *formal;
+
+  if (e == NULL || e->symtree == NULL || e->expr_type != EXPR_FUNCTION)
+    return false;
+
+  for (formal = sym->formal; formal; formal = formal->next)
+    {
+      if (formal->sym == e->symtree->n.sym)
+	{
+	  gfc_error ("Invalid use of statement function argument at %L",
+		     &e->where);
+	  return true;
+	}
+    }
+
+  return false;
+}
+
+
 /* Match a statement function declaration.  It is so easy to match
    non-statement function statements with a MATCH_ERROR as opposed to
    MATCH_NO that we suppress error message in most cases.  */
@@ -5982,6 +6021,9 @@ gfc_match_st_function (void)
 		 sym->name, &expr->where);
       return MATCH_ERROR;
     }
+
+  if (gfc_traverse_expr (expr, sym, chk_stmt_fcn_body, 0))
+    return MATCH_ERROR;
 
   sym->value = expr;
 
@@ -6337,6 +6379,39 @@ build_class_sym:
 }
 
 
+/* Build the associate name  */
+static int
+build_associate_name (const char *name, gfc_expr **e1, gfc_expr **e2)
+{
+  gfc_expr *expr1 = *e1;
+  gfc_expr *expr2 = *e2;
+  gfc_symbol *sym;
+
+  /* For the case where the associate name is already an associate name.  */
+  if (!expr2)
+    expr2 = expr1;
+  expr1 = gfc_get_expr ();
+  expr1->expr_type = EXPR_VARIABLE;
+  expr1->where = expr2->where;
+  if (gfc_get_sym_tree (name, NULL, &expr1->symtree, false))
+    return 1;
+
+  sym = expr1->symtree->n.sym;
+  if (expr2->ts.type == BT_UNKNOWN)
+      sym->attr.untyped = 1;
+  else
+  copy_ts_from_selector_to_associate (expr1, expr2);
+
+  sym->attr.flavor = FL_VARIABLE;
+  sym->attr.referenced = 1;
+  sym->attr.class_ok = 1;
+
+  *e1 = expr1;
+  *e2 = expr2;
+  return 0;
+}
+
+
 /* Push the current selector onto the SELECT TYPE stack.  */
 
 static void
@@ -6492,7 +6567,6 @@ gfc_match_select_type (void)
   match m;
   char name[GFC_MAX_SYMBOL_LEN + 1];
   bool class_array;
-  gfc_symbol *sym;
   gfc_namespace *ns = gfc_current_ns;
 
   m = gfc_match_label ();
@@ -6514,24 +6588,11 @@ gfc_match_select_type (void)
   m = gfc_match (" %n => %e", name, &expr2);
   if (m == MATCH_YES)
     {
-      expr1 = gfc_get_expr ();
-      expr1->expr_type = EXPR_VARIABLE;
-      expr1->where = expr2->where;
-      if (gfc_get_sym_tree (name, NULL, &expr1->symtree, false))
+      if (build_associate_name (name, &expr1, &expr2))
 	{
 	  m = MATCH_ERROR;
 	  goto cleanup;
 	}
-
-      sym = expr1->symtree->n.sym;
-      if (expr2->ts.type == BT_UNKNOWN)
-	sym->attr.untyped = 1;
-      else
-	copy_ts_from_selector_to_associate (expr1, expr2);
-
-      sym->attr.flavor = FL_VARIABLE;
-      sym->attr.referenced = 1;
-      sym->attr.class_ok = 1;
     }
   else
     {
@@ -6574,6 +6635,17 @@ gfc_match_select_type (void)
     {
       gfc_error ("Selector in SELECT TYPE at %C is not a named variable; "
 		 "use associate-name=>");
+      m = MATCH_ERROR;
+      goto cleanup;
+    }
+
+  /* Prevent an existing associate name from reuse here by pushing expr1 to
+     expr2 and building a new associate name.  */
+  if (!expr2 && expr1->symtree->n.sym->assoc
+      && !expr1->symtree->n.sym->attr.select_type_temporary
+      && !expr1->symtree->n.sym->attr.select_rank_temporary
+      && build_associate_name (expr1->symtree->n.sym->name, &expr1, &expr2))
+    {
       m = MATCH_ERROR;
       goto cleanup;
     }

@@ -1,6 +1,6 @@
 /* An experimental state machine, for tracking exposure of sensitive
    data (e.g. through logging).
-   Copyright (C) 2019-2022 Free Software Foundation, Inc.
+   Copyright (C) 2019-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -95,7 +95,8 @@ public:
     return OPT_Wanalyzer_exposure_through_output_file;
   }
 
-  bool emit (rich_location *rich_loc) final override
+  bool emit (rich_location *rich_loc,
+	     logger *) final override
   {
     diagnostic_metadata m;
     /* CWE-532: Information Exposure Through Log Files */

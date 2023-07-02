@@ -1,6 +1,6 @@
 // <mutex> -*- C++ -*-
 
-// Copyright (C) 2003-2022 Free Software Foundation, Inc.
+// Copyright (C) 2003-2023 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -37,11 +37,13 @@
 # include <bits/c++0x_warning.h>
 #else
 
-#include <tuple>
-#include <exception>
-#include <type_traits>
-#include <system_error>
-#include <bits/chrono.h>
+#include <tuple>	      // std::tuple
+#include <type_traits>        // is_same_v
+#include <errno.h>	      // EAGAIN, EDEADLK
+#include <bits/chrono.h>      // duration, time_point, is_clock_v
+#include <bits/functexcept.h> // __throw_system_error
+#include <bits/invoke.h>      // __invoke
+#include <bits/move.h>	      // std::forward
 #include <bits/std_mutex.h>
 #include <bits/unique_lock.h>
 #if ! _GTHREAD_USE_MUTEX_TIMEDLOCK
@@ -294,8 +296,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #if _GLIBCXX_USE_PTHREAD_MUTEX_CLOCKLOCK
       bool
-      _M_clocklock(clockid_t clockid, const __gthread_time_t& __ts)
-      { return !pthread_mutex_clocklock(&_M_mutex, clockid, &__ts); }
+      _M_clocklock(clockid_t __clockid, const __gthread_time_t& __ts)
+      { return !pthread_mutex_clocklock(&_M_mutex, __clockid, &__ts); }
 #endif
   };
 
@@ -372,8 +374,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #ifdef _GLIBCXX_USE_PTHREAD_MUTEX_CLOCKLOCK
       bool
-      _M_clocklock(clockid_t clockid, const __gthread_time_t& __ts)
-      { return !pthread_mutex_clocklock(&_M_mutex, clockid, &__ts); }
+      _M_clocklock(clockid_t __clockid, const __gthread_time_t& __ts)
+      { return !pthread_mutex_clocklock(&_M_mutex, __clockid, &__ts); }
 #endif
   };
 

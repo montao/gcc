@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2022 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2023 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * https://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -81,8 +81,8 @@ struct Scope
     ForeachStatement *fes;      // if nested function for ForeachStatement, this is it
     Scope *callsc;              // used for __FUNCTION__, __PRETTY_FUNCTION__ and __MODULE__
     Dsymbol *inunion;           // !=null if processing members of a union
-    bool nofree;                // true if shouldn't free it
-    bool inLoop;                // true if inside a loop (where constructor calls aren't allowed)
+    d_bool nofree;                // true if shouldn't free it
+    d_bool inLoop;                // true if inside a loop (where constructor calls aren't allowed)
     int intypeof;               // in typeof(exp)
     VarDeclaration *lastVar;    // Previous symbol used to prevent goto-skips-init
 

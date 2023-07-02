@@ -1,5 +1,5 @@
 /* Next Runtime (ABI-0/1) private.
-   Copyright (C) 2011-2022 Free Software Foundation, Inc.
+   Copyright (C) 2011-2023 Free Software Foundation, Inc.
    Contributed by Iain Sandoe (split from objc-act.cc)
 
 This file is part of GCC.
@@ -754,7 +754,7 @@ next_runtime_abi_01_get_arg_type_list_base (vec<tree, va_gc> **argtypes,
 static tree
 next_runtime_abi_01_receiver_is_class_object (tree receiver)
 {
-  if (TREE_CODE (receiver) == VAR_DECL
+  if (VAR_P (receiver)
       && IS_CLASS (TREE_TYPE (receiver)))
     {
       /* The receiver is a variable created by build_class_reference_decl.  */

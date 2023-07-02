@@ -1,5 +1,5 @@
 /* Part of CPP library.  (Precompiled header reading/writing.)
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -838,7 +838,7 @@ cpp_read_state (cpp_reader *r, const char *name, FILE *f,
 	      != NULL)
 	    {
 	      _cpp_clean_line (r);
-	      if (!_cpp_create_definition (r, h))
+	      if (!_cpp_create_definition (r, h, 0))
 		abort ();
 	      _cpp_pop_buffer (r);
 	    }

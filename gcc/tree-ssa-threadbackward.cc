@@ -1,5 +1,5 @@
 /* SSA Jump Threading
-   Copyright (C) 2005-2022 Free Software Foundation, Inc.
+   Copyright (C) 2005-2023 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -327,8 +327,8 @@ back_threader::find_taken_edge_cond (const vec<basic_block> &path,
   if (solver.unreachable_path_p ())
     return UNREACHABLE_EDGE;
 
-  int_range<2> true_range (boolean_true_node, boolean_true_node);
-  int_range<2> false_range (boolean_false_node, boolean_false_node);
+  int_range<2> true_range = range_true ();
+  int_range<2> false_range = range_false ();
 
   if (r == true_range || r == false_range)
     {
@@ -512,7 +512,7 @@ back_threader::maybe_thread_block (basic_block bb)
   if (EDGE_COUNT (bb->succs) <= 1)
     return;
 
-  gimple *stmt = last_stmt (bb);
+  gimple *stmt = *gsi_last_bb (bb);
   if (!stmt)
     return;
 
@@ -718,7 +718,7 @@ back_threader_profitability::possibly_profitable_path_p
 	     going to be able to eliminate its branch.  */
 	  if (j > 0)
 	    {
-	      gimple *last = last_stmt (bb);
+	      gimple *last = *gsi_last_bb (bb);
 	      if (last
 		  && (gimple_code (last) == GIMPLE_SWITCH
 		      || gimple_code (last) == GIMPLE_GOTO))
@@ -868,22 +868,18 @@ back_threader_profitability::profitable_path_p (const vec<basic_block> &m_path,
      a multiway branch, in which case we have deemed it worth losing
      other loop optimizations later.
 
-     We also consider it worth creating an irreducible inner loop if
-     the number of copied statement is low relative to the length of
-     the path -- in that case there's little the traditional loop
-     optimizer would have done anyway, so an irreducible loop is not
-     so bad.  */
+     We also consider it worth creating an irreducible inner loop after
+     loop optimizations if the number of copied statement is low.  */
   if (!m_threaded_multiway_branch
       && *creates_irreducible_loop
-      && (m_n_insns * (unsigned) param_fsm_scale_path_stmts
-	  > (m_path.length () *
-	     (unsigned) param_fsm_scale_path_blocks)))
-
+      && (!(cfun->curr_properties & PROP_loop_opts_done)
+	  || (m_n_insns * param_fsm_scale_path_stmts
+	      >= param_max_jump_thread_duplication_stmts)))
     {
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file,
-		 "  FAIL: Would create irreducible loop without threading "
-		 "multiway branch.\n");
+		 "  FAIL: Would create irreducible loop early without "
+		 "threading multiway branch.\n");
       /* We compute creates_irreducible_loop only late.  */
       return false;
     }

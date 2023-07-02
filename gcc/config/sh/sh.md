@@ -1,5 +1,5 @@
 ;;- Machine description for Renesas / SuperH SH.
-;;  Copyright (C) 1993-2022 Free Software Foundation, Inc.
+;;  Copyright (C) 1993-2023 Free Software Foundation, Inc.
 ;;  Contributed by Steve Chamberlain (sac@cygnus.com).
 ;;  Improved by Jim Wilson (wilson@cygnus.com).
 
@@ -9269,7 +9269,7 @@
 		 (match_operand:SF 3 "arith_reg_operand" "0")))
    (clobber (reg:SI FPSCR_STAT_REG))
    (use (reg:SI FPSCR_MODES_REG))]
-  "TARGET_SH2E && flag_fp_contract_mode != FP_CONTRACT_OFF"
+  "TARGET_SH2E && flag_fp_contract_mode == FP_CONTRACT_FAST"
   "fmac	%1,%2,%0"
   "&& can_create_pseudo_p ()"
   [(parallel [(set (match_dup 0)

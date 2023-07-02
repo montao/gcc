@@ -1,7 +1,7 @@
 /* An experimental state machine, for tracking bad calls from within
    signal handlers.
 
-   Copyright (C) 2019-2022 Free Software Foundation, Inc.
+   Copyright (C) 2019-2023 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -114,7 +114,7 @@ public:
     return OPT_Wanalyzer_unsafe_call_within_signal_handler;
   }
 
-  bool emit (rich_location *rich_loc) final override
+  bool emit (rich_location *rich_loc, logger *) final override
   {
     auto_diagnostic_group d;
     diagnostic_metadata m;

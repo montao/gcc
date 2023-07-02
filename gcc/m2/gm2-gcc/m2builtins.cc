@@ -1,6 +1,6 @@
 /* m2builtins.cc provides an interface to the GCC builtins.
 
-Copyright (C) 2012-2022 Free Software Foundation, Inc.
+Copyright (C) 2012-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius@glam.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -40,7 +40,7 @@ along with GNU Modula-2; see the file COPYING3.  If not see
     if (!(X))                                                                 \
       {                                                                       \
         debug_tree (Y);                                                       \
-        internal_error ("%s:%d:assertion of condition `%s' failed", __FILE__, __LINE__,  \
+        internal_error ("%s:%d:assertion of condition %qs failed", __FILE__, __LINE__,  \
                         #X);                                                  \
       }                                                                       \
   }
@@ -192,12 +192,6 @@ static struct builtin_function_entry list_of_builtins[] = {
     "signbitf", NULL, NULL },
   { "__builtin_signbitl", BT_FN_INT_LONG_DOUBLE, BUILT_IN_SIGNBITL,
     BUILT_IN_NORMAL, "signbitl", NULL, NULL },
-  { "__builtin_significand", BT_FN_DOUBLE_DOUBLE, BUILT_IN_SIGNIFICAND,
-    BUILT_IN_NORMAL, "significand", NULL, NULL },
-  { "__builtin_significandf", BT_FN_FLOAT_FLOAT, BUILT_IN_SIGNIFICANDF,
-    BUILT_IN_NORMAL, "significandf", NULL, NULL },
-  { "__builtin_significandl", BT_FN_LONG_DOUBLE_LONG_DOUBLE,
-    BUILT_IN_SIGNIFICANDL, BUILT_IN_NORMAL, "significandl", NULL, NULL },
   { "__builtin_modf", BT_FN_DOUBLE_DOUBLE_DOUBLEPTR, BUILT_IN_MODF,
     BUILT_IN_NORMAL, "modf", NULL, NULL },
   { "__builtin_modff", BT_FN_FLOAT_FLOAT_FLOATPTR, BUILT_IN_MODFF,
@@ -216,12 +210,6 @@ static struct builtin_function_entry list_of_builtins[] = {
     BUILT_IN_NEXTTOWARDF, BUILT_IN_NORMAL, "nexttowardf", NULL, NULL },
   { "__builtin_nexttowardl", BT_FN_LONG_DOUBLE_LONG_DOUBLE_LONG_DOUBLE,
     BUILT_IN_NEXTTOWARDL, BUILT_IN_NORMAL, "nexttowardl", NULL, NULL },
-  { "__builtin_scalb", BT_FN_DOUBLE_DOUBLE_DOUBLE, BUILT_IN_SCALB,
-    BUILT_IN_NORMAL, "scalb", NULL, NULL },
-  { "__builtin_scalbf", BT_FN_FLOAT_FLOAT_FLOAT, BUILT_IN_SCALBF,
-    BUILT_IN_NORMAL, "scalbf", NULL, NULL },
-  { "__builtin_scalbl", BT_FN_LONG_DOUBLE_LONG_DOUBLE_LONG_DOUBLE,
-    BUILT_IN_SCALBL, BUILT_IN_NORMAL, "scalbl", NULL, NULL },
   { "__builtin_scalbln", BT_FN_DOUBLE_DOUBLE_LONG, BUILT_IN_SCALBLN,
     BUILT_IN_NORMAL, "scalbln", NULL, NULL },
   { "__builtin_scalblnf", BT_FN_FLOAT_FLOAT_LONG, BUILT_IN_SCALBLNF,
@@ -564,7 +552,7 @@ m2builtins_GetBuiltinTypeInfo (location_t location, tree type,
 static tree
 doradix (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     {
       enum machine_mode mode = TYPE_MODE (type);
       int radix = REAL_MODE_FORMAT (mode)->b;
@@ -580,7 +568,7 @@ doradix (location_t location ATTRIBUTE_UNUSED, tree type)
 static tree
 doplaces (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     {
       /* Taken from c-family/c-cppbuiltin.cc.  */
       /* The number of decimal digits, q, such that any floating-point
@@ -604,7 +592,7 @@ doplaces (location_t location ATTRIBUTE_UNUSED, tree type)
 static tree
 doexponentmin (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     {
       enum machine_mode mode = TYPE_MODE (type);
       int emin = REAL_MODE_FORMAT (mode)->emin;
@@ -619,7 +607,7 @@ doexponentmin (location_t location ATTRIBUTE_UNUSED, tree type)
 static tree
 doexponentmax (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     {
       enum machine_mode mode = TYPE_MODE (type);
       int emax = REAL_MODE_FORMAT (mode)->emax;
@@ -652,7 +640,7 @@ computeLarge (tree type)
 static tree
 dolarge (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     return computeLarge (type);
   return NULL_TREE;
 }
@@ -679,7 +667,7 @@ computeSmall (tree type)
 static tree
 dosmall (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     return computeSmall (type);
   return NULL_TREE;
 }
@@ -747,7 +735,7 @@ dorounds (location_t location ATTRIBUTE_UNUSED, tree type ATTRIBUTE_UNUSED)
 static tree
 dogUnderflow (location_t location ATTRIBUTE_UNUSED, tree type)
 {
-  if (TREE_CODE (type) == REAL_TYPE)
+  if (SCALAR_FLOAT_TYPE_P (type))
     {
       enum machine_mode mode = TYPE_MODE (type);
       const struct real_format *fmt = REAL_MODE_FORMAT (mode);
@@ -813,7 +801,7 @@ m2builtins_BuiltInIsfinite (location_t location, tree expression)
 /* BuiltinExists - returns TRUE if the builtin function, name, exists
    for this target architecture.  */
 
-int
+bool
 m2builtins_BuiltinExists (char *name)
 {
   struct builtin_function_entry *fe;

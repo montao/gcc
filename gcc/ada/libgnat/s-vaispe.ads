@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2022-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 2022-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -62,7 +62,7 @@ generic
 package System.Value_I_Spec with
    Ghost,
    SPARK_Mode,
-   Annotate => (GNATprove, Always_Return)
+   Always_Terminates
 is
    pragma Preelaborate;
    use all type Uns_Params.Uns_Option;

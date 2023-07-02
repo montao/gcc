@@ -1,5 +1,5 @@
 ;; Constraint definitions for IA-32 and x86-64.
-;; Copyright (C) 2006-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2023 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -162,7 +162,9 @@
 ;;  g  GOT memory operand.
 ;;  m  Vector memory operand
 ;;  c  Constant memory operand
+;;  k  TLS address that allows insn using non-integer registers
 ;;  n  Memory operand without REX prefix
+;;  r  Broadcast memory operand
 ;;  s  Sibcall memory operand, not valid for TARGET_X32
 ;;  w  Call memory operand, not valid for TARGET_X32
 ;;  z  Constant call address operand.

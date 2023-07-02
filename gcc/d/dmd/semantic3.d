@@ -1,7 +1,7 @@
 /**
  * Performs the semantic3 stage, which deals with function bodies.
  *
- * Copyright:   Copyright (C) 1999-2022 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2023 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 https://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/semantic3.d, _semantic3.d)
@@ -47,6 +47,7 @@ import dmd.identifier;
 import dmd.init;
 import dmd.initsem;
 import dmd.hdrgen;
+import dmd.location;
 import dmd.mtype;
 import dmd.nogc;
 import dmd.nspace;
@@ -87,7 +88,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
     alias visit = Visitor.visit;
 
     Scope* sc;
-    this(Scope* sc)
+    this(Scope* sc) scope
     {
         this.sc = sc;
     }
@@ -341,7 +342,6 @@ private extern(C++) final class Semantic3Visitor : Visitor
             sc2.aligndecl = null;
             if (funcdecl.ident != Id.require && funcdecl.ident != Id.ensure)
                 sc2.flags = sc.flags & ~SCOPE.contract;
-            sc2.flags &= ~SCOPE.compile;
             sc2.tf = null;
             sc2.os = null;
             sc2.inLoop = false;
@@ -711,7 +711,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
 
                         // Insert implicit super() at start of fbody
                         Type tthis = ad2.type.addMod(funcdecl.vthis.type.mod);
-                        FuncDeclaration fd = resolveFuncCall(Loc.initial, sc2, cd.baseClass.ctor, null, tthis, null, FuncResolveFlag.quiet);
+                        FuncDeclaration fd = resolveFuncCall(Loc.initial, sc2, cd.baseClass.ctor, null, tthis, ArgumentList(), FuncResolveFlag.quiet);
                         if (!fd)
                         {
                             funcdecl.error("no match for implicit `super()` call in constructor");
@@ -1420,7 +1420,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
          * https://issues.dlang.org/show_bug.cgi?id=14246
          */
         AggregateDeclaration ad = ctor.isMemberDecl();
-        if (!ctor.fbody || !ad || !ad.fieldDtor || !global.params.dtorFields || global.params.betterC || ctor.type.toTypeFunction.isnothrow)
+        if (!ctor.fbody || !ad || !ad.fieldDtor || !global.params.dtorFields || !global.params.useExceptions || ctor.type.toTypeFunction.isnothrow)
             return visit(cast(FuncDeclaration)ctor);
 
         /* Generate:
@@ -1599,7 +1599,7 @@ private struct FuncDeclSem3
 
     // Scope of analysis
     Scope* sc;
-    this(FuncDeclaration fd,Scope* s)
+    this(FuncDeclaration fd,Scope* s) scope
     {
         funcdecl = fd;
         sc = s;

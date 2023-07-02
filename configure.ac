@@ -1482,7 +1482,22 @@ AC_SUBST(PGO_BUILD_LTO_CFLAGS)
 _LT_CHECK_OBJDIR
 
 # Check for GMP, MPFR and MPC
-gmplibs="-lmpc -lmpfr -lgmp"
+require_gmp=no
+require_mpc=no
+if test -d ${srcdir}/gcc ; then
+  require_gmp=yes
+  require_mpc=yes
+fi
+if test -d ${srcdir}/gdb ; then
+  if test "x$enable_gdb" != xno; then
+   require_gmp=yes
+  fi
+fi
+
+gmplibs="-lmpfr -lgmp"
+if test x"$require_mpc" = "xyes" ; then
+  gmplibs="-lmpc $gmplibs"
+fi
 gmpinc=
 have_gmp=no
 
@@ -1597,7 +1612,7 @@ if test "x$with_gmp$with_gmp_include$with_gmp_lib" = x && test -d ${srcdir}/gmp;
   have_gmp=yes
 fi
 
-if test -d ${srcdir}/gcc && test "x$have_gmp" = xno; then
+if test "x$require_gmp" = xyes && test "x$have_gmp" = xno; then
   have_gmp=yes
   saved_CFLAGS="$CFLAGS"
   CFLAGS="$CFLAGS $gmpinc"
@@ -1637,7 +1652,7 @@ if test -d ${srcdir}/gcc && test "x$have_gmp" = xno; then
   fi
 
   # Check for the MPC header version.
-  if test x"$have_gmp" = xyes ; then
+  if test "x$require_mpc" = xyes && test x"$have_gmp" = xyes ; then
     # Check for the recommended and required versions of MPC.
     AC_MSG_CHECKING([for the correct version of mpc.h])
     AC_TRY_COMPILE([#include <mpc.h>],[
@@ -1656,11 +1671,10 @@ if test -d ${srcdir}/gcc && test "x$have_gmp" = xno; then
   if test x"$have_gmp" = xyes; then
     saved_LIBS="$LIBS"
     LIBS="$LIBS $gmplibs"
-    AC_MSG_CHECKING([for the correct version of the gmp/mpfr/mpc libraries])
-    AC_TRY_LINK([#include <mpc.h>],[
+    AC_MSG_CHECKING([for the correct version of the gmp/mpfr libraries])
+    AC_TRY_LINK([#include <mpfr.h>],[
     mpfr_t n;
     mpfr_t x;
-    mpc_t c;
     int t;
     mpfr_init (n);
     mpfr_init (x);
@@ -1669,6 +1683,17 @@ if test -d ${srcdir}/gcc && test "x$have_gmp" = xno; then
     mpfr_subnormalize (x, t, MPFR_RNDN);
     mpfr_clear(n);
     mpfr_clear(x);
+    ], [AC_MSG_RESULT([yes])], [AC_MSG_RESULT([no]); have_gmp=no])
+    LIBS="$saved_LIBS"
+  fi
+
+  # Now check the MPC library
+  if test "x$require_mpc" = xyes && test x"$have_gmp" = xyes; then
+    saved_LIBS="$LIBS"
+    LIBS="$LIBS $gmplibs"
+    AC_MSG_CHECKING([for the correct version of the mpc libraries])
+    AC_TRY_LINK([#include <mpc.h>],[
+    mpc_t c;
     mpc_init2 (c, 53);
     mpc_set_ui_ui (c, 1, 1, MPC_RNDNN);
     mpc_cosh (c, c, MPC_RNDNN);
@@ -1684,7 +1709,8 @@ if test -d ${srcdir}/gcc && test "x$have_gmp" = xno; then
 # The library versions listed in the error message below should match
 # the HARD-minimums enforced above.
   if test x$have_gmp != xyes; then
-    AC_MSG_ERROR([Building GCC requires GMP 4.2+, MPFR 3.1.0+ and MPC 0.8.0+.
+    if test -d ${srcdir}/gcc ; then
+      AC_MSG_ERROR([Building GCC requires GMP 4.2+, MPFR 3.1.0+ and MPC 0.8.0+.
 Try the --with-gmp, --with-mpfr and/or --with-mpc options to specify
 their locations.  Source code for these libraries can be found at
 their respective hosting sites as well as at
@@ -1693,6 +1719,13 @@ http://gcc.gnu.org/install/prerequisites.html for additional info.  If
 you obtained GMP, MPFR and/or MPC from a vendor distribution package,
 make sure that you have installed both the libraries and the header
 files.  They may be located in separate packages.])
+    else
+      AC_MSG_ERROR([Building GDB requires GMP 4.2+, and MPFR 3.1.0+.
+Try the --with-gmp and/or --with-mpfr options to specify
+their locations.  If you obtained GMP and/or MPFR from a vendor
+distribution package, make sure that you have installed both the libraries
+and the header files.  They may be located in separate packages.])
+    fi
   fi
 fi
 
@@ -1858,6 +1891,36 @@ AC_ARG_ENABLE(linker-plugin-flags,
   extra_linker_plugin_flags=)
 AC_SUBST(extra_linker_plugin_flags)
 
+# Handle --enable-host-pie
+# If host PIE executables are the default (or must be forced on) for some host,
+# we must pass that configuration to the gcc directory.
+gcc_host_pie=
+AC_ARG_ENABLE(host-pie,
+[AS_HELP_STRING([--enable-host-pie],
+		[build position independent host executables])],
+[host_pie=$enableval
+ case $host in
+   *-*-darwin2*)
+     if test x$host_pie != xyes ; then
+       # for Darwin20+ this is required.
+       AC_MSG_WARN([PIE executables are required for the configured host, host-pie setting ignored.])
+       host_pie=yes
+       gcc_host_pie=--enable-host-pie
+     fi ;;
+  *) ;;
+ esac],
+[case $host in
+  *-*-darwin2*)
+    # Default to PIE (mandatory for aarch64).
+    host_pie=yes
+    gcc_host_pie=--enable-host-pie
+    ;;
+  *) host_pie=no ;;
+ esac])
+
+AC_SUBST(host_pie)
+AC_SUBST(gcc_host_pie)
+
 # Enable --enable-host-shared.
 # Checked early to determine whether jit is an 'all' language
 AC_ARG_ENABLE(host-shared,
@@ -1868,23 +1931,52 @@ AC_ARG_ENABLE(host-shared,
    x86_64-*-darwin* | aarch64-*-darwin*)
      if test x$host_shared != xyes ; then
        # PIC is the default, and actually cannot be switched off.
-       echo configure.ac: warning: PIC code is required for the configured target, host-shared setting ignored. 1>&2
+       AC_MSG_WARN([PIC code is required for the configured host; host-shared setting ignored.])
+       host_shared=yes
+     fi ;;
+   *-*-darwin*)
+     if test x$host_pie = xyes -a x$host_shared != xyes ; then
+       AC_MSG_WARN([PIC code is required for PIE host executables host-shared setting ignored.])
        host_shared=yes
      fi ;;
   *) ;;
  esac],
 [case $host in
+  # 64B x86_64 and Aarch64 Darwin default to PIC.
   x86_64-*-darwin* | aarch64-*-darwin*) host_shared=yes ;;
-  *) host_shared=no ;;
+  # 32B and powerpc64 Darwin must use PIC to link PIE exes.
+  *-*-darwin*) host_shared=$host_pie ;;
+  *) host_shared=no;;
  esac])
 
 AC_SUBST(host_shared)
+
+if test x$host_shared = xyes; then
+  case $host in
+    *-*-darwin*)
+      # Since host shared is the default for 64b Darwin, and also enabled for
+      # host_pie, ensure that we present the PIE flag when host_pie is active.
+      if test x$host_pie = xyes; then
+        PICFLAG=-fPIE
+      fi
+      ;;
+    *)
+      PICFLAG=-fPIC
+      ;;
+  esac
+elif test x$host_pie = xyes; then
+  PICFLAG=-fPIE
+else
+  PICFLAG=
+fi
+
+AC_SUBST(PICFLAG)
 
 # If we are building PIC/PIE host executables, and we are building dependent
 # libs (e.g. GMP) in-tree those libs need to be configured to generate PIC
 # code.
 host_libs_picflag=
-if test "$host_shared" = "yes";then
+if test "$host_shared" = "yes" -o "$host_pie" = "yes"; then
 host_libs_picflag='--with-pic'
 fi
 AC_SUBST(host_libs_picflag)
@@ -3038,7 +3130,9 @@ esac
 # These force 'configure's to be done one at a time, to avoid problems
 # with contention over a shared config.cache.
 rm -f serdep.tmp
+if test "x${enable_serial_build_configure}" = xyes || test "x${enable_serial_host_configure}" = xyes || test "x${enable_serial_target_configure}" = xyes; then
 echo '# serdep.tmp' > serdep.tmp
+fi
 olditem=
 test "x${enable_serial_build_configure}" = xyes &&
 for item in ${build_configdirs} ; do

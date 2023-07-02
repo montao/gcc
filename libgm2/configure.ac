@@ -1,5 +1,5 @@
 # Configure script for libgm2.
-# Copyright (C) 2013-2022 Free Software Foundation, Inc.
+# Copyright (C) 2013-2023 Free Software Foundation, Inc.
 
 # This file is part of GCC.
 
@@ -27,7 +27,7 @@ AC_CONFIG_SRCDIR(Makefile.am)
 # AC_CONFIG_MACRO_DIR([config])
 AC_CONFIG_HEADER(config.h)
 
-libtool_VERSION=17:0:0
+libtool_VERSION=18:0:0
 AC_SUBST(libtool_VERSION)
 
 AM_ENABLE_MULTILIB(, ..)
@@ -42,7 +42,7 @@ AC_CANONICAL_SYSTEM
 target_alias=${target_alias-$host_alias}
 AC_SUBST(target_alias)
 
-AM_INIT_AUTOMAKE([1.9.3 no-define foreign no-dist -Wall -Wno-portability])
+AM_INIT_AUTOMAKE([1.15.1 no-define foreign no-dist -Wall -Wno-portability])
 
 AH_TEMPLATE(PACKAGE, [Name of package])
 AH_TEMPLATE(VERSION, [Version number of package])
@@ -173,15 +173,19 @@ save_CFLAGS="$CFLAGS"
 AC_CHECK_TOOL(AR, ar)
 AC_CHECK_TOOL(NM, nm)
 AC_CHECK_TOOL(RANLIB, ranlib, ranlib-not-found-in-path-error)
-AC_PATH_PROG(PERL, perl, perl-not-found-in-path-error)
 AC_PROG_MAKE_SET
 AC_PROG_INSTALL
 
-LT_INIT
 AC_LIBTOOL_DLOPEN
-# AM_PROG_LIBTOOL
+AM_PROG_LIBTOOL
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
+
+if test "${multilib}" = "yes"; then
+  multilib_arg="--enable-multilib"
+else
+  multilib_arg=
+fi
 
 AC_CHECK_TYPES([struct timezone, struct stat, struct timeval])
 
@@ -267,7 +271,7 @@ AC_MSG_NOTICE([libgm2 has finished checking target libc and libm contents.])
 # All known M2_HOST_OS values.  This is the union of all host operating systems
 # supported by gm2.
 
-M2_SUPPORTED_HOST_OS="aix freebsd hurd linux netbsd openbsd solaris windows"
+M2_SUPPORTED_HOST_OS="aix freebsd hurd linux netbsd openbsd solaris windows darwin"
 
 M2_HOST_OS=unknown
 
@@ -280,6 +284,19 @@ case ${host} in
   *-*-solaris2*) M2_HOST_OS=solaris ;;
   *-*-aix*)      M2_HOST_OS=aix ;;
   *-*-gnu*)      M2_HOST_OS=hurd ;;
+esac
+
+M2_TARGET_OS=unknown
+
+case ${target} in
+  *-*-darwin*)   M2_TARGET_OS=darwin ;;
+  *-*-freebsd*)  M2_TARGET_OS=freebsd ;;
+  *-*-linux*)    M2_TARGET_OS=linux ;;
+  *-*-netbsd*)	 M2_TARGET_OS=netbsd ;;
+  *-*-openbsd*)  M2_TARGET_OS=openbsd ;;
+  *-*-solaris2*) M2_TARGET_OS=solaris ;;
+  *-*-aix*)      M2_TARGET_OS=aix ;;
+  *-*-gnu*)      M2_TARGET_OS=hurd ;;
 esac
 
 # M2_HOST_OS=unknown
@@ -366,10 +383,26 @@ AM_CONDITIONAL([BUILD_PIMLIB], [test x$BUILD_PIMLIB = xtrue])
 AM_CONDITIONAL([BUILD_ISOLIB], [test x$BUILD_ISOLIB = xtrue])
 AM_CONDITIONAL([BUILD_CORLIB], [test x$BUILD_CORLIB = xtrue])
 AM_CONDITIONAL([BUILD_LOGLIB], [test x$BUILD_LOGLIB = xtrue])
+AM_CONDITIONAL([TARGET_DARWIN], [test x$M2_TARGET_OS = xdarwin])
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CONFIG_SRCDIR([Makefile.am])
-AC_CONFIG_FILES([Makefile libm2min/Makefile libm2pim/Makefile libm2iso/Makefile
-                 libm2cor/Makefile libm2log/Makefile])
+AC_CONFIG_FILES([Makefile])
+
+AC_CONFIG_FILES(AC_FOREACH([DIR], [libm2min libm2pim libm2iso libm2cor libm2log], [DIR/Makefile ]),
+ [ cat > vpsed$$ << \_EOF
+s!`test -f '$<' || echo '$(srcdir)/'`!!
+_EOF
+   sed -f vpsed$$ $ac_file > tmp$$
+   mv tmp$$ $ac_file
+   rm vpsed$$
+   echo 'MULTISUBDIR =' >> $ac_file
+   ml_norecursion=yes
+   . ${multi_basedir}/config-ml.in
+   AS_UNSET([ml_norecursion])
+])
 
 AC_MSG_NOTICE([libgm2 has been configured.])
 

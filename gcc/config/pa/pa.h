@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for the HP Spectrum.
-   Copyright (C) 1992-2022 Free Software Foundation, Inc.
+   Copyright (C) 1992-2023 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com) of Cygnus Support
    and Tim Moore (moore@defmacro.cs.utah.edu) of the Center for
    Software Science at the University of Utah.
@@ -72,10 +72,12 @@ extern unsigned long total_code_bytes;
 #define HPUX_LONG_DOUBLE_LIBRARY 0
 #endif
 
-/* Linux kernel atomic operation support.  */
-#ifndef TARGET_SYNC_LIBCALL
-#define TARGET_SYNC_LIBCALL 0
-#endif
+/* Sync libcall support.  */
+#define TARGET_SYNC_LIBCALLS (flag_sync_libcalls)
+
+/* The maximum size of the sync library functions supported.  DImode
+   is supported on 32-bit targets using floating point loads and stores.  */
+#define MAX_SYNC_LIBFUNC_SIZE 8
 
 /* The following three defines are potential target switches.  The current
    defines are optimal given the current capabilities of GAS and GNU ld.  */
@@ -173,6 +175,8 @@ do {								\
        builtin_define("_PA_RISC1_0");				\
      if (HPUX_LONG_DOUBLE_LIBRARY)				\
        builtin_define("__SIZEOF_FLOAT128__=16");		\
+     if (TARGET_SOFT_FLOAT)					\
+       builtin_define("__SOFTFP__");				\
 } while (0)
 
 /* An old set of OS defines for various BSD-like systems.  */
@@ -926,7 +930,7 @@ do {									     \
 
 /* Return a nonzero value if DECL has a section attribute.  */
 #define IN_NAMED_SECTION_P(DECL) \
-  ((TREE_CODE (DECL) == FUNCTION_DECL || TREE_CODE (DECL) == VAR_DECL) \
+  ((TREE_CODE (DECL) == FUNCTION_DECL || VAR_P (DECL)) \
    && DECL_SECTION_NAME (DECL) != NULL)
 
 /* Define this macro if references to a symbol must be treated
@@ -948,7 +952,7 @@ do {									     \
 
 #define TEXT_SPACE_P(DECL)\
   (TREE_CODE (DECL) == FUNCTION_DECL					\
-   || (TREE_CODE (DECL) == VAR_DECL					\
+   || (VAR_P (DECL)					\
        && TREE_READONLY (DECL) && ! TREE_SIDE_EFFECTS (DECL)		\
        && (! DECL_INITIAL (DECL) || ! pa_reloc_needed (DECL_INITIAL (DECL))) \
        && !flag_pic)							\

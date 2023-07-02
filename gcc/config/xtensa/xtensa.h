@@ -1,5 +1,5 @@
 /* Definitions of Tensilica's Xtensa target machine for GNU compiler.
-   Copyright (C) 2001-2022 Free Software Foundation, Inc.
+   Copyright (C) 2001-2023 Free Software Foundation, Inc.
    Contributed by Bob Wilson (bwilson@tensilica.com) at Tensilica.
 
 This file is part of GCC.
@@ -35,6 +35,7 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_NSA		XCHAL_HAVE_NSA
 #define TARGET_MINMAX		XCHAL_HAVE_MINMAX
 #define TARGET_SEXT		XCHAL_HAVE_SEXT
+#define TARGET_CLAMPS		XCHAL_HAVE_CLAMPS
 #define TARGET_BOOLEANS		XCHAL_HAVE_BOOLEANS
 #define TARGET_HARD_FLOAT	XCHAL_HAVE_FP
 #define TARGET_HARD_FLOAT_DIV	XCHAL_HAVE_FP_DIV
@@ -48,7 +49,7 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_S32C1I		XCHAL_HAVE_S32C1I
 #define TARGET_ABSOLUTE_LITERALS XSHAL_USE_ABSOLUTE_LITERALS
 #define TARGET_THREADPTR	XCHAL_HAVE_THREADPTR
-#define TARGET_LOOPS	        XCHAL_HAVE_LOOPS
+#define TARGET_LOOPS		XCHAL_HAVE_LOOPS
 #define TARGET_WINDOWED_ABI_DEFAULT (XSHAL_ABI == XTHAL_ABI_WINDOWED)
 #define TARGET_WINDOWED_ABI	xtensa_windowed_abi
 #define TARGET_DEBUG		XCHAL_HAVE_DEBUG
@@ -142,7 +143,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Set this nonzero if move instructions will actually fail to work
    when given unaligned data.  */
-#define STRICT_ALIGNMENT 1
+#define STRICT_ALIGNMENT (xtensa_strict_alignment)
 
 /* Promote integer modes smaller than a word to SImode.  Set UNSIGNEDP
    for QImode, because there is no 8-bit load from memory with sign
@@ -238,44 +239,21 @@ along with GCC; see the file COPYING3.  If not see
   1,									\
 }
 
-/* For non-leaf procedures on Xtensa processors, the allocation order
-   is as specified below by REG_ALLOC_ORDER.  For leaf procedures, we
-   want to use the lowest numbered registers first to minimize
-   register window overflows.  However, local-alloc is not smart
-   enough to consider conflicts with incoming arguments.  If an
-   incoming argument in a2 is live throughout the function and
-   local-alloc decides to use a2, then the incoming argument must
-   either be spilled or copied to another register.  To get around
-   this, we define ADJUST_REG_ALLOC_ORDER to redefine
-   reg_alloc_order for leaf functions such that lowest numbered
-   registers are used first with the exception that the incoming
-   argument registers are not used until after other register choices
-   have been exhausted.  */
+/* For the windowed register ABI on Xtensa processors, the allocation
+   order is as specified below by REG_ALLOC_ORDER.
+   For the call0 ABI, on the other hand, ADJUST_REG_ALLOC_ORDER hook
+   will be called once at the start of IRA, replacing it with the
+   appropriate one.  */
 
-#define REG_ALLOC_ORDER \
-{  8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2, \
-  18, \
-  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, \
-   0,  1, 16, 17, \
-  35, \
+#define REG_ALLOC_ORDER							\
+{									\
+   8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2,		\
+  18,									\
+  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,	\
+   0,  1, 16, 17,							\
+  35,									\
 }
-
-#define ADJUST_REG_ALLOC_ORDER order_regs_for_local_alloc ()
-
-/* For Xtensa, the only point of this is to prevent GCC from otherwise
-   giving preference to call-used registers.  To minimize window
-   overflows for the AR registers, we want to give preference to the
-   lower-numbered AR registers.  For other register files, which are
-   not windowed, we still prefer call-used registers, if there are any.  */
-extern const char xtensa_leaf_regs[FIRST_PSEUDO_REGISTER];
-#define LEAF_REGISTERS xtensa_leaf_regs
-
-/* For Xtensa, no remapping is necessary, but this macro must be
-   defined if LEAF_REGISTERS is defined.  */
-#define LEAF_REG_REMAP(REGNO) ((int) (REGNO))
-
-/* This must be declared if LEAF_REGISTERS is set.  */
-extern int leaf_function;
+#define ADJUST_REG_ALLOC_ORDER xtensa_adjust_reg_alloc_order ()
 
 /* Internal macros to classify a register number.  */
 
@@ -286,7 +264,7 @@ extern int leaf_function;
 
 /* Coprocessor registers */
 #define BR_REG_FIRST 18
-#define BR_REG_LAST  18 
+#define BR_REG_LAST  18
 #define BR_REG_NUM   (BR_REG_LAST - BR_REG_FIRST + 1)
 
 /* 16 floating-point registers */
@@ -474,9 +452,9 @@ enum reg_class
 
 /* Symbolic macros for the registers used to return integer, floating
    point, and values of coprocessor and user-defined modes.  */
-#define GP_RETURN (GP_REG_FIRST + 2 + WINDOW_SIZE)
+#define GP_RETURN_FIRST (GP_REG_FIRST + 2 + WINDOW_SIZE)
+#define GP_RETURN_LAST  (GP_RETURN_FIRST + 3)
 #define GP_OUTGOING_RETURN (GP_REG_FIRST + 2)
-#define GP_RETURN_REG_COUNT 4
 
 /* Symbolic macros for the first/last argument registers.  */
 #define GP_ARG_FIRST (GP_REG_FIRST + 2)
@@ -612,18 +590,9 @@ typedef struct xtensa_args
 /* C expressions that are nonzero if X (assumed to be a `reg' RTX) is
    valid for use as a base or index register.  */
 
-#ifdef REG_OK_STRICT
-#define REG_OK_STRICT_FLAG 1
-#else
-#define REG_OK_STRICT_FLAG 0
-#endif
-
 #define BASE_REG_P(X, STRICT)						\
-  ((!(STRICT) && REGNO (X) >= FIRST_PSEUDO_REGISTER)			\
+  ((!(STRICT) && ! HARD_REGISTER_P (X))					\
    || REGNO_OK_FOR_BASE_P (REGNO (X)))
-
-#define REG_OK_FOR_INDEX_P(X) 0
-#define REG_OK_FOR_BASE_P(X) BASE_REG_P (X, REG_OK_STRICT_FLAG)
 
 /* Maximum number of registers that can appear in a valid memory address.  */
 #define MAX_REGS_PER_ADDRESS 1
@@ -742,7 +711,7 @@ typedef struct xtensa_args
 
 
 /* Define output to appear before the constant pool.  */
-#define ASM_OUTPUT_POOL_PROLOGUE(FILE, FUNNAME, FUNDECL, SIZE)          \
+#define ASM_OUTPUT_POOL_PROLOGUE(FILE, FUNNAME, FUNDECL, SIZE)		\
   do {									\
     if ((SIZE) > 0 || !TARGET_WINDOWED_ABI)				\
       {									\

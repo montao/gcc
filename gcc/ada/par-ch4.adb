@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -34,17 +34,17 @@ package body Ch4 is
 
    --  Attributes that cannot have arguments
 
-   Is_Parameterless_Attribute : constant Attribute_Class_Array :=
-     (Attribute_Base         => True,
-      Attribute_Body_Version => True,
-      Attribute_Class        => True,
-      Attribute_External_Tag => True,
-      Attribute_Img          => True,
-      Attribute_Loop_Entry   => True,
-      Attribute_Old          => True,
-      Attribute_Result       => True,
-      Attribute_Stub_Type    => True,
-      Attribute_Version      => True,
+   Is_Parameterless_Attribute : constant Attribute_Set :=
+     (Attribute_Base         |
+      Attribute_Body_Version |
+      Attribute_Class        |
+      Attribute_External_Tag |
+      Attribute_Img          |
+      Attribute_Loop_Entry   |
+      Attribute_Old          |
+      Attribute_Result       |
+      Attribute_Stub_Type    |
+      Attribute_Version      |
       Attribute_Type_Key     => True,
       others                 => False);
    --  This map contains True for parameterless attributes that return a string
@@ -2319,6 +2319,14 @@ package body Ch4 is
          if Token in Token_Class_Sterm then
             null;
 
+         --  Handle '}' as expression terminator of an interpolated
+         --  expression.
+
+         elsif Inside_Interpolated_String_Literal
+           and then Token = Tok_Right_Curly_Bracket
+         then
+            null;
+
          --  If we do not have an expression terminator, then complete the
          --  scan of a simple expression. This code duplicates the code
          --  found in P_Term and P_Factor.
@@ -2557,8 +2565,13 @@ package body Ch4 is
       --  an expression terminator, and is not in Token_Class_Sterm, but
       --  in this special case we know that the expression is complete.
 
+      --  We disable this error recovery machinery when we are processing an
+      --  interpolated string and we reach the expression terminator '}'.
+
       if not Token_Is_At_Start_Of_Line
          and then Token not in Token_Class_Sterm
+         and then not (Inside_Interpolated_String_Literal
+                         and then Token = Tok_Right_Curly_Bracket)
       then
          --  Normally the right error message is indeed that we expected a
          --  binary operator, but in the case of being between a right and left
@@ -2850,6 +2863,9 @@ package body Ch4 is
 
             when Tok_Left_Bracket =>
                return P_Aggregate;
+
+            when Tok_Left_Interpolated_String =>
+               return P_Interpolated_String_Literal;
 
             --  Allocator
 

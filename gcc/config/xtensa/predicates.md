@@ -1,5 +1,5 @@
 ;; Predicate definitions for Xtensa.
-;; Copyright (C) 2005-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2023 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -191,11 +191,17 @@
 (define_predicate "logical_shift_operator"
   (match_code "ashift,lshiftrt"))
 
+(define_predicate "addsub_operator"
+  (match_code "plus,minus"))
+
 (define_predicate "xtensa_cstoresi_operator"
   (match_code "eq,ne,gt,ge,lt,le"))
 
 (define_predicate "xtensa_shift_per_byte_operator"
   (match_code "ashift,ashiftrt,lshiftrt"))
+
+(define_predicate "xtensa_bit_join_operator"
+  (match_code "plus,ior"))
 
 (define_predicate "tls_symbol_operand"
   (and (match_code "symbol_ref")

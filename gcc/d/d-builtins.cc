@@ -1,5 +1,5 @@
 /* d-builtins.cc -- GCC builtins support for D.
-   Copyright (C) 2006-2022 Free Software Foundation, Inc.
+   Copyright (C) 2006-2023 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -500,9 +500,12 @@ d_init_versions (void)
     VersionCondition::addPredefinedGlobalIdent ("D_BetterC");
   else
     {
-      VersionCondition::addPredefinedGlobalIdent ("D_ModuleInfo");
-      VersionCondition::addPredefinedGlobalIdent ("D_Exceptions");
-      VersionCondition::addPredefinedGlobalIdent ("D_TypeInfo");
+      if (global.params.useModuleInfo)
+       VersionCondition::addPredefinedGlobalIdent ("D_ModuleInfo");
+      if (global.params.useExceptions)
+       VersionCondition::addPredefinedGlobalIdent ("D_Exceptions");
+      if (global.params.useTypeInfo)
+       VersionCondition::addPredefinedGlobalIdent ("D_TypeInfo");
     }
 
   if (optimize)

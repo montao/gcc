@@ -1,6 +1,6 @@
 (* M2Quads.def generates quadruples.
 
-Copyright (C) 2001-2022 Free Software Foundation, Inc.
+Copyright (C) 2001-2023 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -144,7 +144,7 @@ EXPORT QUALIFIED StartBuildDefFile, StartBuildModFile, EndBuildFile,
                  IsAutoPushOn, PushAutoOn, PushAutoOff, PopAuto,
                  PushInConstExpression, PopInConstExpression,
                  IsInConstExpression,
-                 MustCheckOverflow ;
+                 MustCheckOverflow, BuildAsmElement, BuildAsmTrash ;
 
 
 TYPE
@@ -165,6 +165,7 @@ TYPE
                    DivCeilOp, ModCeilOp,
                    DivFloorOp, ModFloorOp, DivTruncOp, ModTruncOp,
       	       	   LogicalOrOp, LogicalAndOp, LogicalXorOp, LogicalDiffOp,
+                   ArithAddOp,
                    InclOp, ExclOp, LogicalShiftOp, LogicalRotateOp,
                    UnboundedOp, HighOp,
                    CoerceOp, ConvertOp, CastOp,
@@ -1704,7 +1705,7 @@ PROCEDURE BuildProcedureEnd ;
                  |------------|
 *)
 
-PROCEDURE BuildReturn (tokno: CARDINAL) ;
+PROCEDURE BuildReturn (tokreturn: CARDINAL) ;
 
 
 (*
@@ -2064,7 +2065,7 @@ PROCEDURE PopConstructor ;
                   |------------|          |------------|
 *)
 
-PROCEDURE BuildNot ;
+PROCEDURE BuildNot (notTokPos: CARDINAL) ;
 
 
 (*
@@ -2708,6 +2709,54 @@ PROCEDURE PopInConstExpression ;
 *)
 
 PROCEDURE IsInConstExpression () : BOOLEAN ;
+
+
+(*
+   BuildAsmElement - the stack is expected to contain:
+
+
+                        Entry                      Exit
+                        =====                      ====
+
+                 Ptr ->
+                        +------------------+
+                        | expr | tokpos    |
+                        |------------------|
+                        | str              |
+                        |------------------|
+                        | name             |
+                        |------------------|       +------------------+
+                        | CurrentInterface |       | CurrentInterface |
+                        |------------------|       |------------------|
+                        | CurrentAsm       |       | CurrentAsm       |
+                        |------------------|       |------------------|
+                        | n                |       | n                |
+                        |------------------|       |------------------|
+*)
+
+PROCEDURE BuildAsmElement (input, output: BOOLEAN) ;
+
+
+(*
+   BuildAsmTrash - the stack is expected to contain:
+
+
+                        Entry                      Exit
+                        =====                      ====
+
+                 Ptr ->
+                        +------------------+
+                        | expr | tokpos    |
+                        |------------------|       +------------------+
+                        | CurrentInterface |       | CurrentInterface |
+                        |------------------|       |------------------|
+                        | CurrentAsm       |       | CurrentAsm       |
+                        |------------------|       |------------------|
+                        | n                |       | n                |
+                        |------------------|       |------------------|
+*)
+
+PROCEDURE BuildAsmTrash ;
 
 
 END M2Quads.

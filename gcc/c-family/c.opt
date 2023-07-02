@@ -1,5 +1,5 @@
 ; Options for the C, ObjC, C++ and ObjC++ front ends.
-; Copyright (C) 2003-2022 Free Software Foundation, Inc.
+; Copyright (C) 2003-2023 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -494,6 +494,10 @@ Wcatch-value=
 C++ ObjC++ Var(warn_catch_value) Warning Joined RejectNegative UInteger LangEnabledBy(C++ ObjC++,Wall, 1, 0) IntegerRange(0, 3)
 Warn about catch handlers of non-reference type.
 
+Wchanges-meaning
+C++ ObjC++ Var(warn_changes_meaning) Warning Init(1)
+Complain about a name being declared as a class member after a previous use of the same name.
+
 Wchar-subscripts
 C ObjC C++ ObjC++ Var(warn_char_subscripts) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn about subscripts whose type is \"char\".
@@ -733,6 +737,11 @@ Wformat-truncation=
 C ObjC C++ LTO ObjC++ Joined RejectNegative UInteger Var(warn_format_trunc) Warning LangEnabledBy(C ObjC C++ LTO ObjC++,Wformat=, warn_format >= 1, 0) IntegerRange(0, 2)
 Warn about calls to snprintf and similar functions that truncate output.
 
+Wflex-array-member-not-at-end
+C C++ Var(warn_flex_array_member_not_at_end) Warning
+Warn when a structure containing a C99 flexible array member as the last
+field is not at the end of another structure.
+
 Wif-not-aligned
 C ObjC C++ ObjC++ Var(warn_if_not_aligned) Init(1) Warning
 Warn when the field in a struct is not aligned.
@@ -918,6 +927,10 @@ Warn on direct multiple inheritance.
 Wnamespaces
 C++ ObjC++ Var(warn_namespaces) Warning
 Warn on namespace definition.
+
+Wnrvo
+C++ ObjC++ Var(warn_nrvo)
+Warn if the named return value optimization is not performed although it is allowed.
 
 Wpacked-not-aligned
 C ObjC C++ ObjC++ Var(warn_packed_not_aligned) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
@@ -1480,6 +1493,10 @@ Wsubobject-linkage
 C++ ObjC++ Var(warn_subobject_linkage) Warning Init(1)
 Warn if a class type has a base or a field whose type uses the anonymous namespace or depends on a type with no linkage.
 
+Welaborated-enum-base
+C++ ObjC++ Var(warn_elaborated_enum_base) Warning Init(1)
+Warn if an additional enum-base is used in an elaborated-type-specifier.
+
 Wduplicate-decl-specifier
 C ObjC Var(warn_duplicate_decl_specifier) Warning LangEnabledBy(C ObjC,Wall)
 Warn when a declaration has duplicate const, volatile, restrict or _Atomic specifier.
@@ -1685,7 +1702,7 @@ C++ ObjC++ Joined RejectNegative Host_Wide_Int Var(constexpr_ops_limit) Init(335
 
 fcontracts
 C++ ObjC++ Var(flag_contracts) Init(0)
-Enable certain features present drafts of C++ Contracts.
+Enable certain features present in drafts of C++ Contracts.
 
 Enum
 Name(on_off) Type(int) UnknownError(argument %qs must be either %<on%> or %<off%>)
@@ -2391,12 +2408,20 @@ C++ ObjC++
 Conform to the ISO 2020 C++ standard (experimental and incomplete support).
 
 std=c++2b
-C++ ObjC++ Alias(std=c++23)
+C++ ObjC++ Alias(std=c++23) Undocumented
 Conform to the ISO 2023 C++ draft standard (experimental and incomplete support).
 
 std=c++23
-C++ ObjC++ Undocumented
+C++ ObjC++
 Conform to the ISO 2023 C++ draft standard (experimental and incomplete support).
+
+std=c++2c
+C++ ObjC++ Alias(std=c++26)
+Conform to the ISO 2026 C++ draft standard (experimental and incomplete support).
+
+std=c++26
+C++ ObjC++ Undocumented
+Conform to the ISO 2026 C++ draft standard (experimental and incomplete support).
 
 std=c11
 C ObjC
@@ -2477,12 +2502,20 @@ C++ ObjC++
 Conform to the ISO 2020 C++ standard with GNU extensions (experimental and incomplete support).
 
 std=gnu++2b
-C++ ObjC++ Alias(std=gnu++23)
+C++ ObjC++ Alias(std=gnu++23) Undocumented
 Conform to the ISO 2023 C++ draft standard with GNU extensions (experimental and incomplete support).
 
 std=gnu++23
-C++ ObjC++ Undocumented
+C++ ObjC++
 Conform to the ISO 2023 C++ draft standard with GNU extensions (experimental and incomplete support).
+
+std=gnu++2c
+C++ ObjC++ Alias(std=gnu++26)
+Conform to the ISO 2026 C++ draft standard with GNU extensions (experimental and incomplete support).
+
+std=gnu++26
+C++ ObjC++ Undocumented
+Conform to the ISO 2026 C++ draft standard with GNU extensions (experimental and incomplete support).
 
 std=gnu11
 C ObjC

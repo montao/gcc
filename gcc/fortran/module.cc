@@ -1,6 +1,6 @@
 /* Handle modules, which amounts to loading and saving symbols and
    their attendant structures.
-   Copyright (C) 2000-2022 Free Software Foundation, Inc.
+   Copyright (C) 2000-2023 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -2419,7 +2419,7 @@ mio_symbol_attribute (symbol_attribute *attr)
 	  MIO_NAME (ab_attribute) (AB_OACC_ROUTINE_LOP_SEQ, attr_bits);
 	  break;
 	case OACC_ROUTINE_LOP_ERROR:
-	  /* ... intentionally omitted here; it's only unsed internally.  */
+	  /* ... intentionally omitted here; it's only used internally.  */
 	default:
 	  gcc_unreachable ();
 	}

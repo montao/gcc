@@ -1,7 +1,7 @@
 /* This file contains routines to construct OpenACC and OpenMP constructs,
    called from parsing in the C and C++ front ends.
 
-   Copyright (C) 2005-2022 Free Software Foundation, Inc.
+   Copyright (C) 2005-2023 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>,
 		  Diego Novillo <dnovillo@redhat.com>.
 
@@ -674,8 +674,7 @@ c_omp_depend_t_p (tree type)
 	  && ((TREE_CODE (TYPE_NAME (type)) == TYPE_DECL
 	       ? DECL_NAME (TYPE_NAME (type)) : TYPE_NAME (type))
 	      == get_identifier ("omp_depend_t"))
-	  && (!TYPE_CONTEXT (type)
-	      || TREE_CODE (TYPE_CONTEXT (type)) == TRANSLATION_UNIT_DECL)
+	  && TYPE_FILE_SCOPE_P (type)
 	  && COMPLETE_TYPE_P (type)
 	  && TREE_CODE (TYPE_SIZE (type)) == INTEGER_CST
 	  && !compare_tree_int (TYPE_SIZE (type),
@@ -2672,7 +2671,7 @@ c_omp_split_clauses (location_t loc, enum tree_code code,
 		      if (TREE_CODE (t) == POINTER_PLUS_EXPR)
 			t = TREE_OPERAND (t, 0);
 		      if (TREE_CODE (t) == ADDR_EXPR
-			  || TREE_CODE (t) == INDIRECT_REF)
+			  || INDIRECT_REF_P (t))
 			t = TREE_OPERAND (t, 0);
 		      if (DECL_P (t))
 			bitmap_clear_bit (&allocate_head, DECL_UID (t));
