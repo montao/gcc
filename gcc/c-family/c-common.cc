@@ -2458,7 +2458,7 @@ c_common_type_for_mode (machine_mode mode, int unsignedp)
   else if (GET_MODE_CLASS (mode) == MODE_VECTOR_BOOL
 	   && valid_vector_subparts_p (GET_MODE_NUNITS (mode)))
     {
-      unsigned int elem_bits = vector_element_size (GET_MODE_BITSIZE (mode),
+      unsigned int elem_bits = vector_element_size (GET_MODE_PRECISION (mode),
 						    GET_MODE_NUNITS (mode));
       tree bool_type = build_nonstandard_boolean_type (elem_bits);
       return build_vector_type_for_mode (bool_type, mode);
@@ -6334,6 +6334,7 @@ check_builtin_function_arguments (location_t loc, vec<location_t> arg_loc,
     case BUILT_IN_ISLESSEQUAL:
     case BUILT_IN_ISLESSGREATER:
     case BUILT_IN_ISUNORDERED:
+    case BUILT_IN_ISEQSIG:
       if (builtin_function_validate_nargs (loc, fndecl, nargs, 2))
 	{
 	  enum tree_code code0, code1;
