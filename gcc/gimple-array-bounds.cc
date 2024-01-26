@@ -1,5 +1,5 @@
 /* Array bounds checking.
-   Copyright (C) 2005-2023 Free Software Foundation, Inc.
+   Copyright (C) 2005-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -799,7 +799,7 @@ array_bounds_checker::check_array_bounds (tree *tp, int *walk_subtree,
   else
     location = gimple_location (wi->stmt);
 
-  *walk_subtree = TRUE;
+  *walk_subtree = true;
 
   bool warned = false;
   array_bounds_checker *checker = (array_bounds_checker *) wi->info;

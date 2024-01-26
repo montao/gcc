@@ -1,5 +1,5 @@
 /* Symbolic values.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -349,6 +349,9 @@ enum poison_kind
 
   /* For use to describe freed memory.  */
   POISON_KIND_FREED,
+
+  /* For use to describe deleted memory.  */
+  POISON_KIND_DELETED,
 
   /* For use on pointers to regions within popped stack frames.  */
   POISON_KIND_POPPED_STACK
@@ -1357,8 +1360,8 @@ public:
   /* A support class for uniquifying instances of conjured_svalue.  */
   struct key_t
   {
-    key_t (tree type, const gimple *stmt, const region *id_reg)
-    : m_type (type), m_stmt (stmt), m_id_reg (id_reg)
+    key_t (tree type, const gimple *stmt, const region *id_reg, unsigned idx)
+    : m_type (type), m_stmt (stmt), m_id_reg (id_reg), m_idx (idx)
     {}
 
     hashval_t hash () const
@@ -1374,7 +1377,8 @@ public:
     {
       return (m_type == other.m_type
 	      && m_stmt == other.m_stmt
-	      && m_id_reg == other.m_id_reg);
+	      && m_id_reg == other.m_id_reg
+	      && m_idx == other.m_idx);
     }
 
     /* Use m_stmt to mark empty/deleted, as m_type can be NULL for
@@ -1390,12 +1394,13 @@ public:
     tree m_type;
     const gimple *m_stmt;
     const region *m_id_reg;
+    unsigned m_idx;
   };
 
   conjured_svalue (symbol::id_t id, tree type, const gimple *stmt,
-		   const region *id_reg)
+		   const region *id_reg, unsigned idx)
   : svalue (complexity (id_reg), id, type),
-    m_stmt (stmt), m_id_reg (id_reg)
+    m_stmt (stmt), m_id_reg (id_reg), m_idx (idx)
   {
     gcc_assert (m_stmt != NULL);
   }
@@ -1416,6 +1421,7 @@ public:
  private:
   const gimple *m_stmt;
   const region *m_id_reg;
+  unsigned m_idx;
 };
 
 } // namespace ana

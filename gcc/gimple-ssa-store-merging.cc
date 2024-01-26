@@ -1,5 +1,5 @@
 /* GIMPLE store merging and byte swapping passes.
-   Copyright (C) 2009-2023 Free Software Foundation, Inc.
+   Copyright (C) 2009-2024 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -227,7 +227,7 @@ struct symbolic_number {
   tree type;
   tree base_addr;
   tree offset;
-  poly_int64_pod bytepos;
+  poly_int64 bytepos;
   tree src;
   tree alias_set;
   tree vuse;
@@ -4687,12 +4687,13 @@ imm_store_chain_info::output_merged_store (merged_store_group *group)
 		    }
 		  else if ((BYTES_BIG_ENDIAN ? start_gap : end_gap) > 0)
 		    {
-		      const unsigned HOST_WIDE_INT imask
-			= (HOST_WIDE_INT_1U << info->bitsize) - 1;
+		      wide_int imask
+			= wi::mask (info->bitsize, false,
+				    TYPE_PRECISION (TREE_TYPE (tem)));
 		      tem = gimple_build (&seq, loc,
 					  BIT_AND_EXPR, TREE_TYPE (tem), tem,
-					  build_int_cst (TREE_TYPE (tem),
-							 imask));
+					  wide_int_to_tree (TREE_TYPE (tem),
+							    imask));
 		    }
 		  const HOST_WIDE_INT shift
 		    = (BYTES_BIG_ENDIAN ? end_gap : start_gap);

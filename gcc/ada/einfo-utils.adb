@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---           Copyright (C) 2020-2023, Free Software Foundation, Inc.        --
+--           Copyright (C) 2020-2024, Free Software Foundation, Inc.        --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -200,6 +200,11 @@ package body Einfo.Utils is
       return Is_Access_Type (Id)
         and then Ekind (Directly_Designated_Type (Id)) = E_Subprogram_Type;
    end Is_Access_Subprogram_Type;
+
+   function Is_Address_Compatible_Type          (Id : E) return B is
+   begin
+      return Is_Descendant_Of_Address (Id) or else Id = Standard_Address;
+   end Is_Address_Compatible_Type;
 
    function Is_Aggregate_Type                   (Id : E) return B is
    begin
@@ -1012,6 +1017,7 @@ package body Einfo.Utils is
                  Id = Pragma_Refined_Depends            or else
                  Id = Pragma_Refined_Global             or else
                  Id = Pragma_Refined_State              or else
+                 Id = Pragma_Side_Effects               or else
                  Id = Pragma_Volatile_Function;
 
       --  Contract / subprogram variant / test case pragmas
@@ -2589,7 +2595,7 @@ package body Einfo.Utils is
    -- Scope_Depth --
    -----------------
 
-   function Scope_Depth (Id : E) return Uint is
+   function Scope_Depth (Id : Scope_Kind_Id) return Uint is
       Scop : Entity_Id;
 
    begin
@@ -2601,7 +2607,7 @@ package body Einfo.Utils is
       return Scope_Depth_Value (Scop);
    end Scope_Depth;
 
-   function Scope_Depth_Default_0 (Id : E) return U is
+   function Scope_Depth_Default_0 (Id : Scope_Kind_Id) return U is
    begin
       if Scope_Depth_Set (Id) then
          return Scope_Depth (Id);
@@ -2615,7 +2621,7 @@ package body Einfo.Utils is
    -- Scope_Depth_Set --
    ---------------------
 
-   function Scope_Depth_Set (Id : E) return B is
+   function Scope_Depth_Set (Id : Scope_Kind_Id) return B is
    begin
       return not Is_Record_Type (Id)
         and then not Field_Is_Initial_Zero (Id, F_Scope_Depth_Value);

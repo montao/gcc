@@ -1,5 +1,5 @@
 /* Subroutines used for code generation for eBPF.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -70,16 +70,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimplify-me.h"
 
 #include "core-builtins.h"
+#include "opts.h"
 
 /* Per-function machine data.  */
 struct GTY(()) machine_function
 {
   /* Number of bytes saved on the stack for local variables.  */
   int local_vars_size;
-
-  /* Number of bytes saved on the stack for callee-saved
-     registers.  */
-  int callee_saved_reg_size;
 };
 
 /* Handle an attribute requiring a FUNCTION_DECL;
@@ -143,7 +140,7 @@ bpf_handle_preserve_access_index_attribute (tree *node, tree name,
 
 /* Target-specific attributes.  */
 
-static const struct attribute_spec bpf_attribute_table[] =
+TARGET_GNU_ATTRIBUTES (bpf_attribute_table,
 {
   /* Syntax: { name, min_len, max_len, decl_required, type_required,
 	       function_type_required, affects_type_identity, handler,
@@ -158,9 +155,10 @@ static const struct attribute_spec bpf_attribute_table[] =
  { "preserve_access_index", 0, -1, false, true, false, true,
    bpf_handle_preserve_access_index_attribute, NULL },
 
- /* The last attribute spec is set to be NULL.  */
- { NULL,	0,  0, false, false, false, false, NULL, NULL }
-};
+ /* Support for `naked' function attribute.  */
+ { "naked", 0, 1, false, false, false, false,
+   bpf_handle_fndecl_attribute, NULL }
+});
 
 #undef TARGET_ATTRIBUTE_TABLE
 #define TARGET_ATTRIBUTE_TABLE bpf_attribute_table
@@ -250,9 +248,10 @@ bpf_option_override (void)
   /* Disable -fstack-protector as it is not supported in BPF.  */
   if (flag_stack_protect)
     {
-      inform (input_location,
-              "%<-fstack-protector%> does not work "
-	      "on this architecture");
+      if (!flag_stack_protector_set_by_fhardened_p)
+	inform (input_location,
+		"%<-fstack-protector%> does not work "
+		"on this architecture");
       flag_stack_protect = 0;
     }
 
@@ -339,6 +338,21 @@ bpf_function_value_regno_p (const unsigned int regno)
 #undef TARGET_FUNCTION_VALUE_REGNO_P
 #define TARGET_FUNCTION_VALUE_REGNO_P bpf_function_value_regno_p
 
+
+/* Determine whether to warn about lack of return statement in a
+   function.  */
+
+static bool
+bpf_warn_func_return (tree decl)
+{
+  /* Naked functions are implemented entirely in assembly, including
+     the return instructions.  */
+  return lookup_attribute ("naked", DECL_ATTRIBUTES (decl)) == NULL_TREE;
+}
+
+#undef TARGET_WARN_FUNC_RETURN
+#define TARGET_WARN_FUNC_RETURN bpf_warn_func_return
+
 /* Compute the size of the function's stack frame, including the local
    area and the register-save area.  */
 
@@ -346,7 +360,7 @@ static void
 bpf_compute_frame_layout (void)
 {
   int stack_alignment = STACK_BOUNDARY / BITS_PER_UNIT;
-  int padding_locals, regno;
+  int padding_locals;
 
   /* Set the space used in the stack by local variables.  This is
      rounded up to respect the minimum stack alignment.  */
@@ -358,23 +372,9 @@ bpf_compute_frame_layout (void)
 
   cfun->machine->local_vars_size += padding_locals;
 
-  if (TARGET_XBPF)
-    {
-      /* Set the space used in the stack by callee-saved used
-	 registers in the current function.  There is no need to round
-	 up, since the registers are all 8 bytes wide.  */
-      for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-	if ((df_regs_ever_live_p (regno)
-	     && !call_used_or_fixed_reg_p (regno))
-	    || (cfun->calls_alloca
-		&& regno == STACK_POINTER_REGNUM))
-	  cfun->machine->callee_saved_reg_size += 8;
-    }
-
   /* Check that the total size of the frame doesn't exceed the limit
      imposed by eBPF.  */
-  if ((cfun->machine->local_vars_size
-       + cfun->machine->callee_saved_reg_size) > bpf_frame_limit)
+  if (cfun->machine->local_vars_size > bpf_frame_limit)
     {
       static int stack_limit_exceeded = 0;
 
@@ -393,69 +393,22 @@ bpf_compute_frame_layout (void)
 void
 bpf_expand_prologue (void)
 {
-  HOST_WIDE_INT size;
-
-  size = (cfun->machine->local_vars_size
-	  + cfun->machine->callee_saved_reg_size);
-
   /* The BPF "hardware" provides a fresh new set of registers for each
      called function, some of which are initialized to the values of
      the arguments passed in the first five registers.  In doing so,
-     it saves the values of the registers of the caller, and restored
+     it saves the values of the registers of the caller, and restores
      them upon returning.  Therefore, there is no need to save the
-     callee-saved registers here.  What is worse, the kernel
-     implementation refuses to run programs in which registers are
-     referred before being initialized.  */
-  if (TARGET_XBPF)
-    {
-      int regno;
-      int fp_offset = -cfun->machine->local_vars_size;
+     callee-saved registers here.  In fact, the kernel implementation
+     refuses to run programs in which registers are referred before
+     being initialized.  */
 
-      /* Save callee-saved hard registes.  The register-save-area
-	 starts right after the local variables.  */
-      for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-	{
-	  if ((df_regs_ever_live_p (regno)
-	       && !call_used_or_fixed_reg_p (regno))
-	      || (cfun->calls_alloca
-		  && regno == STACK_POINTER_REGNUM))
-	    {
-	      rtx mem;
+  /* BPF does not support functions that allocate stack space
+     dynamically.  This should have been checked already and an error
+     emitted.  */
+  gcc_assert (!cfun->calls_alloca);
 
-	      if (!IN_RANGE (fp_offset, -1 - 0x7fff, 0x7fff))
-		/* This has been already reported as an error in
-		   bpf_compute_frame_layout. */
-		break;
-	      else
-		{
-		  mem = gen_frame_mem (DImode,
-				       plus_constant (DImode,
-						      hard_frame_pointer_rtx,
-						      fp_offset - 8));
-		  emit_move_insn (mem, gen_rtx_REG (DImode, regno));
-		  fp_offset -= 8;
-		}
-	    }
-	}
-    }
-
-  /* Set the stack pointer, if the function allocates space
-     dynamically.  Note that the value of %sp should be directly
-     derived from %fp, for the kernel verifier to track it as a stack
-     accessor.  */
-  if (cfun->calls_alloca)
-    {
-      emit_move_insn (stack_pointer_rtx,
-                      hard_frame_pointer_rtx);
-
-      if (size > 0)
-	{
-	  emit_insn (gen_rtx_SET (stack_pointer_rtx,
-                                  gen_rtx_PLUS (Pmode,
-                                                stack_pointer_rtx,
-                                                GEN_INT (-size))));
-	}
-    }
+  /* If we ever need to have a proper prologue here, please mind the
+     `naked' function attribute.  */
 }
 
 /* Expand to the instructions in a function epilogue.  This function
@@ -466,37 +419,9 @@ bpf_expand_epilogue (void)
 {
   /* See note in bpf_expand_prologue for an explanation on why we are
      not restoring callee-saved registers in BPF.  */
-  if (TARGET_XBPF)
-    {
-      int regno;
-      int fp_offset = -cfun->machine->local_vars_size;
 
-      /* Restore callee-saved hard registes from the stack.  */
-      for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-	{
-	  if ((df_regs_ever_live_p (regno)
-	       && !call_used_or_fixed_reg_p (regno))
-	      || (cfun->calls_alloca
-		  && regno == STACK_POINTER_REGNUM))
-	    {
-	      rtx mem;
-
-	      if (!IN_RANGE (fp_offset, -1 - 0x7fff, 0x7fff))
-		/* This has been already reported as an error in
-		   bpf_compute_frame_layout. */
-		break;
-	      else
-		{
-		  mem = gen_frame_mem (DImode,
-				       plus_constant (DImode,
-						      hard_frame_pointer_rtx,
-						      fp_offset - 8));
-		  emit_move_insn (gen_rtx_REG (DImode, regno), mem);
-		  fp_offset -= 8;
-		}
-	    }
-	}
-    }
+  /* If we ever need to do anything else than just generating a return
+     instruction here, please mind the `naked' function attribute.  */
 
   emit_jump_insn (gen_exit ());
 }
@@ -543,11 +468,10 @@ bpf_initial_elimination_offset (int from, int to)
 {
   HOST_WIDE_INT ret;
 
-  if (from == ARG_POINTER_REGNUM && to == STACK_POINTER_REGNUM)
-    ret = (cfun->machine->local_vars_size
-	   + cfun->machine->callee_saved_reg_size);
-  else if (from == ARG_POINTER_REGNUM && to == FRAME_POINTER_REGNUM)
+  if (from == ARG_POINTER_REGNUM && to == FRAME_POINTER_REGNUM)
     ret = 0;
+  else if (from == STACK_POINTER_REGNUM && to == FRAME_POINTER_REGNUM)
+    ret = -(cfun->machine->local_vars_size);
   else
     gcc_unreachable ();
 
@@ -625,7 +549,8 @@ bpf_address_base_p (rtx x, bool strict)
 static bool
 bpf_legitimate_address_p (machine_mode mode,
 			  rtx x,
-			  bool strict)
+			  bool strict,
+			  code_helper = ERROR_MARK)
 {
   switch (GET_CODE (x))
     {
@@ -731,7 +656,14 @@ bpf_function_arg_advance (cumulative_args_t ca,
   unsigned num_words = CEIL (num_bytes, UNITS_PER_WORD);
 
   if (*cum <= 5 && *cum + num_words > 5)
-    error ("too many function arguments for eBPF");
+    {
+      /* Too many arguments for BPF.  However, if the function is
+         gonna be inline for sure, we let it pass.  Otherwise, issue
+         an error.  */
+      if (!lookup_attribute ("always_inline",
+                             DECL_ATTRIBUTES (cfun->decl)))
+        error ("too many function arguments for eBPF");
+    }
 
   *cum += num_words;
 }
@@ -830,13 +762,17 @@ bpf_output_call (rtx target)
   return "";
 }
 
-/* Print register name according to assembly dialect.
-   In normal syntax registers are printed like %rN where N is the
-   register number.
+/* Print register name according to assembly dialect.  In normal
+   syntax registers are printed like %rN where N is the register
+   number.
+
    In pseudoc syntax, the register names do not feature a '%' prefix.
-   Additionally, the code 'w' denotes that the register should be printed
-   as wN instead of rN, where N is the register number, but only when the
-   value stored in the operand OP is 32-bit wide.  */
+   Additionally, the code 'w' denotes that the register should be
+   printed as wN instead of rN, where N is the register number, but
+   only when the value stored in the operand OP is 32-bit wide.
+   Finally, the code 'W' denotes that the register should be printed
+   as wN instead of rN, in all cases, regardless of the mode of the
+   value stored in the operand.  */
 
 static void
 bpf_print_register (FILE *file, rtx op, int code)
@@ -845,7 +781,7 @@ bpf_print_register (FILE *file, rtx op, int code)
     fprintf (file, "%s", reg_names[REGNO (op)]);
   else
     {
-      if (code == 'w' && GET_MODE (op) == SImode)
+      if (code == 'W' || (code == 'w' && GET_MODE_SIZE (GET_MODE (op)) <= 4))
 	{
 	  if (REGNO (op) == BPF_FP)
 	    fprintf (file, "w10");
@@ -1101,6 +1037,18 @@ bpf_resolve_overloaded_builtin (location_t loc, tree fndecl, void *arglist)
 #undef TARGET_RESOLVE_OVERLOADED_BUILTIN
 #define TARGET_RESOLVE_OVERLOADED_BUILTIN bpf_resolve_overloaded_builtin
 
+static rtx
+bpf_delegitimize_address (rtx rtl)
+{
+  if (GET_CODE (rtl) == UNSPEC
+      && XINT (rtl, 1) == UNSPEC_CORE_RELOC)
+    return XVECEXP (rtl, 0, 0);
+
+  return rtl;
+}
+
+#undef TARGET_DELEGITIMIZE_ADDRESS
+#define TARGET_DELEGITIMIZE_ADDRESS bpf_delegitimize_address
 
 /* Initialize target-specific function library calls.  This is mainly
    used to call library-provided soft-fp operations, since eBPF
@@ -1149,6 +1097,61 @@ bpf_debug_unwind_info ()
 #undef TARGET_ASM_ALIGNED_DI_OP
 #define TARGET_ASM_ALIGNED_DI_OP "\t.dword\t"
 
+/* Implement target hook TARGET_ASM_NAMED_SECTION.  */
+
+static void
+bpf_asm_named_section (const char *name, unsigned int flags,
+                       tree decl)
+{
+  /* In BPF section names are used to encode the kind of BPF program
+     and other metadata, involving all sort of non alphanumeric
+     characters.  This includes for example names like /foo//bar/baz.
+     This makes it necessary to quote section names to make sure the
+     assembler doesn't get confused.  For example, the example above
+     would be interpreted unqouted as a section name "/foo" followed
+     by a line comment "//bar/baz".
+
+     Note that we only quote the section name if it contains any
+     character not in the set [0-9a-zA-Z_].  This is because
+     default_elf_asm_named_section generally expects unquoted names
+     and checks for particular names like
+     __patchable_function_entries.  */
+
+  bool needs_quoting = false;
+
+  for (const char *p = name; *p != '\0'; ++p)
+    if (!(*p == '_'
+          || (*p >= '0' && *p <= '9')
+          || (*p >= 'a' && *p <= 'z')
+          || (*p >= 'A' && *p <= 'Z')))
+      needs_quoting = true;
+
+  if (needs_quoting)
+    {
+      char *quoted_name
+        = (char *) xcalloc (1, strlen (name) * 2 + 2);
+      char *q = quoted_name;
+
+      *(q++) = '"';
+      for (const char *p = name; *p != '\0'; ++p)
+        {
+          if (*p == '"' || *p == '\\')
+            *(q++) = '\\';
+          *(q++) = *p;
+        }
+      *(q++) = '"';
+      *(q++) = '\0';
+
+      default_elf_asm_named_section (quoted_name, flags, decl);
+      free (quoted_name);
+    }
+  else
+    default_elf_asm_named_section (name, flags, decl);
+}
+
+#undef TARGET_ASM_NAMED_SECTION
+#define TARGET_ASM_NAMED_SECTION bpf_asm_named_section
+
 /* Implement target hook small_register_classes_for_mode_p.  */
 
 static bool
@@ -1165,6 +1168,22 @@ bpf_small_register_classes_for_mode_p (machine_mode mode)
 #undef TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P
 #define TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P \
   bpf_small_register_classes_for_mode_p
+
+static bool
+bpf_use_by_pieces_infrastructure_p (unsigned HOST_WIDE_INT size,
+				    unsigned int align ATTRIBUTE_UNUSED,
+				    enum by_pieces_operation op,
+				    bool speed_p)
+{
+  if (op != COMPARE_BY_PIECES)
+    return default_use_by_pieces_infrastructure_p (size, align, op, speed_p);
+
+  return size <= COMPARE_MAX_PIECES;
+}
+
+#undef TARGET_USE_BY_PIECES_INFRASTRUCTURE_P
+#define TARGET_USE_BY_PIECES_INFRASTRUCTURE_P \
+  bpf_use_by_pieces_infrastructure_p
 
 /* Finally, build the GCC target.  */
 

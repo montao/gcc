@@ -1,6 +1,6 @@
 /* Read the GIMPLE representation from a file stream.
 
-   Copyright (C) 2009-2023 Free Software Foundation, Inc.
+   Copyright (C) 2009-2024 Free Software Foundation, Inc.
    Contributed by Kenneth Zadeck <zadeck@naturalbridge.com>
    Re-implemented by Diego Novillo <dnovillo@google.com>
 
@@ -1030,6 +1030,7 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
   basic_block p_bb;
   unsigned int i;
   int index;
+  bool full_profile = false;
 
   init_empty_tree_cfg_for_function (fn);
 
@@ -1071,6 +1072,8 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
 	  data_in->location_cache.input_location_and_block (&e->goto_locus,
 							    &bp, ib, data_in);
 	  e->probability = profile_probability::stream_in (ib);
+	  if (!e->probability.initialized_p ())
+	    full_profile = false;
 
 	}
 
@@ -1119,13 +1122,16 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
       loop->estimate_state = streamer_read_enum (ib, loop_estimation, EST_LAST);
       loop->any_upper_bound = streamer_read_hwi (ib);
       if (loop->any_upper_bound)
-	loop->nb_iterations_upper_bound = streamer_read_widest_int (ib);
+	loop->nb_iterations_upper_bound
+	  = bound_wide_int::from (streamer_read_widest_int (ib), SIGNED);
       loop->any_likely_upper_bound = streamer_read_hwi (ib);
       if (loop->any_likely_upper_bound)
-	loop->nb_iterations_likely_upper_bound = streamer_read_widest_int (ib);
+	loop->nb_iterations_likely_upper_bound
+	  = bound_wide_int::from (streamer_read_widest_int (ib), SIGNED);
       loop->any_estimate = streamer_read_hwi (ib);
       if (loop->any_estimate)
-	loop->nb_iterations_estimate = streamer_read_widest_int (ib);
+	loop->nb_iterations_estimate
+	  = bound_wide_int::from (streamer_read_widest_int (ib), SIGNED);
 
       /* Read OMP SIMD related info.  */
       loop->safelen = streamer_read_hwi (ib);
@@ -1145,6 +1151,7 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
 
   /* Rebuild the loop tree.  */
   flow_loops_find (loops);
+  cfun->cfg->full_profile = full_profile;
 }
 
 
@@ -1739,6 +1746,11 @@ lto_read_tree_1 (class lto_input_block *ib, class data_in *data_in, tree expr)
 	  dref_entry e = { expr, str, off };
 	  dref_queue.safe_push (e);
 	}
+      /* When there's no early DIE to refer to but dwarf2out set up
+	 things in a way to expect that fixup.  This tends to happen
+	 with -g1, see for example PR113488.  */
+      else if (DECL_P (expr) && DECL_ABSTRACT_ORIGIN (expr) == expr)
+	DECL_ABSTRACT_ORIGIN (expr) = NULL_TREE;
     }
 }
 
@@ -1884,13 +1896,17 @@ lto_input_tree_1 (class lto_input_block *ib, class data_in *data_in,
       tree type = stream_read_tree_ref (ib, data_in);
       unsigned HOST_WIDE_INT len = streamer_read_uhwi (ib);
       unsigned HOST_WIDE_INT i;
-      HOST_WIDE_INT a[WIDE_INT_MAX_ELTS];
+      HOST_WIDE_INT abuf[WIDE_INT_MAX_INL_ELTS], *a = abuf;
 
+      if (UNLIKELY (len > WIDE_INT_MAX_INL_ELTS))
+	a = XALLOCAVEC (HOST_WIDE_INT, len);
       for (i = 0; i < len; i++)
 	a[i] = streamer_read_hwi (ib);
-      gcc_assert (TYPE_PRECISION (type) <= MAX_BITSIZE_MODE_ANY_INT);
-      result = wide_int_to_tree (type, wide_int::from_array
-				 (a, len, TYPE_PRECISION (type)));
+      gcc_assert (TYPE_PRECISION (type) <= WIDE_INT_MAX_PRECISION);
+      result
+	= wide_int_to_tree (type,
+			    wide_int::from_array (a, len,
+						  TYPE_PRECISION (type)));
       streamer_tree_cache_append (data_in->reader_cache, result, hash);
     }
   else if (tag == LTO_tree_scc || tag == LTO_trees)

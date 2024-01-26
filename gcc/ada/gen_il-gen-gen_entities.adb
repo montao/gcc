@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2020-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 2020-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -129,8 +129,8 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Class_Wide_Equivalent_Type, Flag),
         Sm (Is_Compilation_Unit, Flag),
         Sm (Is_Concurrent_Record_Type, Flag),
+        Sm (Is_Constr_Array_Subt_With_Bounds, Flag),
         Sm (Is_Constr_Subt_For_U_Nominal, Flag),
-        Sm (Is_Constr_Subt_For_UN_Aliased, Flag),
         Sm (Is_Constrained, Flag),
         Sm (Is_Constructor, Flag),
         Sm (Is_Controlled_Active, Flag, Base_Type_Only),
@@ -337,7 +337,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Esize, Uint),
         Sm (Interface_Name, Node_Id),
         Sm (Is_Finalized_Transient, Flag),
-        Sm (Is_Ignored_Transient, Flag),
+        Sm (Is_Ignored_For_Finalization, Flag),
         Sm (Linker_Section_Pragma, Node_Id),
         Sm (Related_Expression, Node_Id),
         Sm (Status_Flag_Or_Transient_Decl, Node_Id)));
@@ -1421,6 +1421,33 @@ begin -- Gen_IL.Gen.Gen_Entities
           Children =>
             (Subprogram_Kind,
              E_Subprogram_Body,
+             E_Subprogram_Type));
+
+   --  Entities that represent scopes. These can be on the scope stack,
+   --  and Scope_Depth can be queried. These are the kinds that have
+   --  the Scope_Depth_Value attribute, plus Record_Kind, which has
+   --  a synthesized Scope_Depth.
+
+   Union (Scope_Kind,
+          Children =>
+            (E_Void,
+             E_Private_Type,
+             E_Private_Subtype,
+             E_Limited_Private_Type,
+             E_Limited_Private_Subtype,
+             Concurrent_Kind,
+             Subprogram_Kind,
+             E_Entry,
+             E_Entry_Family,
+             E_Block,
+             Generic_Unit_Kind,
+             E_Loop,
+             E_Return_Statement,
+             E_Package,
+             E_Package_Body,
+             E_Subprogram_Body,
+             Record_Kind,
+             E_Incomplete_Type,
              E_Subprogram_Type));
 
 end Gen_IL.Gen.Gen_Entities;

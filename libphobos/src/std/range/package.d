@@ -1025,7 +1025,18 @@ if (Ranges.length > 0 &&
             }
             else
             {
-                @property bool empty() => frontIndex >= backIndex;
+                @property bool empty()
+                {
+                    if (frontIndex == 0)
+                    {
+                        // special handling: we might be in Range.init state!
+                        // For instance, `format!"%s"` uses Range.init to ensure
+                        // that formatting is possible.
+                        // In that case, we must still behave in an internally consistent way.
+                        return source[0].empty;
+                    }
+                    return frontIndex >= backIndex;
+                }
             }
 
             static if (allSatisfy!(isForwardRange, R))
@@ -1384,7 +1395,7 @@ if (Ranges.length > 0 &&
                     // force staticMap type conversion to Rebindable
                     static struct ResultRanges
                     {
-                        staticMap!(Rebindable, Ranges) fields;
+                        staticMap!(Rebindable, typeof(source)) fields;
                     }
                     auto sourceI(size_t i)() => rebindable(this.source[i]);
                     auto resultRanges = ResultRanges(staticMap!(sourceI, aliasSeqOf!(R.length.iota))).fields;
@@ -1672,6 +1683,17 @@ pure @safe unittest
     assert(range.array == [S(5), S(6)]);
 }
 
+/// https://issues.dlang.org/show_bug.cgi?id=24064
+pure @safe nothrow unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.typecons : Nullable;
+
+    immutable Nullable!string foo = "b";
+    string[] bar = ["a"];
+    assert(chain(bar, foo).equal(["a", "b"]));
+}
+
 pure @safe nothrow @nogc unittest
 {
     // support non-copyable items
@@ -1692,6 +1714,17 @@ pure @safe nothrow @nogc unittest
     {
         int n = el.v;
     }
+}
+
+/// https://issues.dlang.org/show_bug.cgi?id=24243
+pure @safe nothrow unittest
+{
+    import std.algorithm.iteration : filter;
+
+    auto range = chain([2], [3].filter!"a");
+
+    // This might happen in format!"%s"(range), for instance.
+    assert(typeof(range).init.empty);
 }
 
 /**

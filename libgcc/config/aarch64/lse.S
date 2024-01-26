@@ -1,5 +1,5 @@
 /* Out-of-line LSE atomics for AArch64 architecture.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Contributed by Linaro Ltd.
 
 This file is part of GCC.
@@ -46,8 +46,12 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
  * direct branch.  The choice of LSE vs non-LSE is done via one byte load
  * followed by a well-predicted direct branch.  The functions are compiled
  * separately to minimize code size.
+ *
+ * Since these functions have hidden visibility and are never called
+ * indirectly, they do not need to start with a BTI instruction.
  */
 
+#include "aarch64-asm.h"
 #include "auto-target.h"
 
 /* Tell the assembler to accept LSE instructions.  */
@@ -58,7 +62,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #endif
 
 /* Declare the symbol gating the LSE implementations.  */
-	.hidden	__aarch64_have_lse_atomics
+	HIDDEN(__aarch64_have_lse_atomics)
 
 /* Turn size and memory model defines into mnemonic fragments.  */
 #if SIZE == 1
@@ -160,24 +164,23 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define tmp0	16
 #define tmp1	17
 #define tmp2	15
-
-#define BTI_C	hint	34
+#define tmp3	14
+#define tmp4	13
 
 /* Start and end a function.  */
 .macro	STARTFN name
 	.text
 	.balign	16
 	.globl	\name
-	.hidden	\name
-	.type	\name, %function
+	HIDDEN(\name)
+	SYMBOL_TYPE(\name, %function)
 	.cfi_startproc
 \name:
-	BTI_C
 .endm
 
 .macro	ENDFN name
 	.cfi_endproc
-	.size	\name, . - \name
+	SYMBOL_SIZE(\name)
 .endm
 
 /* Branch to LABEL if LSE is disabled.  */
@@ -233,10 +236,11 @@ STARTFN	NAME(cas)
 0:	LDXP		x0, x1, [x4]
 	cmp		x0, x(tmp0)
 	ccmp		x1, x(tmp1), #0, eq
-	bne		1f
-	STXP		w(tmp2), x2, x3, [x4]
-	cbnz		w(tmp2), 0b
-1:	BARRIER
+	csel		x(tmp2), x2, x0, eq
+	csel		x(tmp3), x3, x1, eq
+	STXP		w(tmp4), x(tmp2), x(tmp3), [x4]
+	cbnz		w(tmp4), 0b
+	BARRIER
 	ret
 
 #endif

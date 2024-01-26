@@ -1,5 +1,5 @@
 /* Process source files and output type information.
-   Copyright (C) 2002-2023 Free Software Foundation, Inc.
+   Copyright (C) 2002-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -1596,7 +1596,7 @@ static outf_p
 create_file (const char *name, const char *oname)
 {
   static const char *const hdr[] = {
-    "   Copyright (C) 2004-2023 Free Software Foundation, Inc.\n",
+    "   Copyright (C) 2004-2024 Free Software Foundation, Inc.\n",
     "\n",
     "This file is part of GCC.\n",
     "\n",
@@ -4718,8 +4718,8 @@ write_roots (pair_p variables, bool emit_pch)
 }
 
 /* Prints not-as-ugly version of a typename of T to OF.  Trades the uniquness
-   guaranteee for somewhat increased readability.  If name conflicts do happen,
-   this funcion will have to be adjusted to be more like
+   guarantee for somewhat increased readability.  If name conflicts do happen,
+   this function will have to be adjusted to be more like
    output_mangled_typename.  */
 
 #define INDENT 2
@@ -5200,8 +5200,8 @@ main (int argc, char **argv)
   this_file = input_file_by_name (__FILE__);
   system_h_file = input_file_by_name ("system.h");
   /* Set the scalar_is_char union number for predefined scalar types.  */
-  scalar_nonchar.u.scalar_is_char = FALSE;
-  scalar_char.u.scalar_is_char = TRUE;
+  scalar_nonchar.u.scalar_is_char = false;
+  scalar_char.u.scalar_is_char = true;
 
   parse_program_options (argc, argv);
 
@@ -5234,9 +5234,7 @@ main (int argc, char **argv)
       POS_HERE (do_scalar_typedef ("REAL_VALUE_TYPE", &pos));
       POS_HERE (do_scalar_typedef ("FIXED_VALUE_TYPE", &pos));
       POS_HERE (do_scalar_typedef ("double_int", &pos));
-      POS_HERE (do_scalar_typedef ("poly_int64_pod", &pos));
       POS_HERE (do_scalar_typedef ("offset_int", &pos));
-      POS_HERE (do_scalar_typedef ("widest_int", &pos));
       POS_HERE (do_scalar_typedef ("int64_t", &pos));
       POS_HERE (do_scalar_typedef ("poly_int64", &pos));
       POS_HERE (do_scalar_typedef ("poly_uint64", &pos));

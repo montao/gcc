@@ -1,5 +1,5 @@
 /* Implementation of Fortran 2003 Polymorphism.
-   Copyright (C) 2009-2023 Free Software Foundation, Inc.
+   Copyright (C) 2009-2024 Free Software Foundation, Inc.
    Contributed by Paul Richard Thomas <pault@gcc.gnu.org>
    and Janus Weil <janus@gcc.gnu.org>
 
@@ -646,6 +646,10 @@ gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
   int rank;
 
   gcc_assert (as);
+
+  /* We cannot build the class container now.  */
+  if (attr->class_ok && (!ts->u.derived || !ts->u.derived->components))
+    return false;
 
   /* Class container has already been built with same name.  */
   if (attr->class_ok

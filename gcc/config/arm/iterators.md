@@ -1,6 +1,6 @@
 
 ;; Code and mode itertator and attribute definitions for the ARM backend
-;; Copyright (C) 2010-2023 Free Software Foundation, Inc.
+;; Copyright (C) 2010-2024 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -140,6 +140,9 @@
 
 ;; Opaque structure types used in table lookups (except vtbl1/vtbx1).
 (define_mode_iterator VTAB [TI EI OI])
+
+;; Opaque structure types for x2 variants of VSTR1/VSTR1Q or VLD1/VLD1Q.
+(define_mode_iterator VMEMX2 [TI OI])
 
 ;; Widenable modes.
 (define_mode_iterator VW [V8QI V4HI V2SI])
@@ -917,6 +920,7 @@
 
 (define_int_attr mve_insn [
 		 (UNSPEC_VCADD90 "vcadd") (UNSPEC_VCADD270 "vcadd")
+		 (UNSPEC_VCMLA "vcmla") (UNSPEC_VCMLA90 "vcmla") (UNSPEC_VCMLA180 "vcmla") (UNSPEC_VCMLA270 "vcmla")
 		 (UNSPEC_VCMUL "vcmul") (UNSPEC_VCMUL90 "vcmul") (UNSPEC_VCMUL180 "vcmul") (UNSPEC_VCMUL270 "vcmul")
 		 (VABAVQ_P_S "vabav") (VABAVQ_P_U "vabav")
 		 (VABAVQ_S "vabav") (VABAVQ_U "vabav")
@@ -941,8 +945,8 @@
 		 (VBICQ_N_S "vbic") (VBICQ_N_U "vbic")
 		 (VBRSRQ_M_N_S "vbrsr") (VBRSRQ_M_N_U "vbrsr") (VBRSRQ_M_N_F "vbrsr")
 		 (VBRSRQ_N_S "vbrsr") (VBRSRQ_N_U "vbrsr") (VBRSRQ_N_F "vbrsr")
-		 (VCADDQ_ROT270_M_U "vcadd") (VCADDQ_ROT270_M_S "vcadd") (VCADDQ_ROT270_M_F "vcadd")
-		 (VCADDQ_ROT90_M_U "vcadd") (VCADDQ_ROT90_M_S "vcadd") (VCADDQ_ROT90_M_F "vcadd")
+		 (VCADDQ_ROT270_M "vcadd") (VCADDQ_ROT270_M_F "vcadd")
+		 (VCADDQ_ROT90_M "vcadd") (VCADDQ_ROT90_M_F "vcadd")
 		 (VCLSQ_M_S "vcls")
 		 (VCLSQ_S "vcls")
 		 (VCLZQ_M_S "vclz") (VCLZQ_M_U "vclz")
@@ -1044,6 +1048,13 @@
 		 (VMOVNTQ_S "vmovnt") (VMOVNTQ_U "vmovnt")
 		 (VMULHQ_M_S "vmulh") (VMULHQ_M_U "vmulh")
 		 (VMULHQ_S "vmulh") (VMULHQ_U "vmulh")
+		 (VMULLBQ_INT_M_S "vmullb") (VMULLBQ_INT_M_U "vmullb")
+		 (VMULLBQ_INT_S "vmullb") (VMULLBQ_INT_U "vmullb")
+		 (VMULLBQ_POLY_M_P "vmullb") (VMULLTQ_POLY_M_P "vmullt")
+		 (VMULLBQ_POLY_P "vmullb")
+		 (VMULLTQ_INT_M_S "vmullt") (VMULLTQ_INT_M_U "vmullt")
+		 (VMULLTQ_INT_S "vmullt") (VMULLTQ_INT_U "vmullt")
+		 (VMULLTQ_POLY_P "vmullt")
 		 (VMULQ_M_N_S "vmul") (VMULQ_M_N_U "vmul") (VMULQ_M_N_F "vmul")
 		 (VMULQ_M_S "vmul") (VMULQ_M_U "vmul") (VMULQ_M_F "vmul")
 		 (VMULQ_N_S "vmul") (VMULQ_N_U "vmul") (VMULQ_N_F "vmul")
@@ -1209,14 +1220,13 @@
 		 (VSUBQ_M_N_S "vsub") (VSUBQ_M_N_U "vsub") (VSUBQ_M_N_F "vsub")
 		 (VSUBQ_M_S "vsub") (VSUBQ_M_U "vsub") (VSUBQ_M_F "vsub")
 		 (VSUBQ_N_S "vsub") (VSUBQ_N_U "vsub") (VSUBQ_N_F "vsub")
-		 (UNSPEC_VCMLA "vcmla") (UNSPEC_VCMLA90 "vcmla") (UNSPEC_VCMLA180 "vcmla") (UNSPEC_VCMLA270 "vcmla")
 		 ])
 
 (define_int_attr isu    [
 		 (UNSPEC_VCADD90 "i") (UNSPEC_VCADD270 "i")
 		 (VABSQ_M_S "s")
-		 (VCADDQ_ROT270_M_U "i") (VCADDQ_ROT270_M_S "i")
-		 (VCADDQ_ROT90_M_U "i") (VCADDQ_ROT90_M_S "i")
+		 (VCADDQ_ROT270_M "i")
+		 (VCADDQ_ROT90_M "i")
 		 (VCLSQ_M_S "s")
 		 (VCLZQ_M_S "i")
 		 (VCLZQ_M_U "i")
@@ -1246,6 +1256,8 @@
 		 (VMOVNBQ_S "i") (VMOVNBQ_U "i")
 		 (VMOVNTQ_M_S "i") (VMOVNTQ_M_U "i")
 		 (VMOVNTQ_S "i") (VMOVNTQ_U "i")
+		 (VMULLBQ_INT_S "s") (VMULLBQ_INT_U "u")
+		 (VMULLTQ_INT_S "s") (VMULLTQ_INT_U "u")
 		 (VNEGQ_M_S "s")
 		 (VQABSQ_M_S "s")
 		 (VQMOVNBQ_M_S "s") (VQMOVNBQ_M_U "u")
@@ -1523,6 +1535,9 @@
 
 ;; vtbl<n> suffix for NEON vector modes.
 (define_mode_attr VTAB_n [(TI "2") (EI "3") (OI "4")])
+
+;; Suffix for x2 variants of vld1 and vst1.
+(define_mode_attr VMEMX2_q [(TI "") (OI "q")])
 
 ;; fp16 or bf16 marker for 16-bit float modes.
 (define_mode_attr fporbf [(HF "fp16") (BF "bf16")])
@@ -2184,11 +2199,9 @@
 (define_int_attr rot [(UNSPEC_VCADD90 "90")
 		      (UNSPEC_VCADD270 "270")
 		      (VCADDQ_ROT90_M_F "90")
-		      (VCADDQ_ROT90_M_S "90")
-		      (VCADDQ_ROT90_M_U "90")
+		      (VCADDQ_ROT90_M "90")
 		      (VCADDQ_ROT270_M_F "270")
-		      (VCADDQ_ROT270_M_S "270")
-		      (VCADDQ_ROT270_M_U "270")
+		      (VCADDQ_ROT270_M "270")
 		      (VHCADDQ_ROT90_S "90")
 		      (VHCADDQ_ROT270_S "270")
 		      (VHCADDQ_ROT90_M_S "90")
@@ -2241,11 +2254,9 @@
 (define_int_attr mve_rot [(UNSPEC_VCADD90 "_rot90")
 			  (UNSPEC_VCADD270 "_rot270")
 			  (VCADDQ_ROT90_M_F "_rot90")
-			  (VCADDQ_ROT90_M_S "_rot90")
-			  (VCADDQ_ROT90_M_U "_rot90")
+			  (VCADDQ_ROT90_M "_rot90")
 			  (VCADDQ_ROT270_M_F "_rot270")
-			  (VCADDQ_ROT270_M_S "_rot270")
-			  (VCADDQ_ROT270_M_U "_rot270")
+			  (VCADDQ_ROT270_M "_rot270")
 			  (VHCADDQ_ROT90_S "_rot90")
 			  (VHCADDQ_ROT270_S "_rot270")
 			  (VHCADDQ_ROT90_M_S "_rot90")
@@ -2330,6 +2341,10 @@
 		       (VMLADAVQ_U "u") (VMULHQ_S "s") (VMULHQ_U "u")
 		       (VMULLBQ_INT_S "s") (VMULLBQ_INT_U "u") (VQADDQ_S "s")
 		       (VMULLTQ_INT_S "s") (VMULLTQ_INT_U "u") (VQADDQ_U "u")
+		       (VMULLBQ_POLY_P "p")
+		       (VMULLTQ_POLY_P "p")
+		       (VMULLBQ_POLY_M_P "p")
+		       (VMULLTQ_POLY_M_P "p")
 		       (VMULQ_N_S "s") (VMULQ_N_U "u") (VMULQ_S "s")
 		       (VMULQ_U "u")
 		       (VQADDQ_N_S "s") (VQADDQ_N_U "u")
@@ -2403,7 +2418,7 @@
 		       (VCVTQ_M_N_TO_F_U "u") (VADDQ_M_N_U "u")
 		       (VSHLQ_M_N_S "s") (VMAXQ_M_U "u") (VHSUBQ_M_N_U "u")
 		       (VMULQ_M_N_S "s") (VQSHLQ_M_U "u") (VRHADDQ_M_S "s")
-		       (VEORQ_M_U "u") (VSHRQ_M_N_U "u") (VCADDQ_ROT90_M_U "u")
+		       (VEORQ_M_U "u") (VSHRQ_M_N_U "u")
 		       (VMLADAVAQ_P_U "u") (VEORQ_M_S "s") (VBRSRQ_M_N_S "s")
 		       (VMULQ_M_U "u") (VQRDMLAHQ_M_N_S "s") (VHSUBQ_M_N_S "s")
 		       (VQRSHLQ_M_S "s") (VMULQ_M_N_U "u")
@@ -2412,17 +2427,17 @@
 		       (VMULLBQ_INT_M_U "u") (VSHLQ_M_N_U "u") (VQSUBQ_M_U "u")
 		       (VQDMLASHQ_M_N_S "s")
 		       (VQRDMLASHQ_M_N_U "u") (VRSHRQ_M_N_S "s")
-		       (VORNQ_M_S "s") (VCADDQ_ROT270_M_S "s") (VRHADDQ_M_U "u")
+		       (VORNQ_M_S "s") (VCADDQ_ROT270_M "") (VRHADDQ_M_U "u")
 		       (VRSHRQ_M_N_U "u") (VMLASQ_M_N_U "u") (VHSUBQ_M_U "u")
 		       (VQSUBQ_M_N_S "s") (VMULLTQ_INT_M_S "s")
 		       (VORRQ_M_S "s") (VQDMLAHQ_M_N_U "u") (VRSHLQ_M_S "s")
 		       (VHADDQ_M_U "u") (VHADDQ_M_N_S "s") (VMULLTQ_INT_M_U "u")
 		       (VORRQ_M_U "u") (VHADDQ_M_S "s") (VHADDQ_M_N_U "u")
 		       (VQDMLAHQ_M_N_S "s") (VMAXQ_M_S "s") (VORNQ_M_U "u")
-		       (VCADDQ_ROT270_M_U "u") (VQADDQ_M_U "u")
+		       (VQADDQ_M_U "u")
 		       (VQRDMLASHQ_M_N_S "s") (VBICQ_M_U "u") (VMINQ_M_U "u")
 		       (VSUBQ_M_N_S "s") (VMULLBQ_INT_M_S "s") (VQSUBQ_M_S "s")
-		       (VCADDQ_ROT90_M_S "s") (VRMULHQ_M_S "s") (VANDQ_M_U "u")
+		       (VCADDQ_ROT90_M "") (VRMULHQ_M_S "s") (VANDQ_M_U "u")
 		       (VMULHQ_M_S "s") (VADDQ_M_S "s") (VQRDMLAHQ_M_N_U "u")
 		       (VMLASQ_M_N_S "s") (VHSUBQ_M_S "s") (VRMULHQ_M_U "u")
 		       (VQADDQ_M_N_S "s") (VSHRQ_M_N_S "s") (VANDQ_M_S "s")
@@ -2713,8 +2728,8 @@
 (define_int_iterator VMINVQ [VMINVQ_U VMINVQ_S])
 (define_int_iterator VMLADAVQ [VMLADAVQ_U VMLADAVQ_S])
 (define_int_iterator VMULHQ [VMULHQ_S VMULHQ_U])
-(define_int_iterator VMULLBQ_INT [VMULLBQ_INT_U VMULLBQ_INT_S])
-(define_int_iterator VMULLTQ_INT [VMULLTQ_INT_U VMULLTQ_INT_S])
+(define_int_iterator VMULLxQ_INT [VMULLBQ_INT_U VMULLBQ_INT_S VMULLTQ_INT_U VMULLTQ_INT_S])
+(define_int_iterator VMULLxQ_POLY [VMULLBQ_POLY_P VMULLTQ_POLY_P])
 (define_int_iterator VMULQ [VMULQ_U VMULQ_S])
 (define_int_iterator VMULQ_N [VMULQ_N_U VMULQ_N_S])
 (define_int_iterator VQADDQ [VQADDQ_U VQADDQ_S])
@@ -2815,7 +2830,8 @@
 (define_int_iterator VSLIQ_M_N [VSLIQ_M_N_U VSLIQ_M_N_S])
 (define_int_iterator VRSHLQ_M [VRSHLQ_M_S VRSHLQ_M_U])
 (define_int_iterator VMINQ_M [VMINQ_M_S VMINQ_M_U])
-(define_int_iterator VMULLBQ_INT_M [VMULLBQ_INT_M_U VMULLBQ_INT_M_S])
+(define_int_iterator VMULLxQ_INT_M [VMULLBQ_INT_M_U VMULLBQ_INT_M_S VMULLTQ_INT_M_U VMULLTQ_INT_M_S])
+(define_int_iterator VMULLxQ_POLY_M [VMULLBQ_POLY_M_P VMULLTQ_POLY_M_P])
 (define_int_iterator VMULHQ_M [VMULHQ_M_S VMULHQ_M_U])
 (define_int_iterator VMULQ_M [VMULQ_M_S VMULQ_M_U])
 (define_int_iterator VHSUBQ_M_N [VHSUBQ_M_N_S VHSUBQ_M_N_U])
@@ -2834,7 +2850,7 @@
 (define_int_iterator VSHLQ_M_N [VSHLQ_M_N_S VSHLQ_M_N_U])
 (define_int_iterator VCADDQ_M_F [VCADDQ_ROT90_M_F VCADDQ_ROT270_M_F])
 (define_int_iterator VxCADDQ [UNSPEC_VCADD90 UNSPEC_VCADD270 VHCADDQ_ROT90_S VHCADDQ_ROT270_S])
-(define_int_iterator VxCADDQ_M [VHCADDQ_ROT90_M_S VHCADDQ_ROT270_M_S VCADDQ_ROT90_M_U VCADDQ_ROT90_M_S VCADDQ_ROT270_M_U VCADDQ_ROT270_M_S])
+(define_int_iterator VxCADDQ_M [VHCADDQ_ROT90_M_S VHCADDQ_ROT270_M_S VCADDQ_ROT90_M VCADDQ_ROT270_M])
 (define_int_iterator VQRSHLQ_M [VQRSHLQ_M_U VQRSHLQ_M_S])
 (define_int_iterator VQADDQ_M_N [VQADDQ_M_N_U VQADDQ_M_N_S])
 (define_int_iterator VADDQ_M_N [VADDQ_M_N_S VADDQ_M_N_U])
@@ -2844,7 +2860,6 @@
 (define_int_iterator VMLADAVAQ_P [VMLADAVAQ_P_U VMLADAVAQ_P_S])
 (define_int_iterator VBRSRQ_M_N [VBRSRQ_M_N_U VBRSRQ_M_N_S])
 (define_int_iterator VMULQ_M_N [VMULQ_M_N_U VMULQ_M_N_S])
-(define_int_iterator VMULLTQ_INT_M [VMULLTQ_INT_M_S VMULLTQ_INT_M_U])
 (define_int_iterator VEORQ_M [VEORQ_M_S VEORQ_M_U])
 (define_int_iterator VSHRQ_M_N [VSHRQ_M_N_S VSHRQ_M_N_U])
 (define_int_iterator VSUBQ_M_N [VSUBQ_M_N_S VSUBQ_M_N_U])

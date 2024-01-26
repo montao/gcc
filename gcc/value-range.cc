@@ -1,5 +1,5 @@
 /* Support routines for value ranges.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Major hacks by Aldy Hernandez <aldyh@redhat.com> and
    Andrew MacLeod <amacleod@redhat.com>.
 
@@ -245,17 +245,23 @@ vrange::dump (FILE *file) const
 void
 irange_bitmask::dump (FILE *file) const
 {
-  char buf[WIDE_INT_PRINT_BUFFER_SIZE];
+  char buf[WIDE_INT_PRINT_BUFFER_SIZE], *p;
   pretty_printer buffer;
 
   pp_needs_newline (&buffer) = true;
   buffer.buffer->stream = file;
   pp_string (&buffer, "MASK ");
-  print_hex (m_mask, buf);
-  pp_string (&buffer, buf);
+  unsigned len_mask, len_val;
+  if (print_hex_buf_size (m_mask, &len_mask)
+      | print_hex_buf_size (m_value, &len_val))
+    p = XALLOCAVEC (char, MAX (len_mask, len_val));
+  else
+    p = buf;
+  print_hex (m_mask, p);
+  pp_string (&buffer, p);
   pp_string (&buffer, " VALUE ");
-  print_hex (m_value, buf);
-  pp_string (&buffer, buf);
+  print_hex (m_value, p);
+  pp_string (&buffer, p);
   pp_flush (&buffer);
 }
 
@@ -312,6 +318,18 @@ add_vrange (const vrange &v, inchash::hash &hstate,
 }
 
 } //namespace inchash
+
+bool
+irange::nonnegative_p () const
+{
+  return wi::ge_p (lower_bound (), 0, TYPE_SIGN (type ()));
+}
+
+bool
+irange::nonpositive_p () const
+{
+  return wi::le_p (upper_bound (), 0, TYPE_SIGN (type ()));
+}
 
 bool
 irange::supports_type_p (const_tree type) const
@@ -540,16 +558,26 @@ frange::union_nans (const frange &r)
 {
   gcc_checking_assert (known_isnan () || r.known_isnan ());
 
-  if (known_isnan ())
+  bool changed = false;
+  if (known_isnan () && m_kind != r.m_kind)
     {
       m_kind = r.m_kind;
       m_min = r.m_min;
       m_max = r.m_max;
+      changed = true;
     }
-  m_pos_nan |= r.m_pos_nan;
-  m_neg_nan |= r.m_neg_nan;
-  normalize_kind ();
-  return true;
+  if (m_pos_nan != r.m_pos_nan || m_neg_nan != r.m_neg_nan)
+    {
+      m_pos_nan |= r.m_pos_nan;
+      m_neg_nan |= r.m_neg_nan;
+      changed = true;
+    }
+  if (changed)
+    {
+      normalize_kind ();
+      return true;
+    }
+  return false;
 }
 
 bool
@@ -1263,6 +1291,45 @@ irange::irange_single_pair_union (const irange &r)
   return true;
 }
 
+// Append R to this range, knowing that R occurs after all of these subranges.
+// Return TRUE as something must have changed.
+
+bool
+irange::union_append (const irange &r)
+{
+  // Check if the first range in R is an immmediate successor to the last
+  // range, ths requiring a merge.
+  signop sign = TYPE_SIGN (m_type);
+  wide_int lb = r.lower_bound ();
+  wide_int ub = upper_bound ();
+  unsigned start = 0;
+  if (widest_int::from (ub, sign) + 1
+      == widest_int::from (lb, sign))
+    {
+      m_base[m_num_ranges * 2 - 1] = r.m_base[1];
+      start = 1;
+    }
+  maybe_resize (m_num_ranges + r.m_num_ranges - start);
+  for ( ; start < r.m_num_ranges; start++)
+    {
+      // Merge the last ranges if it exceeds the maximum size.
+      if (m_num_ranges + 1 > m_max_ranges)
+	{
+	  m_base[m_max_ranges * 2 - 1] = r.m_base[r.m_num_ranges * 2 - 1];
+	  break;
+	}
+      m_base[m_num_ranges * 2] = r.m_base[start * 2];
+      m_base[m_num_ranges * 2 + 1] = r.m_base[start * 2 + 1];
+      m_num_ranges++;
+    }
+
+  if (!union_bitmask (r))
+    normalize_kind ();
+  if (flag_checking)
+    verify_range ();
+  return true;
+}
+
 // Return TRUE if anything changes.
 
 bool
@@ -1294,6 +1361,11 @@ irange::union_ (const vrange &v)
   if (m_num_ranges == 1 && r.m_num_ranges == 1)
     return irange_single_pair_union (r);
 
+  signop sign = TYPE_SIGN (m_type);
+  // Check for an append to the end.
+  if (m_kind == VR_RANGE && wi::gt_p (r.lower_bound (), upper_bound (), sign))
+    return union_append (r);
+
   // If this ranges fully contains R, then we need do nothing.
   if (irange_contains_p (r))
     return union_bitmask (r);
@@ -1312,7 +1384,6 @@ irange::union_ (const vrange &v)
   // [Xi,Yi]..[Xn,Yn]  U  [Xj,Yj]..[Xm,Ym]   -->  [Xk,Yk]..[Xp,Yp]
   auto_vec<wide_int, 20> res (m_num_ranges * 2 + r.m_num_ranges * 2);
   unsigned i = 0, j = 0, k = 0;
-  signop sign = TYPE_SIGN (m_type);
 
   while (i < m_num_ranges * 2 && j < r.m_num_ranges * 2)
     {
@@ -1786,6 +1857,35 @@ irange::get_bitmask_from_range () const
   return irange_bitmask (wi::zero (prec), min | xorv);
 }
 
+// Remove trailing ranges that this bitmask indicates can't exist.
+
+void
+irange_bitmask::adjust_range (irange &r) const
+{
+  if (unknown_p () || r.undefined_p ())
+    return;
+
+  int_range_max range;
+  tree type = r.type ();
+  int prec = TYPE_PRECISION (type);
+  // If there are trailing zeros, create a range representing those bits.
+  gcc_checking_assert (m_mask != 0);
+  int z = wi::ctz (m_mask);
+  if (z)
+    {
+      wide_int ub = (wi::one (prec) << z) - 1;
+      range = int_range<5> (type, wi::zero (prec), ub);
+      // Then remove the specific value these bits contain from the range.
+      wide_int value = m_value & ub;
+      range.intersect (int_range<2> (type, value, value, VR_ANTI_RANGE));
+      // Inverting produces a list of ranges which can be valid.
+      range.invert ();
+      // And finally select R from only those valid values.
+      r.intersect (range);
+      return;
+    }
+}
+
 // If the the mask can be trivially converted to a range, do so and
 // return TRUE.
 
@@ -1876,6 +1976,8 @@ irange::get_bitmask () const
   //
   // 3 is in the range endpoints, but is excluded per the known 0 bits
   // in the mask.
+  //
+  // See also the note in irange_bitmask::intersect.
   irange_bitmask bm = get_bitmask_from_range ();
   if (!m_bitmask.unknown_p ())
     bm.intersect (m_bitmask);
@@ -1915,12 +2017,21 @@ irange::intersect_bitmask (const irange &r)
     return false;
 
   irange_bitmask bm = get_bitmask ();
+  irange_bitmask save = bm;
   if (!bm.intersect (r.get_bitmask ()))
     return false;
 
   m_bitmask = bm;
+
+  // Updating m_bitmask may still yield a semantic bitmask (as
+  // returned by get_bitmask) which is functionally equivalent to what
+  // we originally had.  In which case, there's still no change.
+  if (save == get_bitmask ())
+    return false;
+
   if (!set_range_from_bitmask ())
     normalize_kind ();
+  m_bitmask.adjust_range (*this);
   if (flag_checking)
     verify_range ();
   return true;
@@ -1938,10 +2049,18 @@ irange::union_bitmask (const irange &r)
     return false;
 
   irange_bitmask bm = get_bitmask ();
+  irange_bitmask save = bm;
   if (!bm.union_ (r.get_bitmask ()))
     return false;
 
   m_bitmask = bm;
+
+  // Updating m_bitmask may still yield a semantic bitmask (as
+  // returned by get_bitmask) which is functionally equivalent to what
+  // we originally had.  In which case, there's still no change.
+  if (save == get_bitmask ())
+    return false;
+
   // No need to call set_range_from_mask, because we'll never
   // narrow the range.  Besides, it would cause endless recursion
   // because of the union_ in set_range_from_mask.
@@ -2697,6 +2816,22 @@ range_tests_nan ()
   ASSERT_TRUE (real_identical (&r, &r0.upper_bound ()));
   ASSERT_TRUE (!r0.signbit_p (signbit));
   ASSERT_TRUE (r0.maybe_isnan ());
+
+  // NAN U NAN shouldn't change anything.
+  r0.set_nan (float_type_node);
+  r1.set_nan (float_type_node);
+  ASSERT_FALSE (r0.union_ (r1));
+
+  // [3,5] NAN U NAN shouldn't change anything.
+  r0 = frange_float ("3", "5");
+  r1.set_nan (float_type_node);
+  ASSERT_FALSE (r0.union_ (r1));
+
+  // [3,5] U NAN *does* trigger a change.
+  r0 = frange_float ("3", "5");
+  r0.clear_nan ();
+  r1.set_nan (float_type_node);
+  ASSERT_TRUE (r0.union_ (r1));
 }
 
 static void

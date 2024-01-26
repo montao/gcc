@@ -1,5 +1,5 @@
 /* Induction variable optimizations.
-   Copyright (C) 2003-2023 Free Software Foundation, Inc.
+   Copyright (C) 2003-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -412,7 +412,7 @@ struct iv_use
   tree *op_p;		/* The place where it occurs.  */
 
   tree addr_base;	/* Base address with const offset stripped.  */
-  poly_uint64_pod addr_offset;
+  poly_uint64 addr_offset;
 			/* Const offset stripped from base address.  */
 };
 
@@ -1036,10 +1036,12 @@ niter_for_exit (struct ivopts_data *data, edge exit)
 	 names that appear in phi nodes on abnormal edges, so that we do not
 	 create overlapping life ranges for them (PR 27283).  */
       desc = XNEW (class tree_niter_desc);
+      ::new (static_cast<void*> (desc)) tree_niter_desc ();
       if (!number_of_iterations_exit (data->current_loop,
 				      exit, desc, true)
      	  || contains_abnormal_ssa_name_p (desc->niter))
 	{
+	  desc->~tree_niter_desc ();
 	  XDELETE (desc);
 	  desc = NULL;
 	}
@@ -2441,6 +2443,7 @@ get_mem_type_for_internal_fn (gcall *call, tree *op_p)
     {
     case IFN_MASK_LOAD:
     case IFN_MASK_LOAD_LANES:
+    case IFN_MASK_LEN_LOAD_LANES:
     case IFN_LEN_LOAD:
     case IFN_MASK_LEN_LOAD:
       if (op_p == gimple_call_arg_ptr (call, 0))
@@ -2449,6 +2452,7 @@ get_mem_type_for_internal_fn (gcall *call, tree *op_p)
 
     case IFN_MASK_STORE:
     case IFN_MASK_STORE_LANES:
+    case IFN_MASK_LEN_STORE_LANES:
     case IFN_LEN_STORE:
     case IFN_MASK_LEN_STORE:
       {
@@ -2825,12 +2829,29 @@ strip_offset_1 (tree expr, bool inside_addr, bool top_compref,
       else if (integer_zerop (op0))
 	{
 	  if (code == MINUS_EXPR)
-	    expr = fold_build1 (NEGATE_EXPR, type, op1);
+	    {
+	      if (TYPE_OVERFLOW_UNDEFINED (type))
+		{
+		  type = unsigned_type_for (type);
+		  op1 = fold_convert (type, op1);
+		}
+	      expr = fold_build1 (NEGATE_EXPR, type, op1);
+	    }
 	  else
 	    expr = op1;
 	}
       else
-	expr = fold_build2 (code, type, op0, op1);
+	{
+	  if (TYPE_OVERFLOW_UNDEFINED (type))
+	    {
+	      type = unsigned_type_for (type);
+	      if (code == POINTER_PLUS_EXPR)
+		code = PLUS_EXPR;
+	      op0 = fold_convert (type, op0);
+	      op1 = fold_convert (type, op1);
+	    }
+	  expr = fold_build2 (code, type, op0, op1);
+	}
 
       return fold_convert (orig_type, expr);
 
@@ -2848,7 +2869,15 @@ strip_offset_1 (tree expr, bool inside_addr, bool top_compref,
       if (integer_zerop (op0))
 	expr = op0;
       else
-	expr = fold_build2 (MULT_EXPR, type, op0, op1);
+	{
+	  if (TYPE_OVERFLOW_UNDEFINED (type))
+	    {
+	      type = unsigned_type_for (type);
+	      op0 = fold_convert (type, op0);
+	      op1 = fold_convert (type, op1);
+	    }
+	  expr = fold_build2 (MULT_EXPR, type, op0, op1);
+	}
 
       return fold_convert (orig_type, expr);
 
@@ -2954,7 +2983,7 @@ strip_offset_1 (tree expr, bool inside_addr, bool top_compref,
 /* Strips constant offsets from EXPR and stores them to OFFSET.  */
 
 static tree
-strip_offset (tree expr, poly_uint64_pod *offset)
+strip_offset (tree expr, poly_uint64 *offset)
 {
   poly_int64 off;
   tree core = strip_offset_1 (expr, false, false, &off);
@@ -4704,17 +4733,25 @@ get_address_cost (struct ivopts_data *data, struct iv_use *use,
   /* Only true if ratio != 1.  */
   bool ok_with_ratio_p = false;
   bool ok_without_ratio_p = false;
+  code_helper code = ERROR_MARK;
+
+  if (use->type == USE_PTR_ADDRESS)
+    {
+      gcall *call = as_a<gcall *> (use->stmt);
+      gcc_assert (gimple_call_internal_p (call));
+      code = gimple_call_internal_fn (call);
+    }
 
   if (!aff_combination_const_p (aff_inv))
     {
       parts.index = integer_one_node;
       /* Addressing mode "base + index".  */
-      ok_without_ratio_p = valid_mem_ref_p (mem_mode, as, &parts);
+      ok_without_ratio_p = valid_mem_ref_p (mem_mode, as, &parts, code);
       if (ratio != 1)
 	{
 	  parts.step = wide_int_to_tree (type, ratio);
 	  /* Addressing mode "base + index << scale".  */
-	  ok_with_ratio_p = valid_mem_ref_p (mem_mode, as, &parts);
+	  ok_with_ratio_p = valid_mem_ref_p (mem_mode, as, &parts, code);
 	  if (!ok_with_ratio_p)
 	    parts.step = NULL_TREE;
 	}
@@ -4724,7 +4761,7 @@ get_address_cost (struct ivopts_data *data, struct iv_use *use,
 	    {
 	      parts.offset = wide_int_to_tree (sizetype, aff_inv->offset);
 	      /* Addressing mode "base + index [<< scale] + offset".  */
-	      if (!valid_mem_ref_p (mem_mode, as, &parts))
+	      if (!valid_mem_ref_p (mem_mode, as, &parts, code))
 		parts.offset = NULL_TREE;
 	      else
 		aff_inv->offset = 0;
@@ -4737,7 +4774,7 @@ get_address_cost (struct ivopts_data *data, struct iv_use *use,
 
 	  /* Addressing mode "symbol + base + index [<< scale] [+ offset]".  */
 	  if (parts.symbol != NULL_TREE
-	      && !valid_mem_ref_p (mem_mode, as, &parts))
+	      && !valid_mem_ref_p (mem_mode, as, &parts, code))
 	    {
 	      aff_combination_add_elt (aff_inv, parts.symbol, 1);
 	      parts.symbol = NULL_TREE;
@@ -4775,7 +4812,7 @@ get_address_cost (struct ivopts_data *data, struct iv_use *use,
 	{
 	  parts.offset = wide_int_to_tree (sizetype, aff_inv->offset);
 	  /* Addressing mode "base + offset".  */
-	  if (!valid_mem_ref_p (mem_mode, as, &parts))
+	  if (!valid_mem_ref_p (mem_mode, as, &parts, code))
 	    parts.offset = NULL_TREE;
 	  else
 	    aff_inv->offset = 0;
@@ -5490,7 +5527,8 @@ may_eliminate_iv (struct ivopts_data *data,
 
   /* It is unlikely that computing the number of iterations using division
      would be more profitable than keeping the original induction variable.  */
-  if (expression_expensive_p (*bound))
+  bool cond_overflow_p;
+  if (expression_expensive_p (*bound, &cond_overflow_p))
     return false;
 
   /* Sometimes, it is possible to handle the situation that the number of
@@ -7565,6 +7603,8 @@ get_alias_ptr_type_for_ptr_address (iv_use *use)
     case IFN_MASK_STORE:
     case IFN_MASK_LOAD_LANES:
     case IFN_MASK_STORE_LANES:
+    case IFN_MASK_LEN_LOAD_LANES:
+    case IFN_MASK_LEN_STORE_LANES:
     case IFN_LEN_LOAD:
     case IFN_LEN_STORE:
     case IFN_MASK_LEN_LOAD:
@@ -7882,7 +7922,11 @@ remove_unused_ivs (struct ivopts_data *data, bitmap toremove)
 bool
 free_tree_niter_desc (edge const &, tree_niter_desc *const &value, void *)
 {
-  free (value);
+  if (value)
+    {
+      value->~tree_niter_desc ();
+      free (value);
+    }
   return true;
 }
 

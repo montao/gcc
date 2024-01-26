@@ -1,6 +1,6 @@
 /* Report error messages, build initializers, and perform
    some front-end optimizations for C++ compiler.
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -1109,15 +1109,11 @@ check_narrowing (tree type, tree init, tsubst_flags_t complain,
       else if (complain & tf_error)
 	{
 	  int savederrorcount = errorcount;
-	  if (!flag_permissive)
-	    global_dc->pedantic_errors = 1;
-	  auto s = make_temp_override (global_dc->dc_warn_system_headers, true);
-	  pedwarn (loc, OPT_Wnarrowing,
-		   "narrowing conversion of %qE from %qH to %qI",
-		   init, ftype, type);
+	  permerror_opt (loc, OPT_Wnarrowing,
+			 "narrowing conversion of %qE from %qH to %qI",
+			 init, ftype, type);
 	  if (errorcount == savederrorcount)
 	    ok = true;
-	  global_dc->pedantic_errors = flag_pedantic_errors;
 	}
     }
 
@@ -1683,7 +1679,6 @@ process_init_constructor_array (tree type, tree init, int nested, int flags,
 	if (next)
 	  {
 	    if (next != error_mark_node
-		&& ! seen_error () // Improves error-recovery on anew5.C.
 		&& (initializer_constant_valid_p (next, TREE_TYPE (next))
 		    != null_pointer_node))
 	      {
@@ -2219,7 +2214,6 @@ build_x_arrow (location_t loc, tree expr, tsubst_flags_t complain)
 	  TREE_TYPE (expr) = ttype;
 	  return expr;
 	}
-      expr = build_non_dependent_expr (expr);
     }
 
   if (MAYBE_CLASS_TYPE_P (type))
@@ -2384,7 +2378,11 @@ build_m_component_ref (tree datum, tree component, tsubst_flags_t complain)
       /* Build an expression for "object + offset" where offset is the
 	 value stored in the pointer-to-data-member.  */
       ptype = build_pointer_type (type);
-      datum = fold_build_pointer_plus (fold_convert (ptype, datum), component);
+      datum = convert (ptype, datum);
+      if (!processing_template_decl)
+	datum = build2 (POINTER_PLUS_EXPR, ptype,
+			datum, convert_to_ptrofftype (component));
+      datum = cp_fully_fold (datum);
       datum = cp_build_fold_indirect_ref (datum);
       if (datum == error_mark_node)
 	return error_mark_node;

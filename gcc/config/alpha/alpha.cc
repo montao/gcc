@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the DEC Alpha.
-   Copyright (C) 1992-2023 Free Software Foundation, Inc.
+   Copyright (C) 1992-2024 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
 This file is part of GCC.
@@ -844,7 +844,8 @@ alpha_linkage_symbol_p (const char *symname)
    low-order three bits; this is an "unaligned" access.  */
 
 static bool
-alpha_legitimate_address_p (machine_mode mode, rtx x, bool strict)
+alpha_legitimate_address_p (machine_mode mode, rtx x, bool strict,
+			    code_helper = ERROR_MARK)
 {
   /* If this is an ldq_u type address, discard the outer AND.  */
   if (mode == DImode
@@ -7481,14 +7482,13 @@ common_object_handler (tree *node, tree name ATTRIBUTE_UNUSED,
   return NULL_TREE;
 }
 
-static const struct attribute_spec vms_attribute_table[] =
+TARGET_GNU_ATTRIBUTES (vms_attribute_table,
 {
   /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
        affects_type_identity, handler, exclude } */
   { COMMON_OBJECT,   0, 1, true,  false, false, false, common_object_handler,
-    NULL },
-  { NULL,            0, 0, false, false, false, false, NULL, NULL }
-};
+    NULL }
+});
 
 void
 vms_output_aligned_decl_common(FILE *file, tree decl, const char *name,
@@ -7986,8 +7986,7 @@ int num_source_filenames = 0;
 /* Output the textual info surrounding the prologue.  */
 
 void
-alpha_start_function (FILE *file, const char *fnname,
-		      tree decl ATTRIBUTE_UNUSED)
+alpha_start_function (FILE *file, const char *fnname, tree decl)
 {
   unsigned long imask, fmask;
   /* Complete stack size needed.  */
@@ -8052,7 +8051,7 @@ alpha_start_function (FILE *file, const char *fnname,
   if (TARGET_ABI_OPEN_VMS)
     strcat (entry_label, "..en");
 
-  ASM_OUTPUT_LABEL (file, entry_label);
+  ASM_OUTPUT_FUNCTION_LABEL (file, entry_label, decl);
   inside_function = TRUE;
 
   if (TARGET_ABI_OPEN_VMS)

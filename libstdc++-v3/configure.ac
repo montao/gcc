@@ -108,6 +108,7 @@ AM_PROG_LIBTOOL
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
+AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
 
 if test "$enable_vtable_verify" = yes; then
   predep_objects_CXX="${predep_objects_CXX} ${glibcxx_builddir}/../libgcc/vtv_start.o"
@@ -552,6 +553,12 @@ GLIBCXX_CHECK_ALIGNAS_CACHELINE
 
 # For using init_priority in ios_init.cc
 GLIBCXX_CHECK_INIT_PRIORITY
+
+# For __basic_file::native_handle()
+GLIBCXX_CHECK_FILEBUF_NATIVE_HANDLES
+
+# For std::text_encoding
+GLIBCXX_CHECK_TEXT_ENCODING
 
 # Define documentation rules conditionally.
 

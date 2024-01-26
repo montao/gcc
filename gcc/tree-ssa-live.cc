@@ -1,5 +1,5 @@
 /* Liveness for SSA trees.
-   Copyright (C) 2003-2023 Free Software Foundation, Inc.
+   Copyright (C) 2003-2024 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -77,10 +77,11 @@ var_map_base_fini (var_map map)
 }
 /* Create a variable partition map of SIZE for region, initialize and return
    it.  Region is a loop if LOOP is non-NULL, otherwise is the current
-   function.  */
+   function.  If BITINT is non-NULL, only SSA_NAMEs from that bitmap
+   will be coalesced.  */
 
 var_map
-init_var_map (int size, class loop *loop)
+init_var_map (int size, class loop *loop, bitmap bitint)
 {
   var_map map;
 
@@ -109,7 +110,8 @@ init_var_map (int size, class loop *loop)
   else
     {
       map->bmp_bbs = NULL;
-      map->outofssa_p = true;
+      map->outofssa_p = bitint == NULL;
+      map->bitint = bitint;
       basic_block bb;
       FOR_EACH_BB_FN (bb, cfun)
 	map->vec_bbs.safe_push (bb);
@@ -1359,7 +1361,7 @@ compute_live_vars (struct function *fn, live_vars_map *vars)
      We then do a mostly classical bitmap liveness algorithm.  */
 
   active.create (last_basic_block_for_fn (fn));
-  active.quick_grow (last_basic_block_for_fn (fn));
+  active.quick_grow_cleared (last_basic_block_for_fn (fn));
   for (int i = 0; i < last_basic_block_for_fn (fn); i++)
     bitmap_initialize (&active[i], &bitmap_default_obstack);
 
@@ -1676,23 +1678,27 @@ virtual_operand_live::get_live_in (basic_block bb)
   if (!liveout)
     init ();
 
-  /* Since we don't have a virtual PHI we can now pick any of the
-     incoming edges liveout value.  All returns from the function have
-     a virtual use forcing generation of virtual PHIs.  */
+  /* Since we don't have a virtual PHI and we don't know whether there's
+     a downstream virtual use (and thus PHIs are inserted where necessary)
+     we now have to check each incoming edge live-out.  */
   edge_iterator ei;
   edge e;
+  tree livein = NULL_TREE;
   FOR_EACH_EDGE (e, ei, bb->preds)
-    if (liveout[e->src->index])
-      {
-	if (EDGE_PRED (bb, 0) != e)
-	  liveout[EDGE_PRED (bb, 0)->src->index] = liveout[e->src->index];
-	return liveout[e->src->index];
-      }
+    if (e->flags & EDGE_DFS_BACK)
+      /* We can ignore backedges since if there's a def there it would
+	 have forced a PHI in the source because it also acts as use
+	 downstream.  */
+      continue;
+    else if (!livein)
+      livein = get_live_out (e->src);
+    else if (get_live_out (e->src) != livein)
+      /* When there's no virtual use downstream this indicates a point
+	 where we'd insert a PHI merging the different live virtual
+	 operands.  */
+      return NULL_TREE;
 
-  /* Since virtuals are in SSA form at most the immediate dominator can
-     contain the definition of the live version.  Skipping to that deals
-     with CFG cycles as well.  */
-  return get_live_out (get_immediate_dominator (CDI_DOMINATORS, bb));
+  return livein;
 }
 
 /* Compute live-out of BB.  */

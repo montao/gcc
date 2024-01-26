@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -616,13 +616,17 @@ package Errout is
    --  selected error/warning messages. The subset of those codes used in
    --  the GNAT frontend are defined here.
 
-   GEC_None                             : constant := 0000;
-   GEC_Volatile_At_Library_Level        : constant := 0001;
-   GEC_Type_Early_Call_Region           : constant := 0003;
-   GEC_Volatile_Non_Interfering_Context : constant := 0004;
-   GEC_Required_Part_Of                 : constant := 0009;
-   GEC_Ownership_Moved_Object           : constant := 0010;
-   GEC_SPARK_Mode_On_Not_Library_Level  : constant := 0011;
+   GEC_None                                 : constant := 0000;
+   GEC_Volatile_At_Library_Level            : constant := 0001;
+   GEC_Type_Early_Call_Region               : constant := 0003;
+   GEC_Volatile_Non_Interfering_Context     : constant := 0004;
+   GEC_Required_Part_Of                     : constant := 0009;
+   GEC_Ownership_Moved_Object               : constant := 0010;
+   GEC_SPARK_Mode_On_Not_Library_Level      : constant := 0011;
+   GEC_Output_In_Function_Global_Or_Depends : constant := 0014;
+   GEC_Out_Parameter_In_Function            : constant := 0015;
+   GEC_Always_Terminates_On_Function        : constant := 0016;
+   GEC_Exceptional_Cases_On_Function        : constant := 0017;
 
    ------------------------
    -- List Pragmas Table --

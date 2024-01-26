@@ -1,6 +1,6 @@
 // Pair implementation -*- C++ -*-
 
-// Copyright (C) 2001-2023 Free Software Foundation, Inc.
+// Copyright (C) 2001-2024 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -63,7 +63,6 @@
 #endif
 #if __cplusplus >= 202002L
 # include <compare>
-# define __cpp_lib_constexpr_utility 201811L
 #endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -212,7 +211,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	swap(second, __p.second);
       }
 
-#if __cplusplus > 202002L
+#if __glibcxx_ranges_zip // >= C++23
       // As an extension, we constrain the const swap member function in order
       // to continue accepting explicit instantiation of pairs whose elements
       // are not all const swappable.  Without this constraint, such an
@@ -309,7 +308,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { }
 
       /// Constructor accepting two values of arbitrary types
+#if __cplusplus > 202002L
+      template<typename _U1 = _T1, typename _U2 = _T2>
+#else
       template<typename _U1, typename _U2>
+#endif
 	requires (_S_constructible<_U1, _U2>()) && (!_S_dangles<_U1, _U2>())
 	constexpr explicit(!_S_convertible<_U1, _U2>())
 	pair(_U1&& __x, _U2&& __y)
@@ -317,7 +320,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	: first(std::forward<_U1>(__x)), second(std::forward<_U2>(__y))
 	{ }
 
+#if __cplusplus > 202002L
+      template<typename _U1 = _T1, typename _U2 = _T2>
+#else
       template<typename _U1, typename _U2>
+#endif
 	requires (_S_constructible<_U1, _U2>()) && (_S_dangles<_U1, _U2>())
 	constexpr explicit(!_S_convertible<_U1, _U2>())
 	pair(_U1&&, _U2&&) = delete;
@@ -353,7 +360,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	constexpr explicit(!_S_convertible<_U1, _U2>())
 	pair(pair<_U1, _U2>&&) = delete;
 
-#if __cplusplus > 202002L
+#if __glibcxx_ranges_zip // >= C++23
       /// Converting constructor from a non-const `pair<U1, U2>` lvalue
       template<typename _U1, typename _U2>
 	requires (_S_constructible<_U1&, _U2&>()) && (!_S_dangles<_U1&, _U2&>())
@@ -457,7 +464,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return *this;
 	}
 
-#if __cplusplus > 202002L
+#if __glibcxx_ranges_zip // >= C++23
       /// Copy assignment operator (const)
       constexpr const pair&
       operator=(const pair& __p) const
@@ -880,7 +887,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     noexcept(noexcept(__x.swap(__y)))
     { __x.swap(__y); }
 
-#if __cplusplus > 202002L
+#if __glibcxx_ranges_zip // >= C++23
   template<typename _T1, typename _T2>
     requires is_swappable_v<const _T1> && is_swappable_v<const _T2>
     constexpr void
@@ -1050,10 +1057,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     get(const pair<_Tp1, _Tp2>&& __in) noexcept
     { return __pair_get<_Int>::__const_move_get(std::move(__in)); }
 
-#if __cplusplus >= 201402L
 
-#define __cpp_lib_tuples_by_type 201304L
-
+#ifdef __glibcxx_tuples_by_type // C++ >= 14
   template <typename _Tp, typename _Up>
     constexpr _Tp&
     get(pair<_Tp, _Up>& __p) noexcept
@@ -1093,8 +1098,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     constexpr const _Tp&&
     get(const pair<_Up, _Tp>&& __p) noexcept
     { return std::move(__p.second); }
+#endif // __glibcxx_tuples_by_type
 
-#if __cplusplus > 202002L
+
+#if __glibcxx_ranges_zip // >= C++23
   template<typename _T1, typename _T2, typename _U1, typename _U2,
 	   template<typename> class _TQual, template<typename> class _UQual>
     requires requires { typename pair<common_reference_t<_TQual<_T1>, _UQual<_U1>>,
@@ -1111,7 +1118,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   { using type = pair<common_type_t<_T1, _U1>, common_type_t<_T2, _U2>>; };
 #endif // C++23
 
-#endif // C++14
   /// @}
 #endif // C++11
 

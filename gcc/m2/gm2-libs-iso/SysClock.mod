@@ -1,6 +1,6 @@
 (* SysClock.mod implement the ISO SysClock specification.
 
-Copyright (C) 2009-2023 Free Software Foundation, Inc.
+Copyright (C) 2009-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -137,7 +137,8 @@ END daysInYear ;
 
 
 (*
-   ExtractDate - extracts the year, month, day from days.
+   ExtractDate - extracts the year, month, day from secs.  days is the
+                 total days since 1970.
 *)
 
 PROCEDURE ExtractDate (days: LONGCARD;
@@ -145,32 +146,53 @@ PROCEDURE ExtractDate (days: LONGCARD;
 VAR
    testMonth,
    testYear : CARDINAL ;
-   testDays : LONGCARD ;
+   monthOfDays,
+   yearOfDays : LONGCARD ;
 BEGIN
    testYear := 1970 ;
    LOOP
-      testDays := daysInYear (31, 12, testYear) ;
-      IF days < testDays
+      yearOfDays := daysInYear (31, 12, testYear) ;
+      IF days < yearOfDays
       THEN
          year := testYear ;
          testMonth := 1 ;
          LOOP
-            testDays := daysInMonth (year, testMonth) ;
-            IF days < testDays
+            monthOfDays := daysInMonth (year, testMonth) ;
+            IF days < monthOfDays
             THEN
                day := VAL (Day, days) + MIN (Day) ;
                month := VAL (Month, testMonth) ;
                RETURN
             END ;
-            DEC (days, testDays) ;
+            DEC (days, monthOfDays) ;
             INC (testMonth)
          END
       ELSE
-         DEC (days, testDays) ;
+         DEC (days, yearOfDays) ;
          INC (testYear)
       END
    END
 END ExtractDate ;
+
+
+(*
+   EpochTime - assigns all fields of userData to 0 or FALSE.
+*)
+
+PROCEDURE EpochTime (VAR userData: DateTime) ;
+BEGIN
+   WITH userData DO
+      second := 0 ;
+      minute :=  0 ;
+      hour := 0 ;
+      year := 0 ;
+      month := 0 ;
+      day := 0 ;
+      fractions := 0 ;
+      zone := 0 ;
+      summerTimeFlag := FALSE
+   END
+END EpochTime ;
 
 
 PROCEDURE GetClock (VAR userData: DateTime) ;
@@ -185,28 +207,34 @@ BEGIN
       ts := InitTimespec () ;
       IF GetTimeRealtime (ts) = 0
       THEN
-         GetTimespec (ts, sec, nano) ;
-         offset := timezone () ;
-         IF Debugging
+         IF GetTimespec (ts, sec, nano) = 1
          THEN
-            printf ("getclock = %ld\n", sec)
-         END ;
-         sec := VAL (LONGINT, sec) + offset ;
-         IF Debugging
-         THEN
-            printf ("getclock = %ld\n", sec)
-         END ;
-         WITH userData DO
-            second := VAL (Sec, DivMod (sec, MAX (Sec) + 1)) ;
-            minute := VAL (Min, DivMod (sec, MAX (Min) + 1)) ;
-            hour := VAL (Hour, DivMod (sec, MAX (Hour) + 1)) ;
-            ExtractDate (sec, year, month, day) ;
-            fractions := nano DIV ((1000 * 1000 * 1000) DIV maxSecondParts) ;
-            zone := - (offset DIV 60) ;
-            summerTimeFlag := (isdst () = 1)
+            offset := timezone () ;
+            IF Debugging
+            THEN
+               printf ("getclock = %ld\n", sec)
+            END ;
+            sec := VAL (LONGINT, sec) + offset ;
+            IF Debugging
+            THEN
+               printf ("getclock = %ld\n", sec)
+            END ;
+            WITH userData DO
+               (* Here we keep dividing sec by max seconds, minutes, hours
+                  to convert sec into total days since epoch.  *)
+               second := VAL (Sec, DivMod (sec, MAX (Sec) + 1)) ;
+               minute := VAL (Min, DivMod (sec, MAX (Min) + 1)) ;
+               hour := VAL (Hour, DivMod (sec, MAX (Hour) + 1)) ;
+               ExtractDate (sec, year, month, day) ;
+               fractions := nano DIV ((1000 * 1000 * 1000) DIV maxSecondParts) ;
+               zone := - (offset DIV 60) ;
+               summerTimeFlag := (isdst () = 1)
+            END
+         ELSE
+            EpochTime (userData)
          END
       ELSE
-         HALT
+         EpochTime (userData)
       END ;
       ts := KillTimespec (ts)
    END
@@ -306,10 +334,11 @@ BEGIN
                            userData.month, userData.year) ;
       offset := timezone () ;
       sec := VAL (LONGINT, sec) - offset ;
-      SetTimespec (ts, sec, nano) ;
-      IF SetTimeRealtime (ts) # 0
+      IF SetTimespec (ts, sec, nano) = 1
       THEN
-         HALT
+         IF SetTimeRealtime (ts) = 0
+         THEN
+         END
       END ;
       ts := KillTimespec (ts)
    END

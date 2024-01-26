@@ -1,5 +1,5 @@
 /* Full and partial redundancy elimination and code hoisting on SSA GIMPLE.
-   Copyright (C) 2001-2023 Free Software Foundation, Inc.
+   Copyright (C) 2001-2024 Free Software Foundation, Inc.
    Contributed by Daniel Berlin <dan@dberlin.org> and Steven Bosscher
    <stevenb@suse.de>
 
@@ -3314,6 +3314,8 @@ do_pre_regular_insertion (basic_block block, basic_block dom,
 	  bool by_some = false;
 	  bool cant_insert = false;
 	  bool all_same = true;
+	  unsigned num_inserts = 0;
+	  unsigned num_const = 0;
 	  pre_expr first_s = NULL;
 	  edge pred;
 	  basic_block bprime;
@@ -3370,11 +3372,14 @@ do_pre_regular_insertion (basic_block block, basic_block dom,
 		{
 		  avail[pred->dest_idx] = eprime;
 		  all_same = false;
+		  num_inserts++;
 		}
 	      else
 		{
 		  avail[pred->dest_idx] = edoubleprime;
 		  by_some = true;
+		  if (edoubleprime->kind == CONSTANT)
+		    num_const++;
 		  /* We want to perform insertions to remove a redundancy on
 		     a path in the CFG we want to optimize for speed.  */
 		  if (optimize_edge_for_speed_p (pred))
@@ -3391,6 +3396,12 @@ do_pre_regular_insertion (basic_block block, basic_block dom,
 	     partially redundant.  */
 	  if (!cant_insert && !all_same && by_some)
 	    {
+	      /* If the expression is redundant on all edges and we need
+		 to at most insert one copy from a constant do the PHI
+		 insertion even when not optimizing a path that's to be
+		 optimized for speed.  */
+	      if (num_inserts == 0 && num_const <= 1)
+		do_insertion = true;
 	      if (!do_insertion)
 		{
 		  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -3624,10 +3635,9 @@ do_hoist_insertion (basic_block block)
     return false;
 
   /* We have multiple successors, compute ANTIC_OUT by taking the intersection
-     of all of ANTIC_IN translating through PHI nodes.  Note we do not have to
-     worry about iteration stability here so just use the expression set
-     from the first set and prune that by sorted_array_from_bitmap_set.
-     This is a simplification of what we do in compute_antic_aux.  */
+     of all of ANTIC_IN translating through PHI nodes.  Track the union
+     of the expression sets so we can pick a representative that is
+     fully generatable out of hoistable expressions.  */
   bitmap_set_t ANTIC_OUT = bitmap_set_new ();
   bool first = true;
   FOR_EACH_EDGE (e, ei, block->succs)
@@ -3642,10 +3652,15 @@ do_hoist_insertion (basic_block block)
 	  bitmap_set_t tmp = bitmap_set_new ();
 	  phi_translate_set (tmp, ANTIC_IN (e->dest), e);
 	  bitmap_and_into (&ANTIC_OUT->values, &tmp->values);
+	  bitmap_ior_into (&ANTIC_OUT->expressions, &tmp->expressions);
 	  bitmap_set_free (tmp);
 	}
       else
-	bitmap_and_into (&ANTIC_OUT->values, &ANTIC_IN (e->dest)->values);
+	{
+	  bitmap_and_into (&ANTIC_OUT->values, &ANTIC_IN (e->dest)->values);
+	  bitmap_ior_into (&ANTIC_OUT->expressions,
+			   &ANTIC_IN (e->dest)->expressions);
+	}
     }
 
   /* Compute the set of hoistable expressions from ANTIC_OUT.  First compute
@@ -3686,14 +3701,12 @@ do_hoist_insertion (basic_block block)
       return false;
     }
 
-  /* Hack hoitable_set in-place so we can use sorted_array_from_bitmap_set.  */
+  /* Hack hoistable_set in-place so we can use sorted_array_from_bitmap_set.  */
   bitmap_move (&hoistable_set.values, &availout_in_some);
   hoistable_set.expressions = ANTIC_OUT->expressions;
 
   /* Now finally construct the topological-ordered expression set.  */
   vec<pre_expr> exprs = sorted_array_from_bitmap_set (&hoistable_set);
-
-  bitmap_clear (&hoistable_set.values);
 
   /* If there are candidate values for hoisting, insert expressions
      strategically to make the hoistable expressions fully redundant.  */
@@ -3724,6 +3737,13 @@ do_hoist_insertion (basic_block block)
       if (expr->kind == REFERENCE
 	  && PRE_EXPR_REFERENCE (expr)->punned
 	  && FLOAT_TYPE_P (get_expr_type (expr)))
+	continue;
+
+      /* Only hoist if the full expression is available for hoisting.
+	 This avoids hoisting values that are not common and for
+	 example evaluate an expression that's not valid to evaluate
+	 unconditionally (PR112310).  */
+      if (!valid_in_sets (&hoistable_set, AVAIL_OUT (block), expr))
 	continue;
 
       /* OK, we should hoist this value.  Perform the transformation.  */
@@ -3763,6 +3783,7 @@ do_hoist_insertion (basic_block block)
     }
 
   exprs.release ();
+  bitmap_clear (&hoistable_set.values);
   bitmap_set_free (ANTIC_OUT);
 
   return new_stuff;

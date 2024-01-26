@@ -1,5 +1,5 @@
 /* Mainly the interface between cpplib and the C front ends.
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -31,6 +31,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "file-prefix-map.h" /* remap_macro_filename()  */
 #include "langhooks.h"
 #include "attribs.h"
+#include "rich-location.h"
 
 /* We may keep statistics about how long which files took to compile.  */
 static int header_time, body_time;
@@ -82,6 +83,7 @@ init_c_lex (void)
   cb->read_pch = c_common_read_pch;
   cb->has_attribute = c_common_has_attribute;
   cb->has_builtin = c_common_has_builtin;
+  cb->has_feature = c_common_has_feature;
   cb->get_source_date_epoch = cb_get_source_date_epoch;
   cb->get_suggestion = cb_get_suggestion;
   cb->remap_filename = remap_macro_filename;
@@ -367,15 +369,13 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
 		= get_identifier ((const char *)
 				  cpp_token_as_text (pfile, nxt_token));
 	      attr_id = canonicalize_attr_name (attr_id);
-	      if (c_dialect_cxx ())
-		{
-		  /* OpenMP attributes need special handling.  */
-		  if ((flag_openmp || flag_openmp_simd)
-		      && is_attribute_p ("omp", attr_ns)
-		      && (is_attribute_p ("directive", attr_id)
-			  || is_attribute_p ("sequence", attr_id)))
-		    result = 1;
-		}
+	      /* OpenMP attributes need special handling.  */
+	      if ((flag_openmp || flag_openmp_simd)
+		  && is_attribute_p ("omp", attr_ns)
+		  && (is_attribute_p ("directive", attr_id)
+		      || is_attribute_p ("sequence", attr_id)
+		      || is_attribute_p ("decl", attr_id)))
+		result = 1;
 	      if (result)
 		attr_name = NULL_TREE;
 	      else
@@ -453,16 +453,16 @@ c_common_has_attribute (cpp_reader *pfile, bool std_syntax)
   return result;
 }
 
-/* Callback for has_builtin.  */
+/* Helper for __has_{builtin,feature,extension}.  */
 
-int
-c_common_has_builtin (cpp_reader *pfile)
+static const char *
+c_common_lex_availability_macro (cpp_reader *pfile, const char *builtin)
 {
   const cpp_token *token = get_token_no_padding (pfile);
   if (token->type != CPP_OPEN_PAREN)
     {
       cpp_error (pfile, CPP_DL_ERROR,
-		 "missing '(' after \"__has_builtin\"");
+		 "missing '(' after \"__has_%s\"", builtin);
       return 0;
     }
 
@@ -482,7 +482,7 @@ c_common_has_builtin (cpp_reader *pfile)
   else
     {
       cpp_error (pfile, CPP_DL_ERROR,
-		 "macro \"__has_builtin\" requires an identifier");
+		 "macro \"__has_%s\" requires an identifier", builtin);
       if (token->type == CPP_CLOSE_PAREN)
 	return 0;
     }
@@ -501,7 +501,36 @@ c_common_has_builtin (cpp_reader *pfile)
 	break;
     }
 
+  return name;
+}
+
+/* Callback for has_builtin.  */
+
+int
+c_common_has_builtin (cpp_reader *pfile)
+{
+  const char *name = c_common_lex_availability_macro (pfile, "builtin");
+  if (!name)
+    return 0;
+
   return names_builtin_p (name);
+}
+
+/* Callback for has_feature.  STRICT_P is true for has_feature and false
+   for has_extension.  */
+
+int
+c_common_has_feature (cpp_reader *pfile, bool strict_p)
+{
+  const char *builtin = strict_p ? "feature" : "extension";
+  const char *name = c_common_lex_availability_macro (pfile, builtin);
+  if (!name)
+    return 0;
+
+  /* If -pedantic-errors is given, __has_extension is equivalent to
+     __has_feature.  */
+  strict_p |= flag_pedantic_errors;
+  return has_feature_p (name, strict_p);
 }
 
 
@@ -837,6 +866,170 @@ interpret_integer (const cpp_token *token, unsigned int flags,
 
   *overflow = OT_NONE;
 
+  if (UNLIKELY (flags & CPP_N_BITINT))
+    {
+      unsigned int suffix_len = 2 + ((flags & CPP_N_UNSIGNED) ? 1 : 0);
+      int max_bits_per_digit = 4; // ceil (log2 (10))
+      unsigned int prefix_len = 0;
+      bool hex = false;
+      const int bitint_maxwidth = WIDE_INT_MAX_PRECISION - 1;
+      if ((flags & CPP_N_RADIX) == CPP_N_OCTAL)
+	{
+	  max_bits_per_digit = 3;
+	  prefix_len = 1;
+	}
+      else if ((flags & CPP_N_RADIX) == CPP_N_HEX)
+	{
+	  max_bits_per_digit = 4;
+	  prefix_len = 2;
+	  hex = true;
+	}
+      else if ((flags & CPP_N_RADIX) == CPP_N_BINARY)
+	{
+	  max_bits_per_digit = 1;
+	  prefix_len = 2;
+	}
+      int max_digits
+	= TYPE_PRECISION (intmax_type_node) >> max_bits_per_digit;
+      const int max_buf = 128;
+      if (max_digits > max_buf)
+	max_digits = max_buf;
+
+      widest_int wval;
+      unsigned int prec;
+      gcc_checking_assert (token->val.str.len > prefix_len + suffix_len
+			   || token->val.str.len == 1 + suffix_len);
+      if (token->val.str.len - (prefix_len + suffix_len)
+	  <= (unsigned) max_digits)
+	{
+	  integer = cpp_interpret_integer (parse_in, token,
+					   (flags & CPP_N_RADIX)
+					   | CPP_N_UNSIGNED);
+	  ival[0] = integer.low;
+	  ival[1] = integer.high;
+	  ival[2] = 0;
+	  wval = widest_int::from_array (ival, 3);
+	}
+      else
+	{
+	  unsigned char buf[3 + max_buf];
+	  memcpy (buf, token->val.str.text, prefix_len);
+	  wval = 0U;
+	  const unsigned char *p = token->val.str.text + prefix_len;
+	  cpp_token tok = *token;
+	  tok.val.str.text = buf;
+	  if (!prefix_len)
+	    max_digits = 19;
+	  do
+	    {
+	      unsigned char *q = buf + prefix_len;
+	      do
+		{
+		  unsigned char c = *p++;
+		  if (ISDIGIT (c) || (hex && ISXDIGIT (c)))
+		    {
+		      *q++ = c;
+		      if (q == buf + prefix_len + max_digits)
+			break;
+		    }
+		  else if (c != '\'')
+		    {
+		      --p;
+		      break;
+		    }
+		}
+	      while (1);
+	      if (q == buf + prefix_len)
+		break;
+	      else
+		{
+		  wi::overflow_type wioverflow;
+		  *q = '\0';
+		  tok.val.str.len = q - buf;
+		  if (wval == 0)
+		    ;
+		  else if (prefix_len)
+		    {
+		      prec = wi::min_precision (wval, UNSIGNED);
+		      unsigned HOST_WIDE_INT shift
+			= (tok.val.str.len - prefix_len) * max_bits_per_digit;
+		      if (prec + shift > bitint_maxwidth)
+			goto bitint_overflow;
+		      wval = wi::lshift (wval, shift);
+		    }
+		  else
+		    {
+		      static unsigned HOST_WIDE_INT tens[]
+			= { 1U, 10U, 100U, 1000U,
+			    HOST_WIDE_INT_UC (10000),
+			    HOST_WIDE_INT_UC (100000),
+			    HOST_WIDE_INT_UC (1000000),
+			    HOST_WIDE_INT_UC (10000000),
+			    HOST_WIDE_INT_UC (100000000),
+			    HOST_WIDE_INT_UC (1000000000),
+			    HOST_WIDE_INT_UC (10000000000),
+			    HOST_WIDE_INT_UC (100000000000),
+			    HOST_WIDE_INT_UC (1000000000000),
+			    HOST_WIDE_INT_UC (10000000000000),
+			    HOST_WIDE_INT_UC (100000000000000),
+			    HOST_WIDE_INT_UC (1000000000000000),
+			    HOST_WIDE_INT_UC (10000000000000000),
+			    HOST_WIDE_INT_UC (100000000000000000),
+			    HOST_WIDE_INT_UC (1000000000000000000),
+			    HOST_WIDE_INT_UC (10000000000000000000) };
+		      widest_int ten = tens[q - buf];
+		      wval = wi::umul (wval, ten, &wioverflow);
+		      if (wioverflow)
+			goto bitint_overflow;
+		    }
+		  integer = cpp_interpret_integer (parse_in, &tok,
+						   (flags & CPP_N_RADIX)
+						   | CPP_N_UNSIGNED);
+		  ival[0] = integer.low;
+		  ival[1] = integer.high;
+		  ival[2] = 0;
+		  if (prefix_len)
+		    wval = wval + widest_int::from_array (ival, 3);
+		  else
+		    {
+		      widest_int addend = widest_int::from_array (ival, 3);
+		      wval = wi::add (wval, addend, UNSIGNED, &wioverflow);
+		      if (wioverflow)
+			goto bitint_overflow;
+		    }
+		}
+	    }
+	  while (1);
+	}
+
+      prec = wi::min_precision (wval, UNSIGNED);
+      if (prec == 0)
+	prec = 1;
+      if ((flags & CPP_N_UNSIGNED) == 0)
+	++prec;
+      if (prec > bitint_maxwidth)
+	{
+	bitint_overflow:
+	  if ((flags & CPP_N_UNSIGNED) != 0)
+	    error ("integer constant is too large for "
+		   "%<unsigned _BitInt(%d)%> type", bitint_maxwidth);
+	  else
+	    error ("integer constant is too large for "
+		   "%<_BitInt(%d)%> type", bitint_maxwidth);
+	  return integer_zero_node;
+	}
+
+      struct bitint_info info;
+      if (!targetm.c.bitint_type_info (prec, &info))
+	{
+	  sorry ("%<_BitInt(%d)%> is not supported on this target", prec);
+	  return integer_zero_node;
+	}
+
+      type = build_bitint_type (prec, (flags & CPP_N_UNSIGNED) != 0);
+      return wide_int_to_tree (type, wval);
+    }
+
   integer = cpp_interpret_integer (parse_in, token, flags);
   if (integer.overflow)
     *overflow = OT_OVERFLOW;
@@ -1021,7 +1214,25 @@ interpret_float (const cpp_token *token, unsigned int flags,
 	    error ("unsupported non-standard suffix on floating constant");
 	    return error_mark_node;
 	  }
-	else if (c_dialect_cxx () && !extended)
+	else if (!c_dialect_cxx ())
+	  {
+	    if (warn_c11_c23_compat > 0)
+	      {
+		if (pedantic && !flag_isoc23)
+		  pedwarn (input_location, OPT_Wc11_c23_compat,
+			   "non-standard suffix on floating constant "
+			   "before C23");
+		else
+		  warning (OPT_Wc11_c23_compat,
+			   "non-standard suffix on floating constant "
+			   "before C23");
+	      }
+	    else if (warn_c11_c23_compat != 0 && pedantic && !flag_isoc23)
+	      pedwarn (input_location, OPT_Wpedantic,
+		       "non-standard suffix on floating constant "
+		       "before C23");
+	  }
+	else if (!extended)
 	  {
 	    if (cxx_dialect < cxx23)
 	      pedwarn (input_location, OPT_Wpedantic,
@@ -1091,7 +1302,7 @@ interpret_float (const cpp_token *token, unsigned int flags,
     }
 
   copy = (char *) alloca (copylen + 1);
-  if (c_dialect_cxx () ? cxx_dialect > cxx11 : flag_isoc2x)
+  if (c_dialect_cxx () ? cxx_dialect > cxx11 : flag_isoc23)
     {
       size_t maxlen = 0;
       for (size_t i = 0; i < copylen; ++i)

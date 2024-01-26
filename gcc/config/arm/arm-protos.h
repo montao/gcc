@@ -1,5 +1,5 @@
 /* Prototypes for exported functions defined in arm.cc and pe.c
-   Copyright (C) 1999-2023 Free Software Foundation, Inc.
+   Copyright (C) 1999-2024 Free Software Foundation, Inc.
    Contributed by Richard Earnshaw (rearnsha@arm.com)
    Minor hacks by Nick Clifton (nickc@cygnus.com)
 
@@ -23,6 +23,7 @@
 #define GCC_ARM_PROTOS_H
 
 #include "sbitmap.h"
+#include "tree.h" /* For ERROR_MARK.  */
 
 rtl_opt_pass *make_pass_insert_bti (gcc::context *ctxt);
 
@@ -83,7 +84,8 @@ extern int arm_split_constant (RTX_CODE, machine_mode, rtx,
 extern int legitimate_pic_operand_p (rtx);
 extern rtx legitimize_pic_address (rtx, machine_mode, rtx, rtx, bool);
 extern rtx legitimize_tls_address (rtx, rtx);
-extern bool arm_legitimate_address_p (machine_mode, rtx, bool);
+extern bool arm_legitimate_address_p (machine_mode, rtx, bool,
+				      code_helper = ERROR_MARK);
 extern int arm_legitimate_address_outer_p (machine_mode, rtx, RTX_CODE, int);
 extern int thumb_legitimate_offset_p (machine_mode, HOST_WIDE_INT);
 extern int thumb1_legitimate_address_p (machine_mode, rtx, int);
@@ -259,6 +261,7 @@ extern void thumb_expand_cpymemqi (rtx *);
 extern rtx arm_return_addr (int, rtx);
 extern void thumb_reload_out_hi (rtx *);
 extern void thumb_set_return_address (rtx, rtx);
+extern const char *arm_output_casesi (rtx *);
 extern const char *thumb1_output_casesi (rtx *);
 extern const char *thumb2_output_casesi (rtx *);
 #endif

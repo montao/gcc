@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---           Copyright (C) 2020-2023, Free Software Foundation, Inc.        --
+--           Copyright (C) 2020-2024, Free Software Foundation, Inc.        --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -96,6 +96,8 @@ package Einfo.Utils is
    function Is_Access_Type                      (Id : E) return B with Inline;
    function Is_Access_Protected_Subprogram_Type (Id : E) return B with Inline;
    function Is_Access_Subprogram_Type           (Id : E) return B with Inline;
+   function Is_Address_Compatible_Type          (Id : E) return B with Inline;
+   --  Check whether the type represents an address
    function Is_Aggregate_Type                   (Id : E) return B with Inline;
    function Is_Anonymous_Access_Type            (Id : E) return B with Inline;
    function Is_Array_Type                       (Id : E) return B with Inline;
@@ -242,10 +244,10 @@ package Einfo.Utils is
    function Type_Low_Bound (Id : E) return N with Inline;
    function Underlying_Type (Id : E) return Entity_Id;
 
-   function Scope_Depth (Id : E) return U with Inline;
-   function Scope_Depth_Set (Id : E) return B with Inline;
+   function Scope_Depth (Id : Scope_Kind_Id) return U with Inline;
+   function Scope_Depth_Set (Id : Scope_Kind_Id) return B with Inline;
 
-   function Scope_Depth_Default_0 (Id : E) return U;
+   function Scope_Depth_Default_0 (Id : Scope_Kind_Id) return U;
    --  In rare cases, the Scope_Depth_Value (queried by Scope_Depth) is
    --  not correctly set before querying it; this may be used instead of
    --  Scope_Depth in such cases. It returns Uint_0 if the Scope_Depth_Value
@@ -461,6 +463,7 @@ package Einfo.Utils is
    --    Refined_Global
    --    Refined_Post
    --    Refined_State
+   --    Side_Effects
    --    Subprogram_Variant
    --    Test_Case
    --    Volatile_Function

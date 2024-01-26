@@ -1,7 +1,7 @@
 --
 -- m2-3.bnf grammar and associated actions for pass 3.
 --
--- Copyright (C) 2001-2023 Free Software Foundation, Inc.
+-- Copyright (C) 2001-2024 Free Software Foundation, Inc.
 -- Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 --
 -- This file is part of GNU Modula-2.
@@ -23,7 +23,7 @@
 (* output from m2-3.bnf, automatically generated do not edit if these
    are the top two lines in the file.
 
-Copyright (C) 2001-2023 Free Software Foundation, Inc.
+Copyright (C) 2001-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -55,6 +55,7 @@ FROM M2Printf IMPORT printf0, printf1 ;
 FROM M2Debug IMPORT Assert ;
 FROM P2SymBuild IMPORT BuildString, BuildNumber ;
 FROM M2MetaError IMPORT MetaErrorT0 ;
+FROM M2CaseList IMPORT ElseCase ;
 
 FROM M2Reserved IMPORT tokToTok, toktype,
                        NulTok, ImportTok, ExportTok, QualifiedTok, UnQualifiedTok,
@@ -1110,7 +1111,7 @@ SetOrDesignatorOrFunction := Qualident
                                                                              THEN
                                                                                 BuildConstFunctionCall
                                                                              ELSE
-                                                                                BuildFunctionCall
+                                                                                BuildFunctionCall (FALSE)
                                                                              END %
                                                              ]
                               ]                                |
@@ -1157,7 +1158,7 @@ AssignmentOrProcedureCall :=                                               % VAR
                                   ( ActualParameters |                     % BuildNulParam (* in epsilon *) %
                                   )                                        % IF isFunc
                                                                              THEN
-                                                                                BuildFunctionCall ;
+                                                                                BuildFunctionCall (FALSE) ;
                                                                                 BuildAssignment (tokno)
                                                                              ELSE
                                                                                 BuildProcedureCall (tokno - 1)
@@ -1207,6 +1208,7 @@ CaseEndStatement := "END"                                                  % Bui
                                                                            % BuildCaseEnd %
                     | "ELSE"                                               % BuildStmtNote (-1) %
                                                                            % BuildCaseElse %
+                                                                           % ElseCase (NulSym) %
                            StatementSequence                               % BuildStmtNote (0) %
 			                     "END"
                                                                            % BuildCaseEnd %

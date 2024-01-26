@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -2474,16 +2474,16 @@ package Einfo is
 --       and subtypes, string types and subtypes, and all numeric types).
 --       Set if the type or subtype is constrained.
 
+--    Is_Constr_Array_Subt_With_Bounds
+--       Defined in all types and subtypes. Set only for an array subtype
+--       which is constrained but nevertheless requires objects of this
+--       subtype to be allocated with their bounds. This flag is used by
+--       the back end to determine whether the bounds must be constructed.
+
 --    Is_Constr_Subt_For_U_Nominal
 --       Defined in all types and subtypes. Set only for the constructed
 --       subtype of an object whose nominal subtype is unconstrained. Note
 --       that the constructed subtype itself will be constrained.
-
---    Is_Constr_Subt_For_UN_Aliased
---       Defined in all types and subtypes. This flag can be set only if
---       Is_Constr_Subt_For_U_Nominal is also set. It indicates that in
---       addition the object concerned is aliased. This flag is used by
---       the backend to determine whether a template must be constructed.
 
 --    Is_Constructor
 --       Defined in function and procedure entities. Set if a pragma
@@ -2727,19 +2727,17 @@ package Einfo is
 --       instantiation of a child unit, and whose entities are not visible
 --       during analysis of the instance.
 
+--    Is_Ignored_For_Finalization
+--       Defined in constants and variables. Set when an object must be ignored
+--       by the general finalization mechanism because its cleanup actions are
+--       already accounted for.
+
 --    Is_Ignored_Ghost_Entity
 --       Applies to all entities. Set for abstract states, [generic] packages,
 --       [generic] subprograms, components, discriminants, formal parameters,
 --       objects, package bodies, subprogram bodies, and [sub]types subject to
 --       pragma Ghost or inherit "ghostness" from an enclosing construct, and
 --       subject to Assertion_Policy Ghost => Ignore.
-
---    Is_Ignored_Transient
---       Defined in constants, loop parameters of generalized iterators, and
---       variables. Set when a transient object must be processed by one of
---       the transient finalization mechanisms. Once marked, a transient is
---       intentionally ignored by the general finalization mechanism because
---       its clean up actions are context specific.
 
 --    Is_Immediately_Visible
 --       Defined in all entities. Set if entity is immediately visible, i.e.
@@ -4518,11 +4516,11 @@ package Einfo is
 --    Status_Flag_Or_Transient_Decl
 --       Defined in constant, loop, and variable entities. Applies to objects
 --       that require special treatment by the finalization machinery, such as
---       extended return results, IF and CASE expression results, and objects
+--       extended return objects, conditional expression results, and objects
 --       inside N_Expression_With_Actions nodes. The attribute contains the
---       entity of a flag which specifies particular behavior over a region of
---       code or the declaration of a "hook" object.
---       In which case is it a flag, or a hook object???
+--       entity of a flag which specifies a particular behavior over a region
+--       of the extended return for the return objects, or the declaration of a
+--       hook object for conditional expressions and N_Expression_With_Actions.
 
 --    Storage_Size_Variable [implementation base type only]
 --       Defined in access types and task type entities. This flag is set
@@ -5060,8 +5058,8 @@ package Einfo is
    --    Is_Abstract_Type
    --    Is_Asynchronous
    --    Is_Atomic
+   --    Is_Constr_Array_Subt_With_Bounds
    --    Is_Constr_Subt_For_U_Nominal
-   --    Is_Constr_Subt_For_UN_Aliased
    --    Is_Controlled_Active                 (base type only)
    --    Is_Eliminated
    --    Is_Frozen
@@ -5325,7 +5323,7 @@ package Einfo is
    --    Is_Elaboration_Warnings_OK_Id         (constants only)
    --    Is_Eliminated
    --    Is_Finalized_Transient
-   --    Is_Ignored_Transient
+   --    Is_Ignored_For_Finalization
    --    Is_Independent
    --    Is_Return_Object
    --    Is_True_Constant
@@ -6213,7 +6211,7 @@ package Einfo is
    --    Is_Elaboration_Warnings_OK_Id
    --    Is_Eliminated
    --    Is_Finalized_Transient
-   --    Is_Ignored_Transient
+   --    Is_Ignored_For_Finalization
    --    Is_Independent
    --    Is_Return_Object
    --    Is_Safe_To_Reevaluate

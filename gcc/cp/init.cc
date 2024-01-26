@@ -1,5 +1,5 @@
 /* Handle initialization things in -*- C++ -*-
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -621,8 +621,7 @@ maybe_instantiate_nsdmi_init (tree member, tsubst_flags_t complain)
 	  start_lambda_scope (member);
 
 	  /* Do deferred instantiation of the NSDMI.  */
-	  init = tsubst_copy_and_build (init, DECL_TI_ARGS (member),
-					complain, member);
+	  init = tsubst_expr (init, DECL_TI_ARGS (member), complain, member);
 	  init = digest_nsdmi_init (member, init, complain);
 
 	  finish_lambda_scope ();
@@ -867,7 +866,7 @@ find_uninit_fields_r (tree *tp, int *walk_subtrees, void *data)
   else if (code == CALL_EXPR)
     {
       tree fn = get_callee_fndecl (init);
-      if (fn && DECL_NONSTATIC_MEMBER_FUNCTION_P (fn))
+      if (fn && DECL_IOBJ_MEMBER_FUNCTION_P (fn))
 	{
 	  tree op = CALL_EXPR_ARG (init, 0);
 	  if (TREE_CODE (op) == ADDR_EXPR)
@@ -2478,7 +2477,7 @@ build_offset_ref (tree type, tree member, bool address_p,
 
 	   -- in a mem-initializer for a constructor for that class or for
 	   a class derived from that class (_class.base.init_).  */
-      if (DECL_NONSTATIC_MEMBER_FUNCTION_P (member))
+      if (DECL_OBJECT_MEMBER_FUNCTION_P (member))
 	{
 	  /* Build a representation of the qualified name suitable
 	     for use as the operand to "&" -- even though the "&" is
@@ -3262,7 +3261,7 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
       max_outer_nelts = wi::udiv_trunc (max_size, inner_size);
       max_outer_nelts_tree = wide_int_to_tree (sizetype, max_outer_nelts);
 
-      size = size_binop (MULT_EXPR, size, fold_convert (sizetype, nelts));
+      size = build2 (MULT_EXPR, sizetype, size, nelts);
 
       if (TREE_CODE (cst_outer_nelts) == INTEGER_CST)
 	{
@@ -3294,9 +3293,9 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
 	    - wi::clz (max_outer_nelts);
 	  max_outer_nelts = (max_outer_nelts >> shift) << shift;
 
-          outer_nelts_check = fold_build2 (LE_EXPR, boolean_type_node,
-					   outer_nelts,
-					   max_outer_nelts_tree);
+	  outer_nelts_check = build2 (LE_EXPR, boolean_type_node,
+				      outer_nelts,
+				      max_outer_nelts_tree);
 	}
     }
 
@@ -3345,7 +3344,7 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
       /* Use a class-specific operator new.  */
       /* If a cookie is required, add some extra space.  */
       if (array_p && TYPE_VEC_NEW_USES_COOKIE (elt_type))
-	size = size_binop (PLUS_EXPR, size, cookie_size);
+	size = build2 (PLUS_EXPR, sizetype, size, cookie_size);
       else
 	{
 	  cookie_size = NULL_TREE;
@@ -3359,8 +3358,8 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
       if (cxx_dialect >= cxx11 && flag_exceptions)
 	errval = throw_bad_array_new_length ();
       if (outer_nelts_check != NULL_TREE)
-	size = fold_build3 (COND_EXPR, sizetype, outer_nelts_check,
-			    size, errval);
+	size = build3 (COND_EXPR, sizetype, outer_nelts_check, size, errval);
+      size = cp_fully_fold (size);
       /* Create the argument list.  */
       vec_safe_insert (*placement, 0, size);
       /* Do name-lookup to find the appropriate operator.  */
@@ -3416,6 +3415,7 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
 	    outer_nelts_check = NULL_TREE;
 	}
 
+      size = cp_fully_fold (size);
       /* If size is zero e.g. due to type having zero size, try to
 	 preserve outer_nelts for constant expression evaluation
 	 purposes.  */
@@ -3920,11 +3920,6 @@ build_new (location_t loc, vec<tree, va_gc> **placement, tree type,
 		(**init)[i] = copy_node (e);
 	    }
 	}
-
-      make_args_non_dependent (*placement);
-      if (nelts)
-	nelts = build_non_dependent_expr (nelts);
-      make_args_non_dependent (*init);
     }
 
   if (nelts)
@@ -4160,7 +4155,8 @@ build_vec_delete_1 (location_t loc, tree base, tree maxindex, tree type,
 
   /* If one destructor throws, keep trying to clean up the rest, unless we're
      already in a build_vec_init cleanup.  */
-  if (flag_exceptions && !in_cleanup && !expr_noexcept_p (tmp, tf_none))
+  if (flag_exceptions && !in_cleanup && !processing_template_decl
+      && !expr_noexcept_p (tmp, tf_none))
     {
       loop = build2 (TRY_CATCH_EXPR, void_type_node, loop,
 		     unshare_expr (loop));
@@ -4868,7 +4864,9 @@ build_vec_init (tree base, tree maxindex, tree init,
 	 But for non-classes, that's the same as value-initialization.  */
       if (empty_list)
 	{
-	  if (cxx_dialect >= cxx11 && AGGREGATE_TYPE_P (type))
+	  if (cxx_dialect >= cxx11
+	      && (CLASS_TYPE_P (type)
+		  || TREE_CODE (type) == ARRAY_TYPE))
 	    {
 	      init = build_constructor (init_list_type_node, NULL);
 	    }

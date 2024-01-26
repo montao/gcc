@@ -1,5 +1,5 @@
 /* Induction variable canonicalization and loop peeling.
-   Copyright (C) 2004-2023 Free Software Foundation, Inc.
+   Copyright (C) 2004-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -63,6 +63,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-cfgcleanup.h"
 #include "builtins.h"
 #include "tree-ssa-sccvn.h"
+#include "tree-vectorizer.h" /* For find_loop_location */
 #include "dbgcnt.h"
 
 /* Specifies types of loops that may be unrolled.  */
@@ -166,6 +167,11 @@ constant_after_peeling (tree op, gimple *stmt, class loop *loop)
   if (CONSTANT_CLASS_P (op))
     return true;
 
+  /* Get at the actual SSA operand.  */
+  if (handled_component_p (op)
+      && TREE_CODE (TREE_OPERAND (op, 0)) == SSA_NAME)
+    op = TREE_OPERAND (op, 0);
+
   /* We can still fold accesses to constant arrays when index is known.  */
   if (TREE_CODE (op) != SSA_NAME)
     {
@@ -198,7 +204,46 @@ constant_after_peeling (tree op, gimple *stmt, class loop *loop)
   tree ev = analyze_scalar_evolution (loop, op);
   if (chrec_contains_undetermined (ev)
       || chrec_contains_symbols (ev))
-    return false;
+    {
+      if (ANY_INTEGRAL_TYPE_P (TREE_TYPE (op)))
+	{
+	  gassign *ass = nullptr;
+	  gphi *phi = nullptr;
+	  if (is_a <gassign *> (SSA_NAME_DEF_STMT (op)))
+	    {
+	      ass = as_a <gassign *> (SSA_NAME_DEF_STMT (op));
+	      if (TREE_CODE (gimple_assign_rhs1 (ass)) == SSA_NAME)
+		phi = dyn_cast <gphi *>
+			(SSA_NAME_DEF_STMT (gimple_assign_rhs1  (ass)));
+	    }
+	  else if (is_a <gphi *> (SSA_NAME_DEF_STMT (op)))
+	    {
+	      phi = as_a <gphi *> (SSA_NAME_DEF_STMT (op));
+	      if (gimple_bb (phi) == loop->header)
+		{
+		  tree def = gimple_phi_arg_def_from_edge
+		    (phi, loop_latch_edge (loop));
+		  if (TREE_CODE (def) == SSA_NAME
+		      && is_a <gassign *> (SSA_NAME_DEF_STMT (def)))
+		    ass = as_a <gassign *> (SSA_NAME_DEF_STMT (def));
+		}
+	    }
+	  if (ass && phi)
+	    {
+	      tree rhs1 = gimple_assign_rhs1 (ass);
+	      if (gimple_assign_rhs_class (ass) == GIMPLE_BINARY_RHS
+		  && CONSTANT_CLASS_P (gimple_assign_rhs2 (ass))
+		  && rhs1 == gimple_phi_result (phi)
+		  && gimple_bb (phi) == loop->header
+		  && (gimple_phi_arg_def_from_edge (phi, loop_latch_edge (loop))
+		      == gimple_assign_lhs (ass))
+		  && (CONSTANT_CLASS_P (gimple_phi_arg_def_from_edge
+					 (phi, loop_preheader_edge (loop)))))
+		return true;
+	    }
+	}
+      return false;
+    }
   return true;
 }
 
@@ -577,10 +622,11 @@ remove_redundant_iv_tests (class loop *loop)
 	      || !integer_zerop (niter.may_be_zero)
 	      || !niter.niter
 	      || TREE_CODE (niter.niter) != INTEGER_CST
-	      || !wi::ltu_p (loop->nb_iterations_upper_bound,
+	      || !wi::ltu_p (widest_int::from (loop->nb_iterations_upper_bound,
+					       SIGNED),
 			     wi::to_widest (niter.niter)))
 	    continue;
-	  
+
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    {
 	      fprintf (dump_file, "Removed pointless exit: ");
@@ -621,6 +667,7 @@ static bitmap peeled_loops;
 void
 unloop_loops (vec<class loop *> &loops_to_unloop,
 	      vec<int> &loops_to_unloop_nunroll,
+	      vec<edge> &edges_to_remove,
 	      bitmap loop_closed_ssa_invalidated,
 	      bool *irred_invalidated)
 {
@@ -1186,7 +1233,6 @@ canonicalize_loop_induction_variables (class loop *loop,
   tree niter;
   HOST_WIDE_INT maxiter;
   bool modified = false;
-  dump_user_location_t locus;
   class tree_niter_desc niter_desc;
   bool may_be_zero = false;
 
@@ -1200,9 +1246,7 @@ canonicalize_loop_induction_variables (class loop *loop,
       may_be_zero
 	= niter_desc.may_be_zero && !integer_zerop (niter_desc.may_be_zero);
     }
-  if (TREE_CODE (niter) == INTEGER_CST)
-    locus = last_nondebug_stmt (exit->src);
-  else
+  if (TREE_CODE (niter) != INTEGER_CST)
     {
       /* For non-constant niter fold may_be_zero into niter again.  */
       if (may_be_zero)
@@ -1226,9 +1270,6 @@ canonicalize_loop_induction_variables (class loop *loop,
 	  && (chrec_contains_undetermined (niter)
 	      || TREE_CODE (niter) != INTEGER_CST))
 	niter = find_loop_niter_by_eval (loop, &exit);
-
-      if (exit)
-	locus = last_nondebug_stmt (exit->src);
 
       if (TREE_CODE (niter) != INTEGER_CST)
 	exit = NULL;
@@ -1271,6 +1312,7 @@ canonicalize_loop_induction_variables (class loop *loop,
      populates the loop bounds.  */
   modified |= remove_redundant_iv_tests (loop);
 
+  dump_user_location_t locus = find_loop_location (loop);
   if (try_unroll_loop_completely (loop, exit, niter, may_be_zero, ul,
 				  maxiter, locus, allow_peel))
     return true;
@@ -1320,7 +1362,7 @@ canonicalize_induction_variables (void)
     }
   gcc_assert (!need_ssa_update_p (cfun));
 
-  unloop_loops (loops_to_unloop, loops_to_unloop_nunroll,
+  unloop_loops (loops_to_unloop, loops_to_unloop_nunroll, edges_to_remove,
 		loop_closed_ssa_invalidated, &irred_invalidated);
   loops_to_unloop.release ();
   loops_to_unloop_nunroll.release ();
@@ -1470,9 +1512,8 @@ tree_unroll_loops_completely (bool may_increase_size, bool unroll_outer)
 	{
 	  unsigned i;
 
-	  unloop_loops (loops_to_unloop,
-			loops_to_unloop_nunroll,
-			loop_closed_ssa_invalidated,
+	  unloop_loops (loops_to_unloop, loops_to_unloop_nunroll,
+			edges_to_remove, loop_closed_ssa_invalidated,
 			&irred_invalidated);
 	  loops_to_unloop.release ();
 	  loops_to_unloop_nunroll.release ();

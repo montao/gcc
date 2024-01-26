@@ -1,5 +1,5 @@
 /* Gimple ranger SSA cache implementation.
-   Copyright (C) 2017-2023 Free Software Foundation, Inc.
+   Copyright (C) 2017-2024 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>.
 
 This file is part of GCC.
@@ -390,7 +390,7 @@ block_range_cache::set_bb_range (tree name, const_basic_block bb,
 {
   unsigned v = SSA_NAME_VERSION (name);
   if (v >= m_ssa_ranges.length ())
-    m_ssa_ranges.safe_grow_cleared (num_ssa_names + 1);
+    m_ssa_ranges.safe_grow_cleared (num_ssa_names);
 
   if (!m_ssa_ranges[v])
     {
@@ -465,7 +465,7 @@ void
 block_range_cache::dump (FILE *f)
 {
   unsigned x;
-  for (x = 0; x < m_ssa_ranges.length (); ++x)
+  for (x = 1; x < m_ssa_ranges.length (); ++x)
     {
       if (m_ssa_ranges[x])
 	{
@@ -487,11 +487,14 @@ block_range_cache::dump (FILE *f, basic_block bb, bool print_varying)
   bool summarize_varying = false;
   for (x = 1; x < m_ssa_ranges.length (); ++x)
     {
+      if (!m_ssa_ranges[x])
+	continue;
+
       if (!gimple_range_ssa_p (ssa_name (x)))
 	continue;
 
       Value_Range r (TREE_TYPE (ssa_name (x)));
-      if (m_ssa_ranges[x] && m_ssa_ranges[x]->get_bb_range (r, bb))
+      if (m_ssa_ranges[x]->get_bb_range (r, bb))
 	{
 	  if (!print_varying && r.varying_p ())
 	    {
@@ -508,13 +511,16 @@ block_range_cache::dump (FILE *f, basic_block bb, bool print_varying)
   if (summarize_varying)
     {
       fprintf (f, "VARYING_P on entry : ");
-      for (x = 1; x < num_ssa_names; ++x)
+      for (x = 1; x < m_ssa_ranges.length (); ++x)
 	{
+	  if (!m_ssa_ranges[x])
+	    continue;
+
 	  if (!gimple_range_ssa_p (ssa_name (x)))
 	    continue;
 
 	  Value_Range r (TREE_TYPE (ssa_name (x)));
-	  if (m_ssa_ranges[x] && m_ssa_ranges[x]->get_bb_range (r, bb))
+	  if (m_ssa_ranges[x]->get_bb_range (r, bb))
 	    {
 	      if (r.varying_p ())
 		{
@@ -606,7 +612,7 @@ ssa_cache::set_range (tree name, const vrange &r)
 }
 
 // If NAME has a range, intersect it with R, otherwise set it to R.
-// Return TRUE if there was already a range set, otherwise false.
+// Return TRUE if the range is new or changes.
 
 bool
 ssa_cache::merge_range (tree name, const vrange &r)
@@ -616,19 +622,23 @@ ssa_cache::merge_range (tree name, const vrange &r)
     m_tab.safe_grow_cleared (num_ssa_names + 1);
 
   vrange_storage *m = m_tab[v];
-  if (m)
+  // Check if this is a new value.
+  if (!m)
+    m_tab[v] = m_range_allocator->clone (r);
+  else
     {
       Value_Range curr (TREE_TYPE (name));
       m->get_vrange (curr, TREE_TYPE (name));
-      curr.intersect (r);
+      // If there is no change, return false.
+      if (!curr.intersect (r))
+	return false;
+
       if (m->fits_p (curr))
 	m->set_vrange (curr);
       else
 	m_tab[v] = m_range_allocator->clone (curr);
     }
-  else
-    m_tab[v] = m_range_allocator->clone (r);
-  return m != NULL;
+  return true;
 }
 
 // Set the range for NAME to R in the ssa cache.
@@ -656,27 +666,14 @@ ssa_cache::clear ()
 void
 ssa_cache::dump (FILE *f)
 {
-  /* Cleared after the table header has been printed.  */
-  bool print_header = true;
   for (unsigned x = 1; x < num_ssa_names; x++)
     {
       if (!gimple_range_ssa_p (ssa_name (x)))
 	continue;
       Value_Range r (TREE_TYPE (ssa_name (x)));
-      // Invoke dump_range_query which is a private virtual version of
-      // get_range.   This avoids performance impacts on general queries,
-      // but allows sharing of the dump routine.
+      // Dump all non-varying ranges.
       if (get_range (r, ssa_name (x)) && !r.varying_p ())
 	{
-	  if (print_header)
-	    {
-	      /* Print the header only when there's something else
-		 to print below.  */
-	      fprintf (f, "Non-varying global ranges:\n");
-	      fprintf (f, "=========================:\n");
-	      print_header = false;
-	    }
-
 	  print_generic_expr (f, ssa_name (x), TDF_NONE);
 	  fprintf (f, "  : ");
 	  r.dump (f);
@@ -684,8 +681,6 @@ ssa_cache::dump (FILE *f)
 	}
     }
 
-  if (!print_header)
-    fputc ('\n', f);
 }
 
 // Return true if NAME has an active range in the cache.
@@ -716,7 +711,7 @@ ssa_lazy_cache::set_range (tree name, const vrange &r)
 }
 
 // If NAME has a range, intersect it with R, otherwise set it to R.
-// Return TRUE if there was already a range set, otherwise false.
+// Return TRUE if the range is new or changes.
 
 bool
 ssa_lazy_cache::merge_range (tree name, const vrange &r)
@@ -731,7 +726,7 @@ ssa_lazy_cache::merge_range (tree name, const vrange &r)
   if (v >= m_tab.length ())
     m_tab.safe_grow (num_ssa_names + 1);
   m_tab[v] = m_range_allocator->clone (r);
-  return false;
+  return true;
 }
 
 // Return TRUE if NAME has a range, and return it in R.
@@ -996,6 +991,8 @@ ranger_cache::~ranger_cache ()
 void
 ranger_cache::dump (FILE *f)
 {
+  fprintf (f, "Non-varying global ranges:\n");
+  fprintf (f, "=========================:\n");
   m_globals.dump (f);
   fprintf (f, "\n");
 }
@@ -1479,6 +1476,9 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
 		{
 		  if (rel != VREL_EQ)
 		    range_cast (equiv_range, type);
+		  else
+		    adjust_equivalence_range (equiv_range);
+
 		  if (block_result.intersect (equiv_range))
 		    {
 		      if (DEBUG_RANGE_CACHE)

@@ -1,6 +1,6 @@
 (* SymbolTable.mod provides access to the symbol table.
 
-Copyright (C) 2001-2023 Free Software Foundation, Inc.
+Copyright (C) 2001-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -32,7 +32,7 @@ FROM Indexing IMPORT InitIndex, InBounds, LowIndice, HighIndice, PutIndice, GetI
 FROM Sets IMPORT Set, InitSet, IncludeElementIntoSet, IsElementInSet ;
 FROM m2linemap IMPORT location_t ;
 
-FROM M2Options IMPORT Pedantic, ExtendedOpaque, DebugFunctionLineNumbers, ScaffoldDynamic ;
+FROM M2Options IMPORT Pedantic, ExtendedOpaque, DebugFunctionLineNumbers, ScaffoldDynamic, DebugBuiltins ;
 
 FROM M2LexBuf IMPORT UnknownTokenNo, TokenToLineNo,
                      FindFileNameFromToken, TokenToLocation ;
@@ -76,10 +76,11 @@ FROM M2Base IMPORT MixTypes, InitBase, Char, Integer, LongReal,
                    Cardinal, LongInt, LongCard, ZType, RType ;
 
 FROM M2System IMPORT Address ;
-FROM m2decl IMPORT ConstantStringExceedsZType ;
+FROM m2expr IMPORT OverflowZType ;
 FROM m2tree IMPORT Tree ;
 FROM m2linemap IMPORT BuiltinsLocation ;
 FROM StrLib IMPORT StrEqual ;
+FROM m2builtins IMPORT BuiltinExists ;
 
 FROM M2Comp IMPORT CompilingDefinitionModule,
                    CompilingImplementationModule ;
@@ -279,6 +280,7 @@ TYPE
                     Size        : PtrToValue ; (* Size of subrange type.      *)
                     Type        : CARDINAL ;   (* Index to type symbol for    *)
                                                (* the type of subrange.       *)
+                    Align       : CARDINAL ;   (* Alignment for this type.    *)
                     ConstLitTree: SymbolTree ; (* constants of this type.     *)
                     packedInfo  : PackedInfo ; (* the equivalent packed type  *)
                     oafamily    : CARDINAL ;   (* The oafamily for this sym   *)
@@ -292,7 +294,8 @@ TYPE
                                               (* of enumeration.             *)
                    NoOfElements: CARDINAL ;   (* No elements in enumeration  *)
                    LocalSymbols: SymbolTree ; (* Contains all enumeration    *)
-                                              (* fields.                     *)
+                                              (* fields (alphabetical).      *)
+                   ListOfFields: List ;       (* Ordered as declared.        *)
                    Size        : PtrToValue ; (* Size at runtime of symbol.  *)
                    packedInfo  : PackedInfo ; (* the equivalent packed type  *)
                    oafamily    : CARDINAL ;   (* The oafamily for this sym   *)
@@ -4644,6 +4647,7 @@ BEGIN
                                            (* enumeration type.      *)
             Size := InitValue () ;         (* Size at runtime of sym *)
             InitTree (LocalSymbols) ;      (* Enumeration fields.    *)
+            InitList (ListOfFields) ;      (* Ordered as declared.   *)
             InitPacked (packedInfo) ;      (* not packed and no      *)
                                            (* equivalent (yet).      *)
             oafamily := oaf ;              (* The open array family  *)
@@ -5369,6 +5373,7 @@ BEGIN
 
       ConstStringSym: ConstString.Length := LengthKey (contents) ;
                       ConstString.Contents := contents ;
+                      InitWhereDeclaredTok (tok, ConstString.At) ;
                       InitWhereFirstUsedTok (tok, ConstString.At) |
 
       ConstVarSym   : (* ok altering this to ConstString *)
@@ -5786,6 +5791,30 @@ END IsProcedureBuiltin ;
 
 
 (*
+   CanUseBuiltin - returns TRUE if the procedure, Sym, can be
+                   inlined via a builtin function.
+*)
+
+PROCEDURE CanUseBuiltin (Sym: CARDINAL) : BOOLEAN ;
+BEGIN
+   RETURN( (NOT DebugBuiltins) AND
+           (BuiltinExists (KeyToCharStar (GetProcedureBuiltin (Sym))) OR
+            BuiltinExists (KeyToCharStar (GetSymName (Sym)))) )
+END CanUseBuiltin ;
+
+
+(*
+   IsProcedureBuiltinAvailable - return TRUE if procedure is available as a builtin
+                                 for the target architecture.
+*)
+
+PROCEDURE IsProcedureBuiltinAvailable (procedure: CARDINAL) : BOOLEAN ;
+BEGIN
+   RETURN IsProcedureBuiltin (procedure) AND CanUseBuiltin (procedure)
+END IsProcedureBuiltinAvailable ;
+
+
+(*
    PutProcedureInline - determines that procedure, Sym, has been requested to be inlined.
 *)
 
@@ -6125,6 +6154,7 @@ BEGIN
                                         (* ConstExpression.              *)
             Type := NulSym ;            (* Index to a type. Determines   *)
                                         (* the type of subrange.         *)
+            Align := NulSym ;           (* The alignment of this type.   *)
             InitPacked(packedInfo) ;    (* not packed and no equivalent  *)
             InitTree(ConstLitTree) ;    (* constants of this type.       *)
             Size := InitValue() ;       (* Size determines the type size *)
@@ -6559,12 +6589,12 @@ BEGIN
       loc := TokenToLocation (tok) ;
       CASE char (s, -1) OF
 
-      'H':  overflow := ConstantStringExceedsZType (loc, string (s), 16, issueError) |
-      'B':  overflow := ConstantStringExceedsZType (loc, string (s), 8, issueError) |
-      'A':  overflow := ConstantStringExceedsZType (loc, string (s), 2, issueError)
+      'H':  overflow := OverflowZType (loc, string (s), 16, issueError) |
+      'B':  overflow := OverflowZType (loc, string (s), 8, issueError) |
+      'A':  overflow := OverflowZType (loc, string (s), 2, issueError)
 
       ELSE
-         overflow := ConstantStringExceedsZType (loc, string (s), 10, issueError)
+         overflow := OverflowZType (loc, string (s), 10, issueError)
       END ;
       s := KillString (s) ;
       RETURN ZType
@@ -6636,8 +6666,9 @@ END GetNthFromComponent ;
 
 
 (*
-   GetNth - returns the n th symbol in the list of father Sym.
-            Sym may be a Module, DefImp, Procedure or Record symbol.
+   GetNth - returns the n th symbol in the list associated with the scope
+            of Sym.  Sym may be a Module, DefImp, Procedure, Record or
+            Enumeration symbol.
 *)
 
 PROCEDURE GetNth (Sym: CARDINAL; n: CARDINAL) : CARDINAL ;
@@ -6649,14 +6680,15 @@ BEGIN
    WITH pSym^ DO
       CASE SymbolType OF
 
-      RecordSym       : i := GetItemFromList(Record.ListOfSons, n) |
-      VarientSym      : i := GetItemFromList(Varient.ListOfSons, n) |
-      VarientFieldSym : i := GetItemFromList(VarientField.ListOfSons, n) |
-      ProcedureSym    : i := GetItemFromList(Procedure.ListOfVars, n) |
-      DefImpSym       : i := GetItemFromList(DefImp.ListOfVars, n) |
-      ModuleSym       : i := GetItemFromList(Module.ListOfVars, n) |
-      TupleSym        : i := GetFromIndex(Tuple.list, n) |
-      VarSym          : i := GetNthFromComponent(Sym, n)
+      RecordSym       : i := GetItemFromList (Record.ListOfSons, n) |
+      VarientSym      : i := GetItemFromList (Varient.ListOfSons, n) |
+      VarientFieldSym : i := GetItemFromList (VarientField.ListOfSons, n) |
+      ProcedureSym    : i := GetItemFromList (Procedure.ListOfVars, n) |
+      DefImpSym       : i := GetItemFromList (DefImp.ListOfVars, n) |
+      ModuleSym       : i := GetItemFromList (Module.ListOfVars, n) |
+      TupleSym        : i := GetFromIndex (Tuple.list, n) |
+      VarSym          : i := GetNthFromComponent (Sym, n) |
+      EnumerationSym  : i := GetItemFromList (Enumeration.ListOfFields, n)
 
       ELSE
          InternalError ('cannot GetNth from this symbol')
@@ -7528,7 +7560,8 @@ BEGIN
                                                     FieldName,
                                                     GetDeclaredMod(GetSymKey(LocalSymbols, FieldName)))
                             ELSE
-                               PutSymKey(LocalSymbols, FieldName, Field)
+                               PutSymKey(LocalSymbols, FieldName, Field) ;
+                               IncludeItemIntoList (ListOfFields, Field)
                             END
                          END
 
@@ -7656,7 +7689,9 @@ BEGIN
          PartialUnboundedSym : n := GetSymName(PartialUnbounded.Type) |
          TupleSym            : n := NulName |
          GnuAsmSym           : n := NulName |
-         InterfaceSym        : n := NulName
+         InterfaceSym        : n := NulName |
+         ImportSym           : n := NulName |
+         ImportStatementSym  : n := NulName
 
          ELSE
             InternalError ('unexpected symbol type')
@@ -12333,6 +12368,7 @@ VAR
    pSym: PtrToSymbol ;
    s   : CARDINAL ;
 BEGIN
+   s := NulSym ;
    IF IsModule (sym) OR IsDefImp (sym)
    THEN
       RETURN( CollectSymbolFrom (tok, sym, n) )
@@ -12355,10 +12391,9 @@ BEGIN
             END
          END ;
          s := CollectUnknown (tok, GetScope (sym), n)
-      END ;
-      RETURN( s )
+      END
    END ;
-   InternalError ('expecting sym should be a module, defimp or procedure symbol')
+   RETURN( s )
 END CollectUnknown ;
 
 
@@ -13662,7 +13697,9 @@ END ForeachModuleDo ;
 
 (*
    ForeachFieldEnumerationDo - for each field in enumeration, Sym,
-                               do procedure, P.
+                               do procedure, P.  Each call to P contains
+                               an enumeration field, the order is alphabetical.
+                               Use ForeachLocalSymDo for declaration order.
 *)
 
 PROCEDURE ForeachFieldEnumerationDo (Sym: CARDINAL; P: PerformOperation) ;
@@ -13673,7 +13710,7 @@ BEGIN
    WITH pSym^ DO
       CASE SymbolType OF
 
-      EnumerationSym: ForeachNodeDo( Enumeration.LocalSymbols, P)
+      EnumerationSym: ForeachNodeDo (Enumeration.LocalSymbols, P)
 
       ELSE
          InternalError ('expecting Enumeration symbol')
@@ -14568,10 +14605,11 @@ BEGIN
       RecordFieldSym:  RecordField.Align := align |
       TypeSym       :  Type.Align := align |
       ArraySym      :  Array.Align := align |
-      PointerSym    :  Pointer.Align := align
+      PointerSym    :  Pointer.Align := align |
+      SubrangeSym   :  Subrange.Align := align
 
       ELSE
-         InternalError ('expecting record, field, pointer, type or an array symbol')
+         InternalError ('expecting record, field, pointer, type, subrange or an array symbol')
       END
    END
 END PutAlignment ;
@@ -14596,10 +14634,11 @@ BEGIN
       ArraySym       :  RETURN( Array.Align ) |
       PointerSym     :  RETURN( Pointer.Align ) |
       VarientFieldSym:  RETURN( GetAlignment(VarientField.Parent) ) |
-      VarientSym     :  RETURN( GetAlignment(Varient.Parent) )
+      VarientSym     :  RETURN( GetAlignment(Varient.Parent) ) |
+      SubrangeSym    :  RETURN( Subrange.Align )
 
       ELSE
-         InternalError ('expecting record, field, pointer, type or an array symbol')
+         InternalError ('expecting record, field, pointer, type, subrange or an array symbol')
       END
    END
 END GetAlignment ;

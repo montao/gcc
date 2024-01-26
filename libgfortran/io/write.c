@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2023 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2024 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    Namelist output contributed by Paul Thomas
    F2003 I/O support contributed by Jerry DeLisle
@@ -1179,6 +1179,15 @@ xtoa_big (const char *s, char *buffer, int len, GFC_UINTEGER_LARGEST *n)
   uint8_t h, l;
   int i;
 
+  /* write_z, which calls xtoa_big, is called from transfer.c,
+     formatted_transfer_scalar_write.  There it is passed the kind as
+     'len' argument, which means a maximum of 16.  The buffer is large
+     enough, but the compiler does not know that, so shut up the
+     warning here.  */
+
+  if (len > 16)
+    __builtin_unreachable ();
+
   q = buffer;
 
   if (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
@@ -1212,15 +1221,7 @@ xtoa_big (const char *s, char *buffer, int len, GFC_UINTEGER_LARGEST *n)
 	}
     }
 
-  /* write_z, which calls xtoa_big, is called from transfer.c,
-     formatted_transfer_scalar_write.  There it is passed the kind as
-     argument, which means a maximum of 16.  The buffer is large
-     enough, but the compiler does not know that, so shut up the
-     warning here.  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
   *q = '\0';
-#pragma GCC diagnostic pop
 
   if (*n == 0)
     return "0";
@@ -1951,14 +1952,14 @@ list_formatted_write_scalar (st_parameter_dt *dtp, bt type, void *p, int kind,
       break;
     case BT_CLASS:
       {
-	  int unit = dtp->u.p.current_unit->unit_number;
+	  GFC_INTEGER_4 unit = dtp->u.p.current_unit->unit_number;
 	  char iotype[] = "LISTDIRECTED";
 	  gfc_charlen_type iotype_len = 12;
 	  char tmp_iomsg[IOMSG_LEN] = "";
 	  char *child_iomsg;
 	  gfc_charlen_type child_iomsg_len;
-	  int noiostat;
-	  int *child_iostat = NULL;
+	  GFC_INTEGER_4 noiostat;
+	  GFC_INTEGER_4 *child_iostat = NULL;
 	  gfc_full_array_i4 vlist;
 
 	  GFC_DESCRIPTOR_DATA(&vlist) = NULL;
@@ -1966,8 +1967,8 @@ list_formatted_write_scalar (st_parameter_dt *dtp, bt type, void *p, int kind,
 
 	  /* Set iostat, intent(out).  */
 	  noiostat = 0;
-	  child_iostat = (dtp->common.flags & IOPARM_HAS_IOSTAT) ?
-			  dtp->common.iostat : &noiostat;
+	  child_iostat = ((dtp->common.flags & IOPARM_HAS_IOSTAT)
+			  ? dtp->common.iostat : &noiostat);
 
 	  /* Set iomsge, intent(inout).  */
 	  if (dtp->common.flags & IOPARM_HAS_IOMSG)
@@ -2276,14 +2277,14 @@ nml_write_obj (st_parameter_dt *dtp, namelist_info *obj, index_type offset,
 	      /* First ext_name => get length of all possible components  */
 	      if (obj->dtio_sub != NULL)
 		{
-		  int unit = dtp->u.p.current_unit->unit_number;
+		  GFC_INTEGER_4 unit = dtp->u.p.current_unit->unit_number;
 		  char iotype[] = "NAMELIST";
 		  gfc_charlen_type iotype_len = 8;
 		  char tmp_iomsg[IOMSG_LEN] = "";
 		  char *child_iomsg;
 		  gfc_charlen_type child_iomsg_len;
-		  int noiostat;
-		  int *child_iostat = NULL;
+		  GFC_INTEGER_4 noiostat;
+		  GFC_INTEGER_4 *child_iostat = NULL;
 		  gfc_full_array_i4 vlist;
 		  formatted_dtio dtio_ptr = (formatted_dtio)obj->dtio_sub;
 
@@ -2291,8 +2292,8 @@ nml_write_obj (st_parameter_dt *dtp, namelist_info *obj, index_type offset,
 
 		  /* Set iostat, intent(out).  */
 		  noiostat = 0;
-		  child_iostat = (dtp->common.flags & IOPARM_HAS_IOSTAT) ?
-				  dtp->common.iostat : &noiostat;
+		  child_iostat = ((dtp->common.flags & IOPARM_HAS_IOSTAT)
+				  ? dtp->common.iostat : &noiostat);
 
 		  /* Set iomsg, intent(inout).  */
 		  if (dtp->common.flags & IOPARM_HAS_IOMSG)
@@ -2465,6 +2466,8 @@ namelist_write (st_parameter_dt *dtp)
 	dtp->u.p.nml_delim = '\0';
     }
 
+  if (is_internal_unit (dtp))
+    write_character (dtp, " ", 1, 1, NODELIM);
   write_character (dtp, "&", 1, 1, NODELIM);
 
   /* Write namelist name in upper case - f95 std.  */

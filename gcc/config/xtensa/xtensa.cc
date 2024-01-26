@@ -1,5 +1,5 @@
 /* Subroutines for insn-output.cc for Tensilica's Xtensa architecture.
-   Copyright (C) 2001-2023 Free Software Foundation, Inc.
+   Copyright (C) 2001-2024 Free Software Foundation, Inc.
    Contributed by Bob Wilson (bwilson@tensilica.com) at Tensilica.
 
 This file is part of GCC.
@@ -123,7 +123,8 @@ static bool xtensa_mode_dependent_address_p (const_rtx, addr_space_t);
 static bool xtensa_return_in_msb (const_tree);
 static void printx (FILE *, signed int);
 static rtx xtensa_builtin_saveregs (void);
-static bool xtensa_legitimate_address_p (machine_mode, rtx, bool);
+static bool xtensa_legitimate_address_p (machine_mode, rtx, bool,
+					 code_helper = ERROR_MARK);
 static unsigned int xtensa_multibss_section_type_flags (tree, const char *,
 							int) ATTRIBUTE_UNUSED;
 static section *xtensa_select_rtx_section (machine_mode, rtx,
@@ -994,14 +995,67 @@ xtensa_expand_scc (rtx operands[4], machine_mode cmp_mode)
   rtx one_tmp, zero_tmp;
   rtx (*gen_fn) (rtx, rtx, rtx, rtx, rtx);
 
-  if (!(cmp = gen_conditional_move (GET_CODE (operands[1]), cmp_mode,
-				    operands[2], operands[3])))
+  if (cmp_mode == SImode && TARGET_SALT)
+    {
+      rtx a = operands[2], b = force_reg (SImode, operands[3]);
+      enum rtx_code code = GET_CODE (operands[1]);
+      bool invert_res = false;
+
+      switch (code)
+	{
+	case GE:
+	case GEU:
+	  invert_res = true;
+	  break;
+	case GT:
+	case GTU:
+	  std::swap (a, b);
+	  break;
+	case LE:
+	case LEU:
+	  invert_res = true;
+	  std::swap (a, b);
+	  break;
+	default:
+	  break;
+	}
+
+      switch (code)
+	{
+	case GE:
+	case GT:
+	case LE:
+	case LT:
+	  emit_insn (gen_salt (dest, a, b));
+	  if (!invert_res)
+	    return 1;
+	  break;
+	case GEU:
+	case GTU:
+	case LEU:
+	case LTU:
+	  emit_insn (gen_saltu (dest, a, b));
+	  if (!invert_res)
+	    return 1;
+	  break;
+	default:
+	  break;
+	}
+
+      if (invert_res)
+	{
+	  emit_insn (gen_negsi2 (dest, dest));
+	  emit_insn (gen_addsi3 (dest, dest, const1_rtx));
+	  return 1;
+	}
+    }
+
+  if (! (cmp = gen_conditional_move (GET_CODE (operands[1]), cmp_mode,
+				     operands[2], operands[3])))
     return 0;
 
-  one_tmp = gen_reg_rtx (SImode);
-  zero_tmp = gen_reg_rtx (SImode);
-  emit_insn (gen_movsi (one_tmp, const_true_rtx));
-  emit_insn (gen_movsi (zero_tmp, const0_rtx));
+  one_tmp = force_reg (SImode, const1_rtx);
+  zero_tmp = force_reg (SImode, const0_rtx);
 
   gen_fn = (cmp_mode == SImode
 	    ? gen_movsicc_internal0
@@ -2296,9 +2350,9 @@ xtensa_emit_sibcall (int callop, rtx *operands)
   return result;
 }
 
-
 bool
-xtensa_legitimate_address_p (machine_mode mode, rtx addr, bool strict)
+xtensa_legitimate_address_p (machine_mode mode, rtx addr, bool strict,
+			     code_helper)
 {
   /* Allow constant pool addresses.  */
   if (mode != BLKmode && GET_MODE_SIZE (mode) >= UNITS_PER_WORD

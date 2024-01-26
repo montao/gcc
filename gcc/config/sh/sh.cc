@@ -1,5 +1,5 @@
 /* Output routines for GCC for Renesas / SuperH SH.
-   Copyright (C) 1993-2023 Free Software Foundation, Inc.
+   Copyright (C) 1993-2024 Free Software Foundation, Inc.
    Contributed by Steve Chamberlain (sac@cygnus.com).
    Improved by Jim Wilson (wilson@cygnus.com).
 
@@ -195,8 +195,8 @@ static int calc_live_regs (HARD_REG_SET *);
 static HOST_WIDE_INT rounded_frame_size (int);
 static bool sh_frame_pointer_required (void);
 static void sh_emit_mode_set (int, int, int, HARD_REG_SET);
-static int sh_mode_needed (int, rtx_insn *);
-static int sh_mode_after (int, int, rtx_insn *);
+static int sh_mode_needed (int, rtx_insn *, HARD_REG_SET);
+static int sh_mode_after (int, int, rtx_insn *, HARD_REG_SET);
 static int sh_mode_entry (int);
 static int sh_mode_exit (int);
 static int sh_mode_priority (int entity, int n);
@@ -266,7 +266,8 @@ static reg_class_t sh_preferred_reload_class (rtx, reg_class_t);
 static reg_class_t sh_secondary_reload (bool, rtx, reg_class_t,
                                         machine_mode,
                                         struct secondary_reload_info *);
-static bool sh_legitimate_address_p (machine_mode, rtx, bool);
+static bool sh_legitimate_address_p (machine_mode, rtx, bool,
+				     code_helper = ERROR_MARK);
 static rtx sh_legitimize_address (rtx, rtx, machine_mode);
 static rtx sh_delegitimize_address (rtx);
 static bool sh_cannot_substitute_mem_equiv_p (rtx);
@@ -328,7 +329,7 @@ static bool sh_hard_regno_mode_ok (unsigned int, machine_mode);
 static bool sh_modes_tieable_p (machine_mode, machine_mode);
 static bool sh_can_change_mode_class (machine_mode, machine_mode, reg_class_t);
 
-static const struct attribute_spec sh_attribute_table[] =
+TARGET_GNU_ATTRIBUTES (sh_attribute_table,
 {
   /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
        affects_type_identity, handler, exclude } */
@@ -347,9 +348,8 @@ static const struct attribute_spec sh_attribute_table[] =
   { "resbank",           0, 0, true,  false, false, false,
     sh_handle_resbank_handler_attribute, NULL },
   { "function_vector",   1, 1, true,  false, false, false,
-    sh2a_handle_function_vector_handler_attribute, NULL },
-  { NULL,                0, 0, false, false, false, false, NULL, NULL }
-};
+    sh2a_handle_function_vector_handler_attribute, NULL }
+});
 
 /* Initialize the GCC target structure.  */
 #undef TARGET_ATTRIBUTE_TABLE
@@ -9038,7 +9038,7 @@ sh_legitimate_index_p (machine_mode mode, rtx op, bool consider_sh2a,
 	  GBR
 	  GBR+disp  */
 static bool
-sh_legitimate_address_p (machine_mode mode, rtx x, bool strict)
+sh_legitimate_address_p (machine_mode mode, rtx x, bool strict, code_helper)
 {
   if (REG_P (x) && REGNO (x) == GBR_REG)
     return true;
@@ -12530,13 +12530,14 @@ sh_emit_mode_set (int entity ATTRIBUTE_UNUSED, int mode,
 }
 
 static int
-sh_mode_needed (int entity ATTRIBUTE_UNUSED, rtx_insn *insn)
+sh_mode_needed (int entity ATTRIBUTE_UNUSED, rtx_insn *insn, HARD_REG_SET)
 {
   return recog_memoized (insn) >= 0  ? get_attr_fp_mode (insn) : FP_MODE_NONE;
 }
 
 static int
-sh_mode_after (int entity ATTRIBUTE_UNUSED, int mode, rtx_insn *insn)
+sh_mode_after (int entity ATTRIBUTE_UNUSED, int mode, rtx_insn *insn,
+	       HARD_REG_SET)
 {
   if (TARGET_HITACHI && recog_memoized (insn) >= 0 &&
       get_attr_fp_set (insn) != FP_SET_NONE)

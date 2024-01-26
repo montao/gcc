@@ -1,6 +1,6 @@
 /* Get common system includes and various definitions and declarations based
    on autoconf macros.
-   Copyright (C) 1998-2023 Free Software Foundation, Inc.
+   Copyright (C) 1998-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -905,12 +905,6 @@ extern void fancy_abort (const char *, int, const char *)
 /* Some compilers do not allow the use of unsigned char in bitfields.  */
 #define BOOL_BITFIELD unsigned int
 
-/* GCC older than 4.4 have broken C++ value initialization handling, see
-   PR11309, PR30111, PR33916, PR82939 and PR84405 for more details.  */
-#if GCC_VERSION > 0 && GCC_VERSION < 4004 && !defined(__clang__)
-# define BROKEN_VALUE_INITIALIZATION
-#endif
-
 /* As the last action in this file, we poison the identifiers that
    shouldn't be used.  Note, luckily gcc-3.0's token-based integrated
    preprocessor won't trip on poisoned identifiers that arrive from
@@ -1223,28 +1217,11 @@ helper_const_non_const_cast (const char *p)
 #endif
 
 #ifdef ENABLE_VALGRIND_ANNOTATIONS
-# ifdef HAVE_VALGRIND_MEMCHECK_H
-#  include <valgrind/memcheck.h>
-# elif defined HAVE_MEMCHECK_H
-#  include <memcheck.h>
-# else
-#  include <valgrind.h>
-# endif
-/* Compatibility macros to let valgrind 3.1 work.  */
-# ifndef VALGRIND_MAKE_MEM_NOACCESS
-#  define VALGRIND_MAKE_MEM_NOACCESS VALGRIND_MAKE_NOACCESS
-# endif
-# ifndef VALGRIND_MAKE_MEM_DEFINED
-#  define VALGRIND_MAKE_MEM_DEFINED VALGRIND_MAKE_READABLE
-# endif
-# ifndef VALGRIND_MAKE_MEM_UNDEFINED
-#  define VALGRIND_MAKE_MEM_UNDEFINED VALGRIND_MAKE_WRITABLE
-# endif
+#include <valgrind/memcheck.h>
 #else
-/* Avoid #ifdef:s when we can help it.  */
+/* VALGRIND_DISCARD unregisters the given block handle,
+   but our code misuses it for discarding annotations.  */
 #define VALGRIND_DISCARD(x)
-#define VALGRIND_MALLOCLIKE_BLOCK(w,x,y,z)
-#define VALGRIND_FREELIKE_BLOCK(x,y)
 #endif
 
 /* Macros to temporarily ignore some warnings.  */

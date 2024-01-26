@@ -53,6 +53,7 @@ AC_LIBTOOL_DLOPEN
 AM_PROG_LIBTOOL
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
+AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
 
 CC_FOR_BUILD=${CC_FOR_BUILD:-gcc}
 AC_SUBST(CC_FOR_BUILD)
@@ -912,6 +913,8 @@ AC_LINK_IFELSE([AC_LANG_PROGRAM(,)],
 [libgo_cv_ld_static=no])
 LDFLAGS=$LDFLAGS_hold])
 AM_CONDITIONAL(HAVE_STATIC_LINK, test "$libgo_cv_ld_static" = yes)
+
+AC_SUBST(SYSROOT_CFLAGS_FOR_TARGET)
 
 AC_CACHE_SAVE
 

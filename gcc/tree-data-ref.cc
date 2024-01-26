@@ -1,5 +1,5 @@
 /* Data references and dependences detectors.
-   Copyright (C) 2003-2023 Free Software Foundation, Inc.
+   Copyright (C) 2003-2024 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <pop@cri.ensmp.fr>
 
 This file is part of GCC.
@@ -100,6 +100,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "vr-values.h"
 #include "range-op.h"
 #include "tree-ssa-loop-ivopts.h"
+#include "calls.h"
 
 static struct datadep_stats
 {
@@ -1181,7 +1182,12 @@ dr_analyze_innermost (innermost_loop_behavior *drb, tree ref,
       base = TREE_OPERAND (base, 0);
     }
   else
-    base = build_fold_addr_expr (base);
+    {
+      if (may_be_nonaddressable_p (base))
+	return opt_result::failure_at (stmt,
+				       "failed: base not addressable.\n");
+      base = build_fold_addr_expr (base);
+    }
 
   if (in_loop)
     {
@@ -1638,6 +1644,13 @@ runtime_alias_check_p (ddr_p ddr, class loop *loop, bool speed_p)
     return opt_result::failure_at (DR_STMT (DDR_A (ddr)),
 				   "runtime alias check not supported for"
 				   " outer loop.\n");
+
+  /* FORNOW: We don't support handling different address spaces.  */
+  if (TYPE_ADDR_SPACE (TREE_TYPE (TREE_TYPE (DR_BASE_ADDRESS (DDR_A (ddr)))))
+      != TYPE_ADDR_SPACE (TREE_TYPE (TREE_TYPE (DR_BASE_ADDRESS (DDR_B (ddr))))))
+    return opt_result::failure_at (DR_STMT (DDR_A (ddr)),
+				   "runtime alias check between different "
+				   "address spaces not supported.\n");
 
   return opt_result::success ();
 }
@@ -5816,6 +5829,15 @@ get_references_in_stmt (gimple *stmt, vec<data_ref_loc, va_heap> *references)
 	    }
 	  case IFN_MASK_LOAD:
 	  case IFN_MASK_STORE:
+	  break;
+	  case IFN_MASK_CALL:
+	    {
+	      tree orig_fndecl
+		= gimple_call_addr_fndecl (gimple_call_arg (stmt, 0));
+	      if (!orig_fndecl
+		  || (flags_from_decl_or_type (orig_fndecl) & ECF_CONST) == 0)
+		clobbers_memory = true;
+	    }
 	    break;
 	  default:
 	    clobbers_memory = true;
@@ -5852,7 +5874,7 @@ get_references_in_stmt (gimple *stmt, vec<data_ref_loc, va_heap> *references)
     }
   else if (stmt_code == GIMPLE_CALL)
     {
-      unsigned i, n;
+      unsigned i = 0, n;
       tree ptr, type;
       unsigned int align;
 
@@ -5879,13 +5901,16 @@ get_references_in_stmt (gimple *stmt, vec<data_ref_loc, va_heap> *references)
 				   ptr);
 	    references->safe_push (ref);
 	    return false;
+	  case IFN_MASK_CALL:
+	    i = 1;
+	    gcc_fallthrough ();
 	  default:
 	    break;
 	  }
 
       op0 = gimple_call_lhs (stmt);
       n = gimple_call_num_args (stmt);
-      for (i = 0; i < n; i++)
+      for (; i < n; i++)
 	{
 	  op1 = gimple_call_arg (stmt, i);
 

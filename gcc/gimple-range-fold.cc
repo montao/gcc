@@ -1,5 +1,5 @@
 /* Code for GIMPLE range related routines.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
    and Aldy Hernandez <aldyh@redhat.com>.
 
@@ -44,16 +44,19 @@ along with GCC; see the file COPYING3.  If not see
 #include "value-query.h"
 #include "gimple-range-op.h"
 #include "gimple-range.h"
+#include "cgraph.h"
+#include "alloc-pool.h"
+#include "symbol-summary.h"
+#include "ipa-utils.h"
+#include "ipa-prop.h"
 // Construct a fur_source, and set the m_query field.
 
 fur_source::fur_source (range_query *q)
 {
   if (q)
     m_query = q;
-  else if (cfun)
-    m_query = get_range_query (cfun);
   else
-    m_query = get_global_range_query ();
+    m_query = get_range_query (cfun);
   m_gori = NULL;
 }
 
@@ -898,48 +901,73 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 	break;
     }
 
-    // If all arguments were equivalences, use the equivalence ranges as no
-    // arguments were processed.
-    if (r.undefined_p () && !equiv_range.undefined_p ())
-      r = equiv_range;
+  // If all arguments were equivalences, use the equivalence ranges as no
+  // arguments were processed.
+  if (r.undefined_p () && !equiv_range.undefined_p ())
+    r = equiv_range;
 
-    // If the PHI boils down to a single effective argument, look at it.
-    if (single_arg)
-      {
-	// Symbolic arguments can be equivalences.
-	if (gimple_range_ssa_p (single_arg))
-	  {
-	    // Only allow the equivalence if the PHI definition does not
-	    // dominate any incoming edge for SINGLE_ARG.
-	    // See PR 108139 and 109462.
-	    basic_block bb = gimple_bb (phi);
-	    if (!dom_info_available_p (CDI_DOMINATORS))
-	      single_arg = NULL;
-	    else
-	      for (x = 0; x < gimple_phi_num_args (phi); x++)
-		if (gimple_phi_arg_def (phi, x) == single_arg
-		    && dominated_by_p (CDI_DOMINATORS,
-					gimple_phi_arg_edge (phi, x)->src,
-					bb))
-		  {
-		    single_arg = NULL;
-		    break;
-		  }
-	    if (single_arg)
-	      src.register_relation (phi, VREL_EQ, phi_def, single_arg);
-	  }
-	else if (src.get_operand (arg_range, single_arg)
-		 && arg_range.singleton_p ())
-	  {
-	    // Numerical arguments that are a constant can be returned as
-	    // the constant. This can help fold later cases where even this
-	    // constant might have been UNDEFINED via an unreachable edge.
-	    r = arg_range;
-	    return true;
-	  }
-      }
+  // If the PHI boils down to a single effective argument, look at it.
+  if (single_arg)
+    {
+      // Symbolic arguments can be equivalences.
+      if (gimple_range_ssa_p (single_arg))
+	{
+	  // Only allow the equivalence if the PHI definition does not
+	  // dominate any incoming edge for SINGLE_ARG.
+	  // See PR 108139 and 109462.
+	  basic_block bb = gimple_bb (phi);
+	  if (!dom_info_available_p (CDI_DOMINATORS))
+	    single_arg = NULL;
+	  else
+	    for (x = 0; x < gimple_phi_num_args (phi); x++)
+	      if (gimple_phi_arg_def (phi, x) == single_arg
+		  && dominated_by_p (CDI_DOMINATORS,
+				      gimple_phi_arg_edge (phi, x)->src,
+				      bb))
+		{
+		  single_arg = NULL;
+		  break;
+		}
+	  if (single_arg)
+	    src.register_relation (phi, VREL_EQ, phi_def, single_arg);
+	}
+      else if (src.get_operand (arg_range, single_arg)
+	       && arg_range.singleton_p ())
+	{
+	  // Numerical arguments that are a constant can be returned as
+	  // the constant. This can help fold later cases where even this
+	  // constant might have been UNDEFINED via an unreachable edge.
+	  r = arg_range;
+	  return true;
+	}
+    }
 
-  bool loop_info_p = false;
+  // If PHI analysis is available, see if there is an iniital range.
+  if (phi_analysis_available_p ()
+      && irange::supports_p (TREE_TYPE (phi_def)))
+    {
+      phi_group *g = (phi_analysis())[phi_def];
+      if (g && !(g->range ().varying_p ()))
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, "PHI GROUP query for ");
+	      print_generic_expr (dump_file, phi_def, TDF_SLIM);
+	      fprintf (dump_file, " found : ");
+	      g->range ().dump (dump_file);
+	      fprintf (dump_file, " and adjusted original range from :");
+	      r.dump (dump_file);
+	    }
+	  r.intersect (g->range ());
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, " to :");
+	      r.dump (dump_file);
+	      fprintf (dump_file, "\n");
+	    }
+	}
+    }
+
   // If SCEV is available, query if this PHI has any known values.
   if (scev_initialized_p ()
       && !POINTER_TYPE_P (TREE_TYPE (phi_def)))
@@ -953,7 +981,7 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 	    {
 	      if (dump_file && (dump_flags & TDF_DETAILS))
 		{
-		  fprintf (dump_file, "   Loops range found for ");
+		  fprintf (dump_file, "Loops range found for ");
 		  print_generic_expr (dump_file, phi_def, TDF_SLIM);
 		  fprintf (dump_file, ": ");
 		  loop_range.dump (dump_file);
@@ -962,32 +990,6 @@ fold_using_range::range_of_phi (vrange &r, gphi *phi, fur_source &src)
 		  fprintf (dump_file, "\n");
 		}
 	      r.intersect (loop_range);
-	      loop_info_p = true;
-	    }
-	}
-    }
-
-  if (!loop_info_p && phi_analysis_available_p ()
-      && irange::supports_p (TREE_TYPE (phi_def)))
-    {
-      phi_group *g = (phi_analysis())[phi_def];
-      if (g && !(g->range ().varying_p ()))
-	{
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    {
-	      fprintf (dump_file, "   PHI group range found for ");
-	      print_generic_expr (dump_file, phi_def, TDF_SLIM);
-	      fprintf (dump_file, ": ");
-	      g->range ().dump (dump_file);
-	      fprintf (dump_file, " and adjusted original range from :");
-	      r.dump (dump_file);
-	    }
-	  r.intersect (g->range ());
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    {
-	      fprintf (dump_file, " to :");
-	      r.dump (dump_file);
-	      fprintf (dump_file, "\n");
 	    }
 	}
     }
@@ -1015,6 +1017,25 @@ fold_using_range::range_of_call (vrange &r, gcall *call, fur_source &)
     r.set_nonzero (type);
   else
     r.set_varying (type);
+
+  tree callee = gimple_call_fndecl (call);
+  if (callee
+      && useless_type_conversion_p (TREE_TYPE (TREE_TYPE (callee)), type))
+    {
+      Value_Range val;
+      if (ipa_return_value_range (val, callee))
+	{
+	  r.intersect (val);
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, "Using return value range of ");
+	      print_generic_expr (dump_file, callee, TDF_SLIM);
+	      fprintf (dump_file, ": ");
+	      val.dump (dump_file);
+	      fprintf (dump_file, "\n");
+	    }
+	}
+    }
 
   // If there is an LHS, intersect that with what is known.
   if (lhs)

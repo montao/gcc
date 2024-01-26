@@ -1,5 +1,5 @@
 /* Main parser.
-   Copyright (C) 2000-2023 Free Software Foundation, Inc.
+   Copyright (C) 2000-2024 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -36,6 +36,13 @@ gfc_st_label *gfc_statement_label;
 
 static locus label_locus;
 static jmp_buf eof_buf;
+
+/* Respectively pointer and content of the current interface body being parsed
+   as they were at the beginning of decode_statement.  Used to restore the
+   interface to its previous state in case a parsed statement is rejected after
+   some symbols have been added to the interface.  */
+static gfc_interface **current_interface_ptr = nullptr;
+static gfc_interface *previous_interface_head = nullptr;
 
 gfc_state_data *gfc_state_stack;
 static bool last_was_use_stmt = false;
@@ -291,6 +298,46 @@ end_of_block:
   return ST_GET_FCN_CHARACTERISTICS;
 }
 
+
+/* Tells whether gfc_get_current_interface_head can be used safely.  */
+
+static bool
+current_interface_valid_p ()
+{
+  switch (current_interface.type)
+    {
+    case INTERFACE_INTRINSIC_OP:
+      return current_interface.ns != nullptr;
+
+    case INTERFACE_GENERIC:
+    case INTERFACE_DTIO:
+      return current_interface.sym != nullptr;
+
+    case INTERFACE_USER_OP:
+      return current_interface.uop != nullptr;
+
+    default:
+      return false;
+    }
+}
+
+
+/* Return a pointer to the interface currently being parsed, or nullptr if
+   we are not currently parsing an interface body.  */
+
+static gfc_interface **
+get_current_interface_ptr ()
+{
+  if (current_interface_valid_p ())
+    {
+      gfc_interface *& ifc_ptr = gfc_current_interface_head ();
+      return &ifc_ptr;
+    }
+  else
+    return nullptr;
+}
+
+
 static bool in_specification_block;
 
 /* This is the primary 'decode_statement'.  */
@@ -306,6 +353,11 @@ decode_statement (void)
 
   gfc_clear_error ();	/* Clear any pending errors.  */
   gfc_clear_warning ();	/* Clear any pending warnings.  */
+
+  current_interface_ptr = get_current_interface_ptr ();
+  previous_interface_head = current_interface_ptr == nullptr
+			    ? nullptr
+			    : *current_interface_ptr;
 
   gfc_matching_function = false;
 
@@ -781,18 +833,18 @@ check_omp_allocate_stmt (locus *loc)
 		      &n->expr->where, gfc_ascii_statement (ST_OMP_ALLOCATE));
 	  return false;
 	}
+      /* Procedure pointers are not allocatable; hence, we do not regard them as
+	 pointers here - and reject them later in gfc_resolve_omp_allocate.  */
       bool alloc_ptr;
       if (n->sym->ts.type == BT_CLASS && n->sym->attr.class_ok)
 	alloc_ptr = (CLASS_DATA (n->sym)->attr.allocatable
 		     || CLASS_DATA (n->sym)->attr.class_pointer);
       else
-	alloc_ptr = (n->sym->attr.allocatable || n->sym->attr.pointer
-		     || n->sym->attr.proc_pointer);
+	alloc_ptr = n->sym->attr.allocatable || n->sym->attr.pointer;
       if (alloc_ptr
 	  || (n->sym->ns && n->sym->ns->proc_name
 	      && (n->sym->ns->proc_name->attr.allocatable
-		  || n->sym->ns->proc_name->attr.pointer
-		  || n->sym->ns->proc_name->attr.proc_pointer)))
+		  || n->sym->ns->proc_name->attr.pointer)))
 	has_allocatable = true;
       else
 	has_non_allocatable = true;
@@ -1312,6 +1364,8 @@ decode_omp_directive (void)
 	  prog_unit->omp_target_seen = true;
 	break;
       }
+    case ST_OMP_ALLOCATE_EXEC:
+    case ST_OMP_ALLOCATORS:
     case ST_OMP_TEAMS:
     case ST_OMP_TEAMS_DISTRIBUTE:
     case ST_OMP_TEAMS_DISTRIBUTE_SIMD:
@@ -1334,7 +1388,10 @@ decode_omp_directive (void)
 	    case EXEC_OMP_TARGET_PARALLEL_DO_SIMD:
 	    case EXEC_OMP_TARGET_PARALLEL_LOOP:
 	    case EXEC_OMP_TARGET_SIMD:
-	      stk->tail->ext.omp_clauses->contains_teams_construct = 1;
+	      if (ret == ST_OMP_ALLOCATE_EXEC || ret == ST_OMP_ALLOCATORS)
+		new_st.ext.omp_clauses->contained_in_target_construct = 1;
+	      else
+		stk->tail->ext.omp_clauses->contains_teams_construct = 1;
 	      break;
 	    default:
 	      break;
@@ -3042,6 +3099,8 @@ reject_statement (void)
 {
   gfc_free_equiv_until (gfc_current_ns->equiv, gfc_current_ns->old_equiv);
   gfc_current_ns->equiv = gfc_current_ns->old_equiv;
+  gfc_drop_interface_elements_before (current_interface_ptr,
+				      previous_interface_head);
 
   gfc_reject_data (gfc_current_ns);
 
@@ -3979,6 +4038,7 @@ loop:
     default:
       gfc_error ("Unexpected %s statement in INTERFACE block at %C",
 		 gfc_ascii_statement (st));
+      current_interface = save;
       reject_statement ();
       gfc_free_namespace (gfc_current_ns);
       goto loop;
@@ -4010,9 +4070,6 @@ loop:
   accept_statement (st);
   prog_unit = gfc_new_block;
   prog_unit->formal_ns = gfc_current_ns;
-  if (prog_unit == prog_unit->formal_ns->proc_name
-      && prog_unit->ns != prog_unit->formal_ns)
-    prog_unit->refs++;
 
 decl:
   /* Read data declaration statements.  */
@@ -5080,8 +5137,9 @@ parse_associate (void)
   gfc_current_ns = my_ns;
   for (a = new_st.ext.block.assoc; a; a = a->next)
     {
-      gfc_symbol* sym;
+      gfc_symbol *sym, *tsym;
       gfc_expr *target;
+      int rank;
 
       if (gfc_get_sym_tree (a->name, NULL, &a->st, false))
 	gcc_unreachable ();
@@ -5143,64 +5201,69 @@ parse_associate (void)
 	      sym->ts.type = BT_DERIVED;
 	      sym->ts.u.derived = derived;
 	    }
-	}
-
-      if (target->rank)
-	{
-	  int rank = 0;
-	  rank = target->rank;
-	  /* When the rank is greater than zero then sym will be an array.  */
-	  if (sym->ts.type == BT_CLASS && CLASS_DATA (sym))
+	  else if (target->symtree && (tsym = target->symtree->n.sym))
 	    {
-	      if ((!CLASS_DATA (sym)->as && rank != 0)
-		  || (CLASS_DATA (sym)->as
-		      && CLASS_DATA (sym)->as->rank != rank))
+	      sym->ts = tsym->result ? tsym->result->ts : tsym->ts;
+	      if (sym->ts.type == BT_CLASS)
 		{
-		  /* Don't just (re-)set the attr and as in the sym.ts,
-		     because this modifies the target's attr and as.  Copy the
-		     data and do a build_class_symbol.  */
-		  symbol_attribute attr = CLASS_DATA (target)->attr;
-		  int corank = gfc_get_corank (target);
-		  gfc_typespec type;
-
-		  if (rank || corank)
-		    {
-		      as = gfc_get_array_spec ();
-		      as->type = AS_DEFERRED;
-		      as->rank = rank;
-		      as->corank = corank;
-		      attr.dimension = rank ? 1 : 0;
-		      attr.codimension = corank ? 1 : 0;
-		    }
-		  else
-		    {
-		      as = NULL;
-		      attr.dimension = attr.codimension = 0;
-		    }
-		  attr.class_ok = 0;
-		  type = CLASS_DATA (sym)->ts;
-		  if (!gfc_build_class_symbol (&type,
-					       &attr, &as))
-		    gcc_unreachable ();
-		  sym->ts = type;
-		  sym->ts.type = BT_CLASS;
+		  if (CLASS_DATA (sym)->as)
+		    target->rank = CLASS_DATA (sym)->as->rank;
 		  sym->attr.class_ok = 1;
 		}
-	      else
-		sym->attr.class_ok = 1;
 	    }
-	  else if ((!sym->as && rank != 0)
-		   || (sym->as && sym->as->rank != rank))
+	}
+
+      rank = target->rank;
+      /* Fixup cases where the ranks are mismatched.  */
+      if (sym->ts.type == BT_CLASS && CLASS_DATA (sym))
+	{
+	  if ((!CLASS_DATA (sym)->as && rank != 0)
+	       || (CLASS_DATA (sym)->as
+		   && CLASS_DATA (sym)->as->rank != rank))
 	    {
-	      as = gfc_get_array_spec ();
-	      as->type = AS_DEFERRED;
-	      as->rank = rank;
-	      as->corank = gfc_get_corank (target);
-	      sym->as = as;
-	      sym->attr.dimension = 1;
-	      if (as->corank)
-		sym->attr.codimension = 1;
+	      /* Don't just (re-)set the attr and as in the sym.ts,
+	      because this modifies the target's attr and as.  Copy the
+	      data and do a build_class_symbol.  */
+	      symbol_attribute attr = CLASS_DATA (target)->attr;
+	      int corank = gfc_get_corank (target);
+	      gfc_typespec type;
+
+	      if (rank || corank)
+		{
+		  as = gfc_get_array_spec ();
+		  as->type = AS_DEFERRED;
+		  as->rank = rank;
+		  as->corank = corank;
+		  attr.dimension = rank ? 1 : 0;
+		  attr.codimension = corank ? 1 : 0;
+		}
+	      else
+		{
+		  as = NULL;
+		  attr.dimension = attr.codimension = 0;
+		}
+	      attr.class_ok = 0;
+	      type = CLASS_DATA (sym)->ts;
+	      if (!gfc_build_class_symbol (&type, &attr, &as))
+		gcc_unreachable ();
+	      sym->ts = type;
+	      sym->ts.type = BT_CLASS;
+	      sym->attr.class_ok = 1;
 	    }
+	  else
+	    sym->attr.class_ok = 1;
+	}
+      else if ((!sym->as && rank != 0)
+	       || (sym->as && sym->as->rank != rank))
+	{
+	  as = gfc_get_array_spec ();
+	  as->type = AS_DEFERRED;
+	  as->rank = rank;
+	  as->corank = gfc_get_corank (target);
+	  sym->as = as;
+	  sym->attr.dimension = 1;
+	  if (as->corank)
+	    sym->attr.codimension = 1;
 	}
     }
 
@@ -5245,27 +5308,51 @@ parse_do_block (void)
   do_op = new_st.op;
   s.ext.end_do_label = new_st.label1;
 
-  if (new_st.ext.iterator != NULL)
+  if (do_op == EXEC_DO_CONCURRENT)
+    {
+      gfc_forall_iterator *fa;
+      for (fa = new_st.ext.forall_iterator; fa; fa = fa->next)
+	{
+	  /* Apply unroll only to innermost loop (first control
+	     variable).  */
+	  if (directive_unroll != -1)
+	    {
+	      fa->annot.unroll = directive_unroll;
+	      directive_unroll = -1;
+	    }
+	  if (directive_ivdep)
+	    fa->annot.ivdep = directive_ivdep;
+	  if (directive_vector)
+	    fa->annot.vector = directive_vector;
+	  if (directive_novector)
+	    fa->annot.novector = directive_novector;
+	}
+      directive_ivdep = false;
+      directive_vector = false;
+      directive_novector = false;
+      stree = NULL;
+    }
+  else if (new_st.ext.iterator != NULL)
     {
       stree = new_st.ext.iterator->var->symtree;
       if (directive_unroll != -1)
 	{
-	  new_st.ext.iterator->unroll = directive_unroll;
+	  new_st.ext.iterator->annot.unroll = directive_unroll;
 	  directive_unroll = -1;
 	}
       if (directive_ivdep)
 	{
-	  new_st.ext.iterator->ivdep = directive_ivdep;
+	  new_st.ext.iterator->annot.ivdep = directive_ivdep;
 	  directive_ivdep = false;
 	}
       if (directive_vector)
 	{
-	  new_st.ext.iterator->vector = directive_vector;
+	  new_st.ext.iterator->annot.vector = directive_vector;
 	  directive_vector = false;
 	}
       if (directive_novector)
 	{
-	  new_st.ext.iterator->novector = directive_novector;
+	  new_st.ext.iterator->annot.novector = directive_novector;
 	  directive_novector = false;
 	}
     }
@@ -5763,7 +5850,7 @@ parse_omp_structured_block (gfc_statement omp_st, bool workshare_stmts_only)
 {
   gfc_statement st, omp_end_st, first_st;
   gfc_code *cp, *np;
-  gfc_state_data s;
+  gfc_state_data s, s2;
 
   accept_statement (omp_st);
 
@@ -5864,13 +5951,21 @@ parse_omp_structured_block (gfc_statement omp_st, bool workshare_stmts_only)
       gfc_notify_std (GFC_STD_F2008, "BLOCK construct at %C");
 
       my_ns = gfc_build_block_ns (gfc_current_ns);
-      gfc_current_ns = my_ns;
-      my_parent = my_ns->parent;
-
       new_st.op = EXEC_BLOCK;
       new_st.ext.block.ns = my_ns;
       new_st.ext.block.assoc = NULL;
       accept_statement (ST_BLOCK);
+
+      push_state (&s2, COMP_BLOCK, my_ns->proc_name);
+      gfc_current_ns = my_ns;
+      my_parent = my_ns->parent;
+      if (omp_st == ST_OMP_SECTIONS
+	  || omp_st == ST_OMP_PARALLEL_SECTIONS)
+	{
+	  np = new_level (cp);
+	  np->op = cp->op;
+	}
+
       first_st = next_statement ();
       st = parse_spec (first_st);
     }
@@ -5886,6 +5981,8 @@ parse_omp_structured_block (gfc_statement omp_st, bool workshare_stmts_only)
       case ST_OMP_TEAMS_LOOP:
 	{
 	  gfc_state_data *stk = gfc_state_stack->previous;
+	  if (stk->state == COMP_OMP_STRICTLY_STRUCTURED_BLOCK)
+	    stk = stk->previous;
 	  stk->tail->ext.omp_clauses->target_first_st_is_teams = true;
 	  break;
 	}
@@ -5984,8 +6081,10 @@ parse_omp_structured_block (gfc_statement omp_st, bool workshare_stmts_only)
       else if (block_construct && st == ST_END_BLOCK)
 	{
 	  accept_statement (st);
+	  gfc_current_ns->code = gfc_state_stack->head;
 	  gfc_current_ns = my_parent;
-	  pop_state ();
+	  pop_state ();  /* Inner BLOCK */
+	  pop_state ();  /* Outer COMP_OMP_STRICTLY_STRUCTURED_BLOCK */
 
 	  st = next_statement ();
 	  if (st == omp_end_st)
@@ -7210,9 +7309,17 @@ done:
       omp_requires_mask
 	= (enum omp_requires) (omp_requires_mask | OMP_MEMORY_ORDER_ACQ_REL);
       break;
+    case OMP_REQ_ATOMIC_MEM_ORDER_ACQUIRE:
+      omp_requires_mask
+	= (enum omp_requires) (omp_requires_mask | OMP_MEMORY_ORDER_ACQUIRE);
+      break;
     case OMP_REQ_ATOMIC_MEM_ORDER_RELAXED:
       omp_requires_mask
 	= (enum omp_requires) (omp_requires_mask | OMP_MEMORY_ORDER_RELAXED);
+      break;
+    case OMP_REQ_ATOMIC_MEM_ORDER_RELEASE:
+      omp_requires_mask
+	= (enum omp_requires) (omp_requires_mask | OMP_MEMORY_ORDER_RELEASE);
       break;
     }
 

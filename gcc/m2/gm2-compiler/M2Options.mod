@@ -1,6 +1,6 @@
 (* M2Options.mod initializes the user options.
 
-Copyright (C) 2001-2023 Free Software Foundation, Inc.
+Copyright (C) 2001-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -31,12 +31,13 @@ FROM FIO IMPORT StdErr ;
 FROM libc IMPORT exit, printf ;
 FROM Debug IMPORT Halt ;
 FROM m2linemap IMPORT location_t ;
-FROM m2configure IMPORT FullPathCPP ;
+FROM m2configure IMPORT FullPathCPP, TargetIEEEQuadDefault ;
+FROM M2Error IMPORT InternalError ;
 
 
 FROM DynamicStrings IMPORT String, Length, InitString, Mark, Slice, EqualArray,
                            InitStringCharStar, ConCatChar, ConCat, KillString,
-                           Dup, string,
+                           Dup, string, char,
                            PushAllocation, PopAllocationExemption,
                            InitStringDB, InitStringCharStarDB,
                            InitStringCharDB, MultDB, DupDB, SliceDB ;
@@ -58,9 +59,10 @@ VAR
    M2Prefix,
    M2PathName,
    Barg,
-   MDarg,
-   MMDarg,
-   MQarg,
+   MFarg,
+   MTFlag,
+   MQFlag,
+   DepTarget,
    CmdLineObj,
    SaveTempsDir,
    DumpDir,
@@ -68,6 +70,13 @@ VAR
    UselistFilename,
    RuntimeModuleOverride,
    CppArgs              : String ;
+   MFlag,
+   MMFlag,
+   MPFlag,
+   MDFlag,
+   MMDFlag,
+   IBMLongDouble,
+   IEEELongDouble,
    UselistFlag,
    CC1Quiet,
    SeenSources          : BOOLEAN ;
@@ -185,70 +194,225 @@ END GetB ;
 
 
 (*
-   SetMD - assigns MDarg to the filename from arg.
-   This overrides any previous MMD.
+   SetM - set the MFlag.
 *)
 
-PROCEDURE SetMD (arg: ADDRESS) ;
+PROCEDURE SetM (value: BOOLEAN) ;
 BEGIN
-   MMDarg := KillString (MMDarg) ;
-   MDarg := KillString (MDarg) ;
-   MDarg := InitStringCharStar (arg)
+   MFlag := value
+END SetM ;
+
+
+(*
+   GetM - set the MFlag.
+*)
+
+PROCEDURE GetM () : BOOLEAN ;
+BEGIN
+   RETURN MFlag
+END GetM ;
+
+
+(*
+   SetMM - set the MMFlag.
+*)
+
+PROCEDURE SetMM (value: BOOLEAN) ;
+BEGIN
+   MMFlag := value
+END SetMM ;
+
+
+(*
+   GetMM - set the MMFlag.
+*)
+
+PROCEDURE GetMM () : BOOLEAN ;
+BEGIN
+   RETURN MMFlag
+END GetMM ;
+
+
+(*
+   SetMD - set the MDFlag to value.
+*)
+
+PROCEDURE SetMD (value: BOOLEAN) ;
+BEGIN
+   MDFlag := value
 END SetMD ;
 
 
 (*
-   GetMD - returns MDarg filename as a c-string or NIL if it was never set.
+   GetMD - return the MDFlag.
 *)
 
-PROCEDURE GetMD () : ADDRESS ;
+PROCEDURE GetMD () : BOOLEAN ;
 BEGIN
-   RETURN string (MDarg)
+   RETURN MDFlag
 END GetMD ;
 
 
 (*
-   SetMMD - assigns MMDarg to the filename from arg.
-   This overrides any previous MD.
+   SetMMD - set the MMDFlag to value.
 *)
 
-PROCEDURE SetMMD (arg: ADDRESS) ;
+PROCEDURE SetMMD (value: BOOLEAN) ;
 BEGIN
-   MDarg := KillString (MDarg) ;
-   MMDarg := KillString (MMDarg) ;
-   MMDarg := InitStringCharStar (arg)
+   MMDFlag := value
 END SetMMD ;
 
 
 (*
-   GetMMD - returns MMDarg filename as a c-string or NIL if it was never set.
+   GetMMD - return the MMDFlag.
 *)
 
-PROCEDURE GetMMD () : ADDRESS ;
+PROCEDURE GetMMD () : BOOLEAN ;
 BEGIN
-   RETURN string (MMDarg)
+   RETURN MMDFlag
 END GetMMD ;
 
 
 (*
-   SetMQ - assigns MQarg to the filename from arg.
+   SetMF - assigns MFarg to the filename from arg.
+*)
+
+PROCEDURE SetMF (arg: ADDRESS) ;
+BEGIN
+   MFarg := KillString (MFarg) ;
+   MFarg := InitStringCharStar (arg)
+END SetMF ;
+
+
+(*
+   GetMF - returns MFarg or NIL if never set.
+*)
+
+PROCEDURE GetMF () : ADDRESS ;
+BEGIN
+   RETURN string (MFarg)
+END GetMF ;
+
+
+(*
+   SetMP - set the MPflag to value.
+*)
+
+PROCEDURE SetMP (value: BOOLEAN) ;
+BEGIN
+   MPFlag := value
+END SetMP ;
+
+
+(*
+   GetMP - get the MPflag.
+*)
+
+PROCEDURE GetMP () : BOOLEAN ;
+BEGIN
+   RETURN MPFlag
+END GetMP ;
+
+
+(*
+   AddWord - concats a word to sentence inserting a space if necessary.
+             sentence is returned.  sentence will be created if it is NIL.
+*)
+
+PROCEDURE AddWord (sentence, word: String) : String ;
+BEGIN
+   IF word # NIL
+   THEN
+      IF sentence = NIL
+      THEN
+         sentence := Dup (word)
+      ELSE
+         sentence := ConCatChar (sentence, ' ') ;
+         sentence := ConCat (sentence, word)
+      END
+   END ;
+   RETURN sentence
+END AddWord ;
+
+
+(*
+   QuoteTarget - quote the '$' character.
+*)
+
+PROCEDURE QuoteTarget (target: String) : String ;
+VAR
+   quoted: String ;
+   i, n  : CARDINAL ;
+BEGIN
+   quoted := InitString ('') ;
+   i := 0 ;
+   n := Length (target) ;
+   WHILE i < n DO
+      CASE char (target, i) OF
+
+      '$':  quoted := ConCat (quoted, Mark (InitString ('$$')))
+
+      ELSE
+         quoted := ConCatChar (quoted, char (target, i))
+      END ;
+      INC (i)
+   END ;
+   RETURN quoted
+END QuoteTarget ;
+
+
+(*
+   SetMQ - adds a quoted target arg to the DepTarget sentence.
 *)
 
 PROCEDURE SetMQ (arg: ADDRESS) ;
 BEGIN
-   MQarg := KillString (MQarg) ;
-   MQarg := InitStringCharStar (arg)
+   DepTarget := AddWord (DepTarget, QuoteTarget (InitStringCharStar (arg))) ;
+   MQFlag := AddWord (MQFlag, Mark (InitString ('-MQ'))) ;
+   MQFlag := AddWord (MQFlag, Mark (InitStringCharStar (arg)))
 END SetMQ ;
 
 
 (*
-   GetMMD - returns MQarg filename as a c-string or NIL if it was never set.
+   GetMQ - returns a C string containing all the -MQ arg values.
 *)
 
 PROCEDURE GetMQ () : ADDRESS ;
 BEGIN
-   RETURN string (MQarg)
+   RETURN string (MQFlag)
 END GetMQ ;
+
+
+(*
+   SetMT - adds a target arg to the DepTarget sentence.
+*)
+
+PROCEDURE SetMT (arg: ADDRESS) ;
+BEGIN
+   DepTarget := AddWord (DepTarget, InitStringCharStar (arg)) ;
+   MTFlag := AddWord (MTFlag, Mark (InitString ('-MT'))) ;
+   MTFlag := AddWord (MTFlag, Mark (InitStringCharStar (arg)))
+END SetMT ;
+
+
+(*
+   GetMT - returns a C string containing all the -MT arg values.
+*)
+
+PROCEDURE GetMT () : ADDRESS ;
+BEGIN
+   RETURN string (MTFlag)
+END GetMT ;
+
+
+(*
+   GetDepTarget - returns the DepTarget as a C string.
+*)
+
+PROCEDURE GetDepTarget () : ADDRESS ;
+BEGIN
+   RETURN string (DepTarget)
+END GetDepTarget ;
 
 
 (*
@@ -1193,7 +1357,8 @@ BEGIN
    UninitVariableChecking := value ;
    PedanticCast := value ;
    PedanticParamNames := value ;
-   StyleChecking := value
+   StyleChecking := value ;
+   CaseEnumChecking := value
 END SetWall ;
 
 
@@ -1325,7 +1490,7 @@ END SetRuntimeModuleOverride ;
 
 PROCEDURE GetRuntimeModuleOverride () : ADDRESS ;
 BEGIN
-   RETURN RuntimeModuleOverride
+   RETURN string (RuntimeModuleOverride)
 END GetRuntimeModuleOverride ;
 
 
@@ -1366,7 +1531,11 @@ END SetShared ;
 
 
 (*
-   SetUninitVariableChecking - sets the UninitVariableChecking flag to value.
+   SetUninitVariableChecking - sets the UninitVariableChecking and
+                               UninitVariableConditionalChecking flags to value
+                               depending upon arg string.  The arg string
+                               can be: "all", "known,cond", "cond,known", "known"
+                               or "cond".
 *)
 
 PROCEDURE SetUninitVariableChecking (value: BOOLEAN; arg: ADDRESS) : INTEGER ;
@@ -1385,8 +1554,7 @@ BEGIN
    s := InitStringCharStar (arg) ;
    IF EqualArray (s, "all") OR
       EqualArray (s, "known,cond") OR
-      EqualArray (s, "cond,known") OR
-      EqualArray (s, "cond")
+      EqualArray (s, "cond,known")
    THEN
       UninitVariableChecking := value ;
       UninitVariableConditionalChecking := value ;
@@ -1395,7 +1563,11 @@ BEGIN
    ELSIF EqualArray (s, "known")
    THEN
       UninitVariableChecking := value ;
-      UninitVariableConditionalChecking := NOT value ;
+      s := KillString (s) ;
+      RETURN 1
+   ELSIF EqualArray (s, "cond")
+   THEN
+      UninitVariableConditionalChecking := value ;
       s := KillString (s) ;
       RETURN 1
    ELSE
@@ -1403,6 +1575,99 @@ BEGIN
       RETURN 0
    END
 END SetUninitVariableChecking ;
+
+
+(*
+   SetCaseEnumChecking - sets the CaseEnumChecking to value.
+*)
+
+PROCEDURE SetCaseEnumChecking (value: BOOLEAN) ;
+BEGIN
+   CaseEnumChecking := value
+END SetCaseEnumChecking ;
+
+
+(*
+   SetDebugBuiltins - sets the DebugBuiltins to value.
+*)
+
+PROCEDURE SetDebugBuiltins (value: BOOLEAN) ;
+BEGIN
+   DebugBuiltins := value
+END SetDebugBuiltins ;
+
+
+(*
+   SetIBMLongDouble - enable/disable LONGREAL to map onto the
+                      IBM long double 128 bit data type.
+                      (Only available on the ppc).
+*)
+
+PROCEDURE SetIBMLongDouble (value: BOOLEAN) ;
+BEGIN
+   IBMLongDouble := value ;
+   IF value
+   THEN
+      IEEELongDouble := FALSE
+   END
+END SetIBMLongDouble ;
+
+
+(*
+   GetIBMLongDouble - return the value of IBMLongDouble.
+*)
+
+PROCEDURE GetIBMLongDouble () : BOOLEAN ;
+BEGIN
+   RETURN IBMLongDouble
+END GetIBMLongDouble ;
+
+
+(*
+   SetIEEELongDouble - enable/disable LONGREAL to map onto the
+                       IEEE long double 128 bit data type.
+                       (Only available on the ppc).
+*)
+
+PROCEDURE SetIEEELongDouble (value: BOOLEAN) ;
+BEGIN
+   IEEELongDouble := value ;
+   IF value
+   THEN
+      IBMLongDouble := FALSE
+   END
+END SetIEEELongDouble ;
+
+
+(*
+   GetIEEELongDouble - return the value of IEEELongDouble.
+*)
+
+PROCEDURE GetIEEELongDouble () : BOOLEAN ;
+BEGIN
+   RETURN IEEELongDouble
+END GetIEEELongDouble ;
+
+
+(*
+   InitializeLongDoubleFlags - initialize the long double related flags
+                               with default values given during gcc configure.
+*)
+
+PROCEDURE InitializeLongDoubleFlags ;
+BEGIN
+   IBMLongDouble := FALSE ;
+   IEEELongDouble := FALSE ;
+   CASE TargetIEEEQuadDefault () OF
+
+   -1: |
+    0: IBMLongDouble := TRUE |
+    1: IEEELongDouble := TRUE
+
+   ELSE
+      InternalError ('unexpected value returned from TargetIEEEQuadDefault ()')
+   END
+END InitializeLongDoubleFlags ;
 
 
 BEGIN
@@ -1470,13 +1735,21 @@ BEGIN
    GenModuleListFilename             := NIL ;
    SharedFlag                        := FALSE ;
    Barg                              := NIL ;
-   MDarg                             := NIL ;
-   MMDarg                            := NIL ;
-   MQarg                             := NIL ;
+   MDFlag                            := FALSE ;
+   MMDFlag                           := FALSE ;
+   DepTarget                         := NIL ;
+   MPFlag                            := FALSE ;
    SaveTempsDir                      := NIL ;
    DumpDir                           := NIL ;
    UninitVariableChecking            := FALSE ;
    UninitVariableConditionalChecking := FALSE ;
+   CaseEnumChecking                  := FALSE ;
+   MFlag                             := FALSE ;
+   MMFlag                            := FALSE ;
+   MFarg                             := NIL ;
+   MTFlag                            := NIL ;
+   MQFlag                            := NIL ;
+   InitializeLongDoubleFlags ;
    M2Prefix                          := InitString ('') ;
    M2PathName                        := InitString ('')
 END M2Options.

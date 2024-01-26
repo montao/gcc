@@ -7697,6 +7697,21 @@ public:
             static assert(false, "No operation "~op~" defined for Grapheme");
     }
 
+    // This is not a good `opEquals`, but formerly the automatically generated
+    // opEquals was used, which was inferred `@safe` because of bugzilla 20655:
+    // https://issues.dlang.org/show_bug.cgi?id=20655
+    // This `@trusted opEquals` is only here to prevent breakage.
+    bool opEquals(R)(const auto ref R other) const @trusted
+    {
+        return this.tupleof == other.tupleof;
+    }
+
+    // Define a default toHash to allow AA usage
+    size_t toHash() const @trusted
+    {
+        return hashOf(slen_, hashOf(small_));
+    }
+
     /++
         True if this object contains valid extended grapheme cluster.
         Decoding primitives of this module always return a valid `Grapheme`.
@@ -7896,6 +7911,12 @@ static assert(Grapheme.sizeof == size_t.sizeof*4);
     foreach (dchar v; iota(cast(int)'A', cast(int)'Z'+1).map!"cast(dchar)a"())
         h ~= v;
     assert(equal(h[], iota(cast(int)'A', cast(int)'Z'+1)));
+}
+
+// ensure Grapheme can be used as an AA key.
+@safe unittest
+{
+    int[Grapheme] aa;
 }
 
 /++

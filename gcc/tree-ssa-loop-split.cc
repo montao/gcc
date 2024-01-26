@@ -1,5 +1,5 @@
 /* Loop splitting.
-   Copyright (C) 2015-2023 Free Software Foundation, Inc.
+   Copyright (C) 2015-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -194,13 +194,12 @@ split_at_bb_p (class loop *loop, basic_block bb, tree *border, affine_iv *iv,
    also be true/false in the next iteration.  */
 
 static void
-patch_loop_exit (class loop *loop, gcond *guard, tree nextval, tree newbound,
-		 bool initial_true)
+patch_loop_exit (class loop *loop, tree_code guard_code, tree nextval,
+		 tree newbound, bool initial_true)
 {
   edge exit = single_exit (loop);
   gcond *stmt = as_a <gcond *> (*gsi_last_bb (exit->src));
-  gimple_cond_set_condition (stmt, gimple_cond_code (guard),
-			     nextval, newbound);
+  gimple_cond_set_condition (stmt, guard_code, nextval, newbound);
   update_stmt (stmt);
 
   edge stay = EDGE_SUCC (exit->src, EDGE_SUCC (exit->src, 0) == exit);
@@ -703,7 +702,7 @@ split_loop (class loop *loop1)
 	   split between of the two new loops.  Keep orignal estimate since
 	   it is likely better then completely dropping it.
 
-	   TODO: If we know that onle of the new loops has constant
+	   TODO: If we know that one of the new loops has constant
 	   number of iterations, we can do better.  We could also update
 	   upper bounds.  */
 	if (loop1->any_estimate
@@ -713,11 +712,15 @@ split_loop (class loop *loop1)
 			  ? true_edge->probability.to_sreal () : (sreal)1;
 	    sreal scale2 = false_edge->probability.reliable_p ()
 			  ? false_edge->probability.to_sreal () : (sreal)1;
+	    sreal div1 = loop1_prob.to_sreal ();
 	    /* +1 to get header interations rather than latch iterations and then
 	       -1 to convert back.  */
-	    loop1->nb_iterations_estimate
-	      = MAX ((((sreal)loop1->nb_iterations_estimate.to_shwi () + 1) * scale
-		     / loop1_prob.to_sreal ()).to_nearest_int () - 1, 0);
+	    if (div1 != 0)
+	      loop1->nb_iterations_estimate
+		= MAX ((((sreal)loop1->nb_iterations_estimate.to_shwi () + 1)
+		       * scale / div1).to_nearest_int () - 1, 0);
+	    else
+	      loop1->any_estimate = false;
 	    loop2->nb_iterations_estimate
 	      = MAX ((((sreal)loop2->nb_iterations_estimate.to_shwi () + 1) * scale2
 		     / profile_probability::very_likely ().to_sreal ())
@@ -741,7 +744,7 @@ split_loop (class loop *loop1)
 	  gsi_insert_seq_on_edge_immediate (loop_preheader_edge (loop1),
 					    stmts);
 	tree guard_next = PHI_ARG_DEF_FROM_EDGE (phi, loop_latch_edge (loop1));
-	patch_loop_exit (loop1, guard_stmt, guard_next, newend, initial_true);
+	patch_loop_exit (loop1, guard_code, guard_next, newend, initial_true);
 
 	/* Finally patch out the two copies of the condition to be always
 	   true/false (or opposite).  */

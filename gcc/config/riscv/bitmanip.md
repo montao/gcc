@@ -1,5 +1,5 @@
 ;; Machine description for RISC-V Bit Manipulation operations.
-;; Copyright (C) 2021-2023 Free Software Foundation, Inc.
+;; Copyright (C) 2021-2024 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
 
@@ -103,7 +103,8 @@
 			       (match_dup 4)))]
 {
 	operands[3] = GEN_INT (INTVAL (operands[3]) >> INTVAL (operands[2]));
-})
+}
+[(set_attr "type" "bitmanip")])
 
 (define_insn "*shNadduw"
   [(set (match_operand:DI 0 "register_operand" "=r")
@@ -205,7 +206,7 @@
 	(popcount:GPR (match_operand:GPR 1 "register_operand")))]
   "TARGET_ZBB")
 
-(define_insn "*<optab>_not<mode>"
+(define_insn "<optab>_not<mode>3"
   [(set (match_operand:X 0 "register_operand" "=r")
         (bitmanip_bitwise:X (not:X (match_operand:X 1 "register_operand" "r"))
                             (match_operand:X 2 "register_operand" "r")))]
@@ -213,6 +214,20 @@
   "<insn>n\t%0,%2,%1"
   [(set_attr "type" "bitmanip")
    (set_attr "mode" "<X:MODE>")])
+
+(define_insn_and_split "*<optab>_not_const<mode>"
+  [(set (match_operand:X 0 "register_operand" "=r")
+       (bitmanip_bitwise:X (not:X (match_operand:X 1 "register_operand" "r"))
+              (match_operand:X 2 "const_arith_operand" "I")))
+  (clobber (match_scratch:X 3 "=&r"))]
+  "(TARGET_ZBB || TARGET_ZBKB) && !TARGET_ZCB
+   && !optimize_function_for_size_p (cfun)"
+  "#"
+  "&& reload_completed"
+  [(set (match_dup 3) (match_dup 2))
+   (set (match_dup 0) (bitmanip_bitwise:X (not:X (match_dup 1)) (match_dup 3)))]
+  ""
+  [(set_attr "type" "bitmanip")])
 
 ;; '(a >= 0) ? b : 0' is emitted branchless (from if-conversion).  Without a
 ;; bit of extra help for combine (i.e., the below split), we end up emitting
@@ -261,7 +276,7 @@
           (match_operand:DI 2 "const_int_operand")))]
   "TARGET_64BIT && TARGET_ZBB && ((INTVAL (operands[2]) & 0x3f) == 0x3f)"
   "<bitmanip_insn>w\t%0,%1"
-  [(set_attr "type" "bitmanip")
+  [(set_attr "type" "<bitmanip_insn>")
    (set_attr "mode" "SI")])
 
 (define_insn "*<bitmanip_optab>di2"
@@ -275,34 +290,23 @@
 (define_insn "*zero_extendhi<GPR:mode>2_bitmanip"
   [(set (match_operand:GPR 0 "register_operand" "=r,r")
         (zero_extend:GPR (match_operand:HI 1 "nonimmediate_operand" "r,m")))]
-  "TARGET_ZBB"
+  "TARGET_ZBB && !TARGET_XTHEADMEMIDX"
   "@
    zext.h\t%0,%1
    lhu\t%0,%1"
   [(set_attr "type" "bitmanip,load")
    (set_attr "mode" "<GPR:MODE>")])
 
-(define_insn "*extend<SHORT:mode><SUPERQI:mode>2_zbb"
+(define_insn "*extend<SHORT:mode><SUPERQI:mode>2_bitmanip"
   [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
 	(sign_extend:SUPERQI
 	    (match_operand:SHORT 1 "nonimmediate_operand" " r,m")))]
-  "TARGET_ZBB"
+  "TARGET_ZBB && !TARGET_XTHEADMEMIDX"
   "@
    sext.<SHORT:size>\t%0,%1
    l<SHORT:size>\t%0,%1"
   [(set_attr "type" "bitmanip,load")
    (set_attr "mode" "<SUPERQI:MODE>")])
-
-(define_insn "*zero_extendhi<GPR:mode>2_zbb"
-  [(set (match_operand:GPR    0 "register_operand"     "=r,r")
-	(zero_extend:GPR
-	    (match_operand:HI 1 "nonimmediate_operand" " r,m")))]
-  "TARGET_ZBB"
-  "@
-   zext.h\t%0,%1
-   lhu\t%0,%1"
-  [(set_attr "type" "bitmanip,load")
-   (set_attr "mode" "HI")])
 
 (define_expand "rotrdi3"
   [(set (match_operand:DI 0 "register_operand")
@@ -439,8 +443,8 @@
 ;; orc.b (or-combine) is added as an unspec for the benefit of the support
 ;; for optimized string functions (such as strcmp).
 (define_insn "orcb<mode>2"
-  [(set (match_operand:X 0 "register_operand" "=r")
-	(unspec:X [(match_operand:X 1 "register_operand" "r")] UNSPEC_ORC_B))]
+  [(set (match_operand:GPR 0 "register_operand" "=r")
+	(unspec:GPR [(match_operand:GPR 1 "register_operand" "r")] UNSPEC_ORC_B))]
   "TARGET_ZBB"
   "orc.b\t%0,%1"
   [(set_attr "type" "bitmanip")])
@@ -453,7 +457,16 @@
 (define_expand "bswapsi2"
   [(set (match_operand:SI 0 "register_operand")
 	(bswap:SI (match_operand:SI 1 "register_operand")))]
-  "(!TARGET_64BIT && (TARGET_ZBB || TARGET_ZBKB)) || TARGET_XTHEADBB")
+  "TARGET_ZBB || TARGET_ZBKB || TARGET_XTHEADBB"
+{
+  /* Expose bswapsi2 on TARGET_64BIT so that the gimple store
+     merging pass will create suitable bswap insns.  We can actually
+     just FAIL that case when generating RTL and let the generic code
+     handle it.  */
+  if (TARGET_64BIT && !TARGET_XTHEADBB)
+    FAIL;
+})
+
 
 (define_insn "*bswap<mode>2"
   [(set (match_operand:X 0 "register_operand" "=r")
@@ -533,7 +546,9 @@
   "&& reload_completed"
   [(set (match_dup 3) (sign_extend:DI (match_dup 1)))
    (set (match_dup 4) (match_dup 2))
-   (set (match_dup 0) (<minmax_optab>:DI (match_dup 3) (match_dup 4)))])
+   (set (match_dup 0) (<minmax_optab>:DI (match_dup 3) (match_dup 4)))]
+  ""
+  [(set_attr "type" "bitmanip")])
 
 ;; ZBS extension.
 
@@ -628,7 +643,8 @@
 
 	operands[3] = GEN_INT (~bits | topbit);
 	operands[4] = GEN_INT (~topbit);
-})
+}
+[(set_attr "type" "bitmanip")])
 
 ;; In case of a paradoxical subreg, the sign bit and the high bits are
 ;; not allowed to be changed
@@ -648,7 +664,8 @@
 
 	operands[3] = GEN_INT (~bits | topbit);
 	operands[4] = GEN_INT (~topbit);
-})
+}
+[(set_attr "type" "bitmanip")])
 
 (define_insn "*binv<mode>"
   [(set (match_operand:X 0 "register_operand" "=r")
@@ -743,7 +760,8 @@
 
 	operands[3] = GEN_INT (bits &~ topbit);
 	operands[4] = GEN_INT (topbit);
-})
+}
+[(set_attr "type" "bitmanip")])
 
 ;; Same to use blcri + andi and blcri + bclri
 (define_insn_and_split "*andi<mode>_extrabit"
@@ -761,7 +779,8 @@
 
 	operands[3] = GEN_INT (bits | topbit);
 	operands[4] = GEN_INT (~topbit);
-})
+}
+[(set_attr "type" "bitmanip")])
 
 ;; IF_THEN_ELSE: test for 2 bits of opposite polarity
 (define_insn_and_split "*branch<X:mode>_mask_twobits_equals_singlebit"
@@ -803,7 +822,8 @@
 
    operands[8] = GEN_INT (setbit);
    operands[9] = GEN_INT (clearbit);
-})
+}
+[(set_attr "type" "bitmanip")])
 
 ;; IF_THEN_ELSE: test for (a & (1 << BIT_NO))
 (define_insn_and_split "*branch<X:mode>_bext"
@@ -826,13 +846,15 @@
 					(zero_extend:X (match_dup 3))))
    (set (pc) (if_then_else (match_op_dup 1 [(match_dup 4) (const_int 0)])
 			   (label_ref (match_dup 0))
-			   (pc)))])
+			   (pc)))]
+   ""
+  [(set_attr "type" "bitmanip")])
 
 ;; ZBKC or ZBC extension
 (define_insn "riscv_clmul_<mode>"
-  [(set (match_operand:X 0 "register_operand" "=r")
-        (unspec:X [(match_operand:X 1 "register_operand" "r")
-                  (match_operand:X 2 "register_operand" "r")]
+  [(set (match_operand:GPR 0 "register_operand" "=r")
+        (unspec:GPR [(match_operand:GPR 1 "register_operand" "r")
+                  (match_operand:GPR 2 "register_operand" "r")]
                   UNSPEC_CLMUL))]
   "TARGET_ZBKC || TARGET_ZBC"
   "clmul\t%0,%1,%2"

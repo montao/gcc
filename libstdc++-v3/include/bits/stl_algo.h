@@ -1,6 +1,6 @@
 // Algorithm implementation -*- C++ -*-
 
-// Copyright (C) 2001-2023 Free Software Foundation, Inc.
+// Copyright (C) 2001-2024 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -3598,11 +3598,9 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       return std::__is_permutation(__first1, __last1, __first2, __last2,
 				   __gnu_cxx::__ops::__iter_comp_iter(__pred));
     }
+#endif // C++14
 
-#if __cplusplus >= 201703L
-
-#define __cpp_lib_clamp 201603L
-
+#ifdef  __glibcxx_clamp // C++ >= 17
   /**
    *  @brief  Returns the value clamped between lo and hi.
    *  @ingroup sorting_algorithms
@@ -3641,8 +3639,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       __glibcxx_assert(!__comp(__hi, __lo));
       return std::min(std::max(__val, __lo, __comp), __hi, __comp);
     }
-#endif // C++17
-#endif // C++14
+#endif // __glibcxx_clamp
 
   /**
    *  @brief Generate two uniformly distributed integers using a
@@ -5812,9 +5809,9 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	  }
       return __out;
     }
+#endif // C++14
 
-#if __cplusplus > 201402L
-#define __cpp_lib_sample 201603L
+#ifdef __glibcxx_sample // C++ >= 17
   /// Take a random sample from a population.
   template<typename _PopulationIterator, typename _SampleIterator,
            typename _Distance, typename _UniformRandomBitGenerator>
@@ -5842,8 +5839,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	__sample(__first, __last, __pop_cat{}, __out, __samp_cat{}, __d,
 		 std::forward<_UniformRandomBitGenerator>(__g));
     }
-#endif // C++17
-#endif // C++14
+#endif // __glibcxx_sample
 
 _GLIBCXX_END_NAMESPACE_ALGO
 _GLIBCXX_END_NAMESPACE_VERSION

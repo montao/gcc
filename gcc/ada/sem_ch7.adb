@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -877,11 +877,6 @@ package body Sem_Ch7 is
          New_N := Copy_Generic_Node (N, Empty, Instantiating => False);
          Rewrite (N, New_N);
 
-         --  Once the contents of the generic copy and the template are
-         --  swapped, do the same for their respective aspect specifications.
-
-         Exchange_Aspects (N, New_N);
-
          --  Collect all contract-related source pragmas found within the
          --  template and attach them to the contract of the package body.
          --  This contract is used in the capture of global references within
@@ -929,9 +924,7 @@ package body Sem_Ch7 is
       Set_Has_Completion (Spec_Id);
       Last_Spec_Entity := Last_Entity (Spec_Id);
 
-      if Has_Aspects (N) then
-         Analyze_Aspect_Specifications (N, Body_Id);
-      end if;
+      Analyze_Aspect_Specifications (N, Body_Id);
 
       Push_Scope (Spec_Id);
 
@@ -1213,9 +1206,7 @@ package body Sem_Ch7 is
       --  Analyze aspect specifications immediately, since we need to recognize
       --  things like Pure early enough to diagnose violations during analysis.
 
-      if Has_Aspects (N) then
-         Analyze_Aspect_Specifications (N, Id);
-      end if;
+      Analyze_Aspect_Specifications (N, Id);
 
       --  Ada 2005 (AI-217): Check if the package has been illegally named in
       --  a limited-with clause of its own context. In this case the error has
@@ -1267,12 +1258,17 @@ package body Sem_Ch7 is
                Is_Main_Unit => Parent (N) = Cunit (Main_Unit));
          end if;
 
-         --  Warn about references to unset objects, which is straightforward
-         --  for packages with no bodies. For packages with bodies this is more
-         --  complicated, because some of the objects might be set between spec
-         --  and body elaboration, in nested or child packages, etc.
+         --  For package declarations at the library level, warn about
+         --  references to unset objects, which is straightforward for packages
+         --  with no bodies. For packages with bodies this is more complicated,
+         --  because some of the objects might be set between spec and body
+         --  elaboration, in nested or child packages, etc. Note that the
+         --  recursive calls in Check_References will handle nested package
+         --  specifications.
 
-         Check_References (Id);
+         if Is_Library_Level_Entity (Id) then
+            Check_References (Id);
+         end if;
       end if;
 
       --  Set Body_Required indication on the compilation unit node
@@ -2089,9 +2085,7 @@ package body Sem_Ch7 is
       Set_SPARK_Pragma           (Id, SPARK_Mode_Pragma);
       Set_SPARK_Pragma_Inherited (Id);
 
-      if Has_Aspects (N) then
-         Analyze_Aspect_Specifications (N, Id);
-      end if;
+      Analyze_Aspect_Specifications (N, Id);
    end Analyze_Private_Type_Declaration;
 
    ----------------------------------

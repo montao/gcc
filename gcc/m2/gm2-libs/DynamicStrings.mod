@@ -1,6 +1,6 @@
 (* DynamicStrings.mod provides a dynamic string type and procedures.
 
-Copyright (C) 2001-2023 Free Software Foundation, Inc.
+Copyright (C) 2001-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius.mulley@southwales.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -1132,6 +1132,31 @@ BEGIN
    ConcatContents (t^.contents, b, 1, 0) ;
    RETURN a
 END ConCatChar ;
+
+
+(*
+   ReplaceChar - returns string s after it has changed all occurances of from to to.
+*)
+
+PROCEDURE ReplaceChar (s: String; from, to: CHAR) : String ;
+VAR
+   t: String ;
+   i: CARDINAL ;
+BEGIN
+   t := s ;
+   WHILE t # NIL DO
+      i := 0 ;
+      WHILE i < t^.contents.len DO
+         IF t^.contents.buf[i] = from
+         THEN
+            t^.contents.buf[i] := to
+         END ;
+         INC (i)
+      END ;
+      t := t^.contents.next
+   END ;
+   RETURN s
+END ReplaceChar ;
 
 
 (*

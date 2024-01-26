@@ -1,5 +1,5 @@
 ; Overloaded built-in functions for PowerPC.
-; Copyright (C) 2020-2023 Free Software Foundation, Inc.
+; Copyright (C) 2020-2024 Free Software Foundation, Inc.
 ; Contributed by Bill Schmidt, IBM <wschmidt@linux.ibm.com>
 ;
 ; This file is part of GCC.
@@ -194,6 +194,16 @@
     CMPB_32
   unsigned long long __builtin_cmpb (unsigned long long, unsigned long long);
     CMPB
+
+[DFPQUAN, dfp_quantize, __builtin_dfp_quantize]
+  _Decimal64 __builtin_dfp_quantize (_Decimal64, _Decimal64, const int);
+    DFPQUAN_64
+  _Decimal64 __builtin_dfp_quantize (const int, _Decimal64, const int);
+    DFPQUAN_64i
+  _Decimal128 __builtin_dfp_quantize (_Decimal128, _Decimal128, const int);
+    DFPQUAN_128
+  _Decimal128 __builtin_dfp_quantize (const int, _Decimal128, const int);
+    DFPQUAN_128i
 
 [VEC_ABS, vec_abs, __builtin_vec_abs]
   vsc __builtin_vec_abs (vsc);

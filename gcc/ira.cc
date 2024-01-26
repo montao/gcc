@@ -1,5 +1,5 @@
 /* Integrated Register Allocator (IRA) entry point.
-   Copyright (C) 2006-2023 Free Software Foundation, Inc.
+   Copyright (C) 2006-2024 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -5542,6 +5542,9 @@ bool ira_conflicts_p;
 /* Saved between IRA and reload.  */
 static int saved_flag_ira_share_spill_slots;
 
+/* Set to true while in IRA.  */
+bool ira_in_progress = false;
+
 /* This is the main entry of IRA.  */
 static void
 ira (FILE *f)
@@ -5967,7 +5970,7 @@ do_reload (void)
 
       ira_destroy ();
 
-      lra (ira_dump_file);
+      lra (ira_dump_file, internal_flag_ira_verbose);
       /* ???!!! Move it before lra () when we use ira_reg_equiv in
 	 LRA.  */
       vec_free (reg_equivs);
@@ -6110,7 +6113,9 @@ public:
     }
   unsigned int execute (function *) final override
     {
+      ira_in_progress = true;
       ira (dump_file);
+      ira_in_progress = false;
       return 0;
     }
 

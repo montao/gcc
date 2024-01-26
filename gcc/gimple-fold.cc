@@ -1,5 +1,5 @@
 /* Statement simplification on GIMPLE.
-   Copyright (C) 2010-2023 Free Software Foundation, Inc.
+   Copyright (C) 2010-2024 Free Software Foundation, Inc.
    Split out from tree-ssa-ccp.cc.
 
 This file is part of GCC.
@@ -876,10 +876,8 @@ size_must_be_zero_p (tree size)
   wide_int zero = wi::zero (TYPE_PRECISION (type));
   value_range valid_range (type, zero, ssize_max);
   value_range vr;
-  if (cfun)
-    get_range_query (cfun)->range_of_expr (vr, size);
-  else
-    get_global_range_query ()->range_of_expr (vr, size);
+  get_range_query (cfun)->range_of_expr (vr, size);
+
   if (vr.undefined_p ())
     vr.set_varying (TREE_TYPE (size));
   vr.intersect (valid_range);
@@ -1475,8 +1473,9 @@ gimple_fold_builtin_memset (gimple_stmt_iterator *gsi, tree c, tree len)
   if (TREE_CODE (etype) == ARRAY_TYPE)
     etype = TREE_TYPE (etype);
 
-  if (!INTEGRAL_TYPE_P (etype)
-      && !POINTER_TYPE_P (etype))
+  if ((!INTEGRAL_TYPE_P (etype)
+       && !POINTER_TYPE_P (etype))
+      || TREE_CODE (etype) == BITINT_TYPE)
     return NULL_TREE;
 
   if (! var_decl_component_p (var))
@@ -4102,8 +4101,8 @@ gimple_fold_builtin_realloc (gimple_stmt_iterator *gsi)
   return false;
 }
 
-/* Number of bytes into which any type but aggregate or vector types
-   should fit.  */
+/* Number of bytes into which any type but aggregate, vector or
+   _BitInt types should fit.  */
 static constexpr size_t clear_padding_unit
   = MAX_BITSIZE_MODE_ANY_MODE / BITS_PER_UNIT;
 /* Buffer size on which __builtin_clear_padding folding code works.  */
@@ -4594,6 +4593,27 @@ clear_padding_real_needs_padding_p (tree type)
 	  && (fmt->signbit_ro == 79 || fmt->signbit_ro == 95));
 }
 
+/* _BitInt has padding bits if it isn't extended in the ABI and has smaller
+   precision than bits in limb or corresponding number of limbs.  */
+
+static bool
+clear_padding_bitint_needs_padding_p (tree type)
+{
+  struct bitint_info info;
+  bool ok = targetm.c.bitint_type_info (TYPE_PRECISION (type), &info);
+  gcc_assert (ok);
+  if (info.extended)
+    return false;
+  scalar_int_mode limb_mode = as_a <scalar_int_mode> (info.abi_limb_mode);
+  if (TYPE_PRECISION (type) < GET_MODE_PRECISION (limb_mode))
+    return true;
+  else if (TYPE_PRECISION (type) == GET_MODE_PRECISION (limb_mode))
+    return false;
+  else
+    return (((unsigned) TYPE_PRECISION (type))
+	    % GET_MODE_PRECISION (limb_mode)) != 0;
+}
+
 /* Return true if TYPE might contain any padding bits.  */
 
 bool
@@ -4610,6 +4630,8 @@ clear_padding_type_may_have_padding_p (tree type)
       return clear_padding_type_may_have_padding_p (TREE_TYPE (type));
     case REAL_TYPE:
       return clear_padding_real_needs_padding_p (type);
+    case BITINT_TYPE:
+      return clear_padding_bitint_needs_padding_p (type);
     default:
       return false;
     }
@@ -4854,6 +4876,59 @@ clear_padding_type (clear_padding_struct *buf, tree type,
       memset (buf->buf + buf->size, ~0, sz);
       buf->size += sz;
       break;
+    case BITINT_TYPE:
+      {
+	struct bitint_info info;
+	bool ok = targetm.c.bitint_type_info (TYPE_PRECISION (type), &info);
+	gcc_assert (ok);
+	scalar_int_mode limb_mode
+	  = as_a <scalar_int_mode> (info.abi_limb_mode);
+	if (TYPE_PRECISION (type) <= GET_MODE_PRECISION (limb_mode))
+	  {
+	    gcc_assert ((size_t) sz <= clear_padding_unit);
+	    if ((unsigned HOST_WIDE_INT) sz + buf->size
+		> clear_padding_buf_size)
+	      clear_padding_flush (buf, false);
+	    if (!info.extended
+		&& TYPE_PRECISION (type) < GET_MODE_PRECISION (limb_mode))
+	      {
+		int tprec = GET_MODE_PRECISION (limb_mode);
+		int prec = TYPE_PRECISION (type);
+		tree t = build_nonstandard_integer_type (tprec, 1);
+		tree cst = wide_int_to_tree (t, wi::mask (prec, true, tprec));
+		int len = native_encode_expr (cst, buf->buf + buf->size, sz);
+		gcc_assert (len > 0 && (size_t) len == (size_t) sz);
+	      }
+	    else
+	      memset (buf->buf + buf->size, 0, sz);
+	    buf->size += sz;
+	    break;
+	  }
+	tree limbtype
+	  = build_nonstandard_integer_type (GET_MODE_PRECISION (limb_mode), 1);
+	fldsz = int_size_in_bytes (limbtype);
+	nelts = int_size_in_bytes (type) / fldsz;
+	for (HOST_WIDE_INT i = 0; i < nelts; i++)
+	  {
+	    if (!info.extended
+		&& i == (info.big_endian ? 0 : nelts - 1)
+		&& (((unsigned) TYPE_PRECISION (type))
+		    % TYPE_PRECISION (limbtype)) != 0)
+	      {
+		int tprec = GET_MODE_PRECISION (limb_mode);
+		int prec = (((unsigned) TYPE_PRECISION (type)) % tprec);
+		tree cst = wide_int_to_tree (limbtype,
+					     wi::mask (prec, true, tprec));
+		int len = native_encode_expr (cst, buf->buf + buf->size,
+					      fldsz);
+		gcc_assert (len > 0 && (size_t) len == (size_t) fldsz);
+		buf->size += fldsz;
+	      }
+	    else
+	      clear_padding_type (buf, limbtype, fldsz, for_auto_init);
+	  }
+	break;
+      }
     default:
       gcc_assert ((size_t) sz <= clear_padding_unit);
       if ((unsigned HOST_WIDE_INT) sz + buf->size > clear_padding_buf_size)
@@ -7011,14 +7086,16 @@ maybe_fold_comparisons_from_match_pd (tree type, enum tree_code code,
   gimple_set_bb (stmt2, NULL);
 
   /* Allocate SSA names(lhs1) on the stack.  */
-  tree lhs1 = (tree)XALLOCA (tree_ssa_name);
+  alignas (tree_node) unsigned char lhs1buf[sizeof (tree_ssa_name)];
+  tree lhs1 = (tree) &lhs1buf[0];
   memset (lhs1, 0, sizeof (tree_ssa_name));
   TREE_SET_CODE (lhs1, SSA_NAME);
   TREE_TYPE (lhs1) = type;
   init_ssa_name_imm_use (lhs1);
 
   /* Allocate SSA names(lhs2) on the stack.  */
-  tree lhs2 = (tree)XALLOCA (tree_ssa_name);
+  alignas (tree_node) unsigned char lhs2buf[sizeof (tree_ssa_name)];
+  tree lhs2 = (tree) &lhs2buf[0];
   memset (lhs2, 0, sizeof (tree_ssa_name));
   TREE_SET_CODE (lhs2, SSA_NAME);
   TREE_TYPE (lhs2) = type;
@@ -7781,7 +7858,7 @@ gimple_fold_stmt_to_constant (gimple *stmt, tree (*valueize) (tree))
    is not explicitly available, but it is known to be zero
    such as 'static const int a;'.  */
 static tree
-get_base_constructor (tree base, poly_int64_pod *bit_offset,
+get_base_constructor (tree base, poly_int64 *bit_offset,
 		      tree (*valueize)(tree))
 {
   poly_int64 bit_offset2, size, max_size;
@@ -8695,12 +8772,14 @@ arith_code_with_undefined_signed_overflow (tree_code code)
    its operand, carrying out the operation in the corresponding unsigned
    type and converting the result back to the original type.
 
-   If IN_PLACE is true, adjust the stmt in place and return NULL.
+   If IN_PLACE is true, *GSI points to STMT, adjust the stmt in place and
+   return NULL.
    Otherwise returns a sequence of statements that replace STMT and also
    contain a modified form of STMT itself.  */
 
-gimple_seq
-rewrite_to_defined_overflow (gimple *stmt, bool in_place /* = false */)
+static gimple_seq
+rewrite_to_defined_overflow (gimple_stmt_iterator *gsi, gimple *stmt,
+			     bool in_place)
 {
   if (dump_file && (dump_flags & TDF_DETAILS))
     {
@@ -8727,9 +8806,8 @@ rewrite_to_defined_overflow (gimple *stmt, bool in_place /* = false */)
   gimple_set_modified (stmt, true);
   if (in_place)
     {
-      gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
       if (stmts)
-	gsi_insert_seq_before (&gsi, stmts, GSI_SAME_STMT);
+	gsi_insert_seq_before (gsi, stmts, GSI_SAME_STMT);
       stmts = NULL;
     }
   else
@@ -8737,8 +8815,7 @@ rewrite_to_defined_overflow (gimple *stmt, bool in_place /* = false */)
   gimple *cvt = gimple_build_assign (lhs, NOP_EXPR, gimple_assign_lhs (stmt));
   if (in_place)
     {
-      gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
-      gsi_insert_after (&gsi, cvt, GSI_SAME_STMT);
+      gsi_insert_after (gsi, cvt, GSI_SAME_STMT);
       update_stmt (stmt);
     }
   else
@@ -8747,6 +8824,17 @@ rewrite_to_defined_overflow (gimple *stmt, bool in_place /* = false */)
   return stmts;
 }
 
+void
+rewrite_to_defined_overflow (gimple_stmt_iterator *gsi)
+{
+  rewrite_to_defined_overflow (gsi, gsi_stmt (*gsi), true);
+}
+
+gimple_seq
+rewrite_to_defined_overflow (gimple *stmt)
+{
+  return rewrite_to_defined_overflow (nullptr, stmt, false);
+}
 
 /* The valueization hook we use for the gimple_build API simplification.
    This makes us match fold_buildN behavior by only combining with
