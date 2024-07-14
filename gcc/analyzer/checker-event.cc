@@ -20,6 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #define INCLUDE_MEMORY
+#define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
 #include "tree.h"
@@ -198,7 +199,7 @@ checker_event::debug () const
   pretty_printer pp;
   pp_format_decoder (&pp) = default_tree_printer;
   pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.buffer->stream = stderr;
+  pp.set_output_stream (stderr);
   dump (&pp);
   pp_newline (&pp);
   pp_flush (&pp);
@@ -443,25 +444,48 @@ state_change_event::get_desc (bool can_colorize) const
 	      meaning.dump_to_pp (&meaning_pp);
 
 	      /* Append debug version.  */
-	      if (m_origin)
-		return make_label_text
-		  (can_colorize,
-		   "%s (state of %qE: %qs -> %qs, origin: %qE, meaning: %s)",
-		   custom_desc.get (),
-		   var,
-		   m_from->get_name (),
-		   m_to->get_name (),
-		   origin,
-		   pp_formatted_text (&meaning_pp));
+	      if (var)
+		{
+		  if (m_origin)
+		    return make_label_text
+		      (can_colorize,
+		       "%s (state of %qE: %qs -> %qs, origin: %qE, meaning: %s)",
+		       custom_desc.get (),
+		       var,
+		       m_from->get_name (),
+		       m_to->get_name (),
+		       origin,
+		       pp_formatted_text (&meaning_pp));
+		  else
+		    return make_label_text
+		      (can_colorize,
+		       "%s (state of %qE: %qs -> %qs, NULL origin, meaning: %s)",
+		       custom_desc.get (),
+		       var,
+		       m_from->get_name (),
+		       m_to->get_name (),
+		       pp_formatted_text (&meaning_pp));
+		}
 	      else
-		return make_label_text
-		  (can_colorize,
-		   "%s (state of %qE: %qs -> %qs, NULL origin, meaning: %s)",
-		   custom_desc.get (),
-		   var,
-		   m_from->get_name (),
-		   m_to->get_name (),
-		   pp_formatted_text (&meaning_pp));
+		{
+		  if (m_origin)
+		    return make_label_text
+		      (can_colorize,
+		       "%s (state: %qs -> %qs, origin: %qE, meaning: %s)",
+		       custom_desc.get (),
+		       m_from->get_name (),
+		       m_to->get_name (),
+		       origin,
+		       pp_formatted_text (&meaning_pp));
+		  else
+		    return make_label_text
+		      (can_colorize,
+		       "%s (state: %qs -> %qs, NULL origin, meaning: %s)",
+		       custom_desc.get (),
+		       m_from->get_name (),
+		       m_to->get_name (),
+		       pp_formatted_text (&meaning_pp));
+		}
 	    }
 	  else
 	    return custom_desc;

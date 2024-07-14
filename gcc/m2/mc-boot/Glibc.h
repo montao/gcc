@@ -70,7 +70,7 @@ struct libc_tm_r {
                    int tm_yday;
                    int tm_isdst;
                    long int tm_gmtoff;
-                   void *tm_zone;
+                   void * tm_zone;
                  };
 
 struct libc_timeb_r {
@@ -192,7 +192,7 @@ EXTERN int libc_creat (void * filename, unsigned int mode);
            off_t lseek(int fildes, off_t offset, int whence);
 */
 
-EXTERN long int libc_lseek (int fd, long int offset, int whence);
+EXTERN ssize_t libc_lseek (int fd, ssize_t offset, int whence);
 
 /*
    perror - writes errno and string. (ARRAY OF CHAR is translated onto ADDRESS).

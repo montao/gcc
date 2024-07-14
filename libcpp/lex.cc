@@ -4235,8 +4235,13 @@ _cpp_lex_direct (cpp_reader *pfile)
 
     case ':':
       result->type = CPP_COLON;
-      if (*buffer->cur == ':' && CPP_OPTION (pfile, scope))
-	buffer->cur++, result->type = CPP_SCOPE;
+      if (*buffer->cur == ':')
+	{
+	  if (CPP_OPTION (pfile, scope))
+	    buffer->cur++, result->type = CPP_SCOPE;
+	  else
+	    result->flags |= COLON_SCOPE;
+	}
       else if (*buffer->cur == '>' && CPP_OPTION (pfile, digraphs))
 	{
 	  buffer->cur++;
@@ -5033,7 +5038,7 @@ do_peek_prev (const unsigned char *peek, const unsigned char *bound)
 
   unsigned char c = *--peek;
   if (__builtin_expect (c == '\n', false)
-      || __builtin_expect (c == 'r', false))
+      || __builtin_expect (c == '\r', false))
     {
       if (peek == bound)
 	return peek;

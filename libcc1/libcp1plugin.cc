@@ -33,6 +33,7 @@
 #undef PACKAGE_VERSION
 
 #define INCLUDE_MEMORY
+#define INCLUDE_VECTOR
 #include "gcc-plugin.h"
 #include "system.h"
 #include "coretypes.h"
@@ -70,8 +71,6 @@
 #include "marshall-cp.hh"
 #include "rpc.hh"
 #include "context.hh"
-
-#include <vector>
 
 using namespace cc1_plugin;
 
@@ -2640,7 +2639,7 @@ plugin_build_unary_expr (cc1_plugin::connection *self,
       break;
 
     case THROW_EXPR:
-      result = build_throw (input_location, op0);
+      result = build_throw (input_location, op0, tf_error);
       break;
 
     case TYPEID_EXPR:
@@ -2664,7 +2663,7 @@ plugin_build_unary_expr (cc1_plugin::connection *self,
       result = make_pack_expansion (op0);
       break;
 
-      // We're using this for sizeof...(pack).  */
+      /* We're using this for sizeof...(pack).  */
     case TYPE_PACK_EXPANSION:
       result = make_pack_expansion (op0);
       PACK_EXPANSION_SIZEOF_P (result) = true;

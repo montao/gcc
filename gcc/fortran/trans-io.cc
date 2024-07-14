@@ -1692,8 +1692,10 @@ transfer_namelist_element (stmtblock_t * block, const char * var_name,
   gcc_assert (sym || c);
 
   /* Build the namelist object name.  */
-
-  string = gfc_build_cstring_const (var_name);
+  if (sym && !sym->attr.use_only && sym->attr.use_rename)
+    string = gfc_build_cstring_const (sym->ns->use_stmts->rename->local_name);
+  else
+    string = gfc_build_cstring_const (var_name);
   string = gfc_build_addr_expr (pchar_type_node, string);
 
   /* Build ts, as and data address using symbol or component.  */
@@ -2460,8 +2462,8 @@ transfer_expr (gfc_se * se, gfc_typespec * ts, tree addr_expr,
 		  || (ts->type == BT_CLASS
 		      && !GFC_CLASS_TYPE_P (TREE_TYPE (decl))))
 		gfc_conv_derived_to_class (se, code->expr1,
-					   dtio_sub->formal->sym->ts,
-					   vptr, false, false);
+					   dtio_sub->formal->sym, vptr, false,
+					   false, "transfer");
 	      addr_expr = se->expr;
 	      function = iocall[IOCALL_X_DERIVED];
 	      break;

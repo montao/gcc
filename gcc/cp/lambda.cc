@@ -175,9 +175,7 @@ lambda_function (tree lambda)
   if (CLASSTYPE_TEMPLATE_INSTANTIATION (type)
       && !COMPLETE_OR_OPEN_TYPE_P (type))
     return NULL_TREE;
-  lambda = lookup_member (type, call_op_identifier,
-			  /*protect=*/0, /*want_type=*/false,
-			  tf_warning_or_error);
+  lambda = get_class_binding_direct (type, call_op_identifier);
   if (lambda)
     lambda = STRIP_TEMPLATE (get_first_fn (lambda));
   return lambda;
@@ -225,7 +223,8 @@ lambda_capture_field_type (tree expr, bool explicit_init_p,
 	   outermost CV qualifiers of EXPR.  */
 	type = build_reference_type (type);
       if (uses_parameter_packs (expr))
-	/* Stick with 'auto' even if the type could be deduced.  */;
+	/* Stick with 'auto' even if the type could be deduced.  */
+	TEMPLATE_TYPE_PARAMETER_PACK (auto_node) = true;
       else
 	type = do_auto_deduction (type, expr, auto_node);
     }
@@ -608,6 +607,16 @@ add_capture (tree lambda, tree id, tree orig_init, bool by_reference_p,
 	  else if (!verify_type_context (input_location,
 					 TCTX_CAPTURE_BY_COPY, type))
 	    return error_mark_node;
+	}
+
+      if (cxx_dialect < cxx20)
+	{
+	  auto_diagnostic_group d;
+	  tree stripped_init = tree_strip_any_location_wrapper (initializer);
+	  if (DECL_DECOMPOSITION_P (stripped_init)
+	      && pedwarn (input_location, OPT_Wc__20_extensions,
+			  "captured structured bindings are a C++20 extension"))
+	    inform (DECL_SOURCE_LOCATION (stripped_init), "declared here");
 	}
     }
 

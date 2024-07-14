@@ -411,11 +411,11 @@ tree
 float_type (int bits)
 {
   tree type;
-  if (bits == FLOAT_TYPE_SIZE)
+  if (bits == TYPE_PRECISION (float_type_node))
     type = float_type_node;
-  else if (bits == DOUBLE_TYPE_SIZE)
+  else if (bits == TYPE_PRECISION (double_type_node))
     type = double_type_node;
-  else if (bits == LONG_DOUBLE_TYPE_SIZE)
+  else if (bits == TYPE_PRECISION (long_double_type_node))
     type = long_double_type_node;
   else
     {
@@ -1131,20 +1131,20 @@ fetch_overflow_builtins (ArithmeticOrLogicalOperator op)
   switch (op)
     {
     case ArithmeticOrLogicalOperator::ADD:
-      builtin_ctx.lookup_simple_builtin ("add_overflow", &builtin);
+      builtin_ctx.lookup_simple_builtin ("__builtin_add_overflow", &builtin);
       break;
     case ArithmeticOrLogicalOperator::SUBTRACT:
-      builtin_ctx.lookup_simple_builtin ("sub_overflow", &builtin);
+      builtin_ctx.lookup_simple_builtin ("__builtin_sub_overflow", &builtin);
       break;
     case ArithmeticOrLogicalOperator::MULTIPLY:
-      builtin_ctx.lookup_simple_builtin ("mul_overflow", &builtin);
+      builtin_ctx.lookup_simple_builtin ("__builtin_mul_overflow", &builtin);
       break;
     default:
       rust_unreachable ();
       break;
     };
 
-  builtin_ctx.lookup_simple_builtin ("abort", &abort);
+  builtin_ctx.lookup_simple_builtin ("__builtin_abort", &abort);
 
   rust_assert (abort);
   rust_assert (builtin);

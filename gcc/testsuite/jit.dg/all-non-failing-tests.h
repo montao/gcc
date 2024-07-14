@@ -42,6 +42,13 @@
 #undef create_code
 #undef verify_code
 
+/* test-alignof.c */
+#define create_code create_code_alignof
+#define verify_code verify_code_alignof
+#include "test-alignof.c"
+#undef create_code
+#undef verify_code
+
 /* test-always_inline-attribute.c: This can't be in the testcases array as it needs
    the `-O0` flag.  */
 
@@ -72,6 +79,9 @@
 #include "test-autovectorize.c"
 #undef create_code
 #undef verify_code
+
+/* test-bfloat16.c: This can't be in the testcases array as it
+   is target-specific.  */
 
 /* test-builtin-memcpy.c */
 #define create_code create_code_builtin_memcpy
@@ -353,6 +363,13 @@
 /* test-setting-alignment.c: This can't be in the testcases array as it
    is target-specific.  */
 
+/* test-sizeof.c */
+#define create_code create_code_sizeof
+#define verify_code verify_code_sizeof
+#include "test-sizeof.c"
+#undef create_code
+#undef verify_code
+
 /* test-string-literal.c */
 #define create_code create_code_string_literal
 #define verify_code verify_code_string_literal
@@ -442,6 +459,9 @@ const struct testcase testcases[] = {
   {"accessing_union",
    create_code_accessing_union,
    verify_code_accessing_union},
+  {"alignof",
+   create_code_alignof,
+   verify_code_alignof},
   {"alignment",
    create_code_alignment,
    verify_code_alignment},
@@ -553,6 +573,9 @@ const struct testcase testcases[] = {
   {"reflection",
    create_code_reflection ,
    verify_code_reflection },
+  {"sizeof",
+   create_code_sizeof,
+   verify_code_sizeof},
   {"string_literal",
    create_code_string_literal,
    verify_code_string_literal},

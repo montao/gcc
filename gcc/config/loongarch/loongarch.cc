@@ -208,9 +208,6 @@ const enum reg_class loongarch_regno_to_class[FIRST_PSEUDO_REGISTER] = {
     FRAME_REGS,	FRAME_REGS
 };
 
-/* Which cost information to use.  */
-static const struct loongarch_rtx_cost_data *loongarch_cost;
-
 /* Information about a single argument.  */
 struct loongarch_arg_info
 {
@@ -767,7 +764,13 @@ loongarch_setup_incoming_varargs (cumulative_args_t cum,
      argument.  Advance a local copy of CUM past the last "real" named
      argument, to find out how many registers are left over.  */
   local_cum = *get_cumulative_args (cum);
-  if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl)))
+
+  /* For a C23 variadic function w/o any named argument, and w/o an
+     artifical argument for large return value, skip advancing args.
+     There is such an artifical argument iff. arg.type is non-NULL
+     (PR 114175).  */
+  if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl))
+      || arg.type != NULL_TREE)
     loongarch_function_arg_advance (pack_cumulative_args (&local_cum), arg);
 
   /* Found out how many registers we need to save.  */
@@ -1935,8 +1938,13 @@ loongarch_symbolic_constant_p (rtx x, enum loongarch_symbol_type *symbol_type)
      relocations.  */
   switch (*symbol_type)
     {
-    case SYMBOL_PCREL:
     case SYMBOL_PCREL64:
+      /* When the code model is extreme, the non-zero offset situation
+	 has not been handled well, so it is disabled here now.  */
+      if (!loongarch_explicit_relocs_p (SYMBOL_PCREL64))
+	return false;
+    /* fall through */
+    case SYMBOL_PCREL:
       /* GAS rejects offsets outside the range [-2^31, 2^31-1].  */
       return sext_hwi (INTVAL (offset), 32) == INTVAL (offset);
 
@@ -1966,6 +1974,10 @@ loongarch_explicit_relocs_p (enum loongarch_symbol_type type)
   if (la_opt_explicit_relocs != EXPLICIT_RELOCS_AUTO)
     return la_opt_explicit_relocs == EXPLICIT_RELOCS_ALWAYS;
 
+  /* The linker don't know how to relax accesses in extreme code model.  */
+  if (loongarch_symbol_extreme_p (type))
+    return true;
+
   switch (type)
     {
       case SYMBOL_TLS_IE:
@@ -1977,11 +1989,6 @@ loongarch_explicit_relocs_p (enum loongarch_symbol_type type)
 	   does not relax 64-bit pc-relative accesses as at now.  */
 	return true;
       case SYMBOL_GOT_DISP:
-	/* The linker don't know how to relax GOT accesses in extreme
-	   code model.  */
-	if (TARGET_CMODEL_EXTREME)
-	  return true;
-
 	/* If we are performing LTO for a final link, and we have the
 	   linker plugin so we know the resolution of the symbols, then
 	   all GOT references are binding to external symbols or
@@ -2003,7 +2010,8 @@ loongarch_symbol_insns (enum loongarch_symbol_type type, machine_mode mode)
 {
   /* LSX LD.* and ST.* cannot support loading symbols via an immediate
      operand.  */
-  if (LSX_SUPPORTED_MODE_P (mode) || LASX_SUPPORTED_MODE_P (mode))
+  if (mode != MAX_MACHINE_MODE
+      && (LSX_SUPPORTED_MODE_P (mode) || LASX_SUPPORTED_MODE_P (mode)))
     return 0;
 
   switch (type)
@@ -2023,7 +2031,7 @@ loongarch_symbol_insns (enum loongarch_symbol_type type, machine_mode mode)
 
     case SYMBOL_TLSGD:
     case SYMBOL_TLSLDM:
-      return 3;
+      return TARGET_TLS_DESC ? 4 : 3;
 
     case SYMBOL_PCREL64:
       return 5;
@@ -2733,39 +2741,21 @@ loongarch_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
   return plus_constant (Pmode, reg, offset);
 }
 
-/* The __tls_get_attr symbol.  */
+/* The __tls_get_addr symbol.  */
 static GTY (()) rtx loongarch_tls_symbol;
 
-/* Load an entry from the GOT for a TLS GD access.  */
+/* Load an entry for a TLS access.  */
 
 static rtx
-loongarch_got_load_tls_gd (rtx dest, rtx sym)
+loongarch_load_tls (rtx dest, rtx sym, enum loongarch_symbol_type type)
 {
-  return gen_got_load_tls_gd (Pmode, dest, sym);
-}
+  /* TLS LE gets a 32 or 64 bit offset here, so one register can do it.  */
+  if (type == SYMBOL_TLS_LE)
+    return gen_load_tls (Pmode, dest, sym);
 
-/* Load an entry from the GOT for a TLS LD access.  */
-
-static rtx
-loongarch_got_load_tls_ld (rtx dest, rtx sym)
-{
-  return gen_got_load_tls_ld (Pmode, dest, sym);
-}
-
-/* Load an entry from the GOT for a TLS IE access.  */
-
-static rtx
-loongarch_got_load_tls_ie (rtx dest, rtx sym)
-{
-  return gen_got_load_tls_ie (Pmode, dest, sym);
-}
-
-/* Add in the thread pointer for a TLS LE access.  */
-
-static rtx
-loongarch_got_load_tls_le (rtx dest, rtx sym)
-{
-  return gen_got_load_tls_le (Pmode, dest, sym);
+  return loongarch_symbol_extreme_p (type)
+    ? gen_movdi_symbolic_off64 (dest, sym, gen_reg_rtx (DImode))
+    : gen_load_tls (Pmode, dest, sym);
 }
 
 /* Return an instruction sequence that calls __tls_get_addr.  SYM is
@@ -2789,34 +2779,27 @@ loongarch_call_tls_get_addr (rtx sym, enum loongarch_symbol_type type, rtx v0)
 
   start_sequence ();
 
-  if (la_opt_explicit_relocs == EXPLICIT_RELOCS_ALWAYS)
+  if (loongarch_explicit_relocs_p (type))
     {
-      /* Split tls symbol to high and low.  */
-      rtx high = gen_rtx_HIGH (Pmode, copy_rtx (loc));
-      high = loongarch_force_temporary (tmp, high);
-
       if (TARGET_CMODEL_EXTREME)
 	{
-	  gcc_assert (TARGET_EXPLICIT_RELOCS);
+	  rtx part1 = gen_reg_rtx (Pmode);
+	  rtx part2 = gen_reg_rtx (Pmode);
 
-	  rtx tmp1 = gen_reg_rtx (Pmode);
-	  emit_insn (gen_tls_low (Pmode, tmp1, gen_rtx_REG (Pmode, 0), loc));
-	  emit_insn (gen_lui_h_lo20 (tmp1, tmp1, loc));
-	  emit_insn (gen_lui_h_hi12 (tmp1, tmp1, loc));
-	  emit_move_insn (a0, gen_rtx_PLUS (Pmode, high, tmp1));
+	  emit_insn (gen_la_pcrel64_two_parts (part1, part2, loc));
+	  emit_move_insn (a0, gen_rtx_PLUS (Pmode, part1, part2));
 	}
       else
-	emit_insn (gen_tls_low (Pmode, a0, high, loc));
+	{
+	  /* Split tls symbol to high and low.  */
+	  rtx high = gen_rtx_HIGH (Pmode, copy_rtx (loc));
+
+	  high = loongarch_force_temporary (tmp, high);
+	  emit_insn (gen_tls_low (Pmode, a0, high, loc));
+	}
     }
   else
-    {
-      if (type == SYMBOL_TLSLDM)
-	emit_insn (loongarch_got_load_tls_ld (a0, loc));
-      else if (type == SYMBOL_TLSGD)
-	emit_insn (loongarch_got_load_tls_gd (a0, loc));
-      else
-	gcc_unreachable ();
-    }
+    emit_insn (loongarch_load_tls (a0, loc, type));
 
   if (flag_plt)
     {
@@ -2830,17 +2813,27 @@ loongarch_call_tls_get_addr (rtx sym, enum loongarch_symbol_type type, rtx v0)
 
 	case CMODEL_MEDIUM:
 	    {
-	      rtx reg = gen_reg_rtx (Pmode);
-	      if (TARGET_EXPLICIT_RELOCS)
+	      if (la_opt_explicit_relocs != EXPLICIT_RELOCS_NONE)
 		{
-		  emit_insn (gen_pcalau12i (Pmode, reg, loongarch_tls_symbol));
-		  rtx call = gen_call_value_internal_1 (Pmode, v0, reg,
-							loongarch_tls_symbol,
-							const0_rtx);
-		  insn = emit_call_insn (call);
+		  rtx call;
+
+		 if (HAVE_AS_SUPPORT_CALL36)
+		   call = gen_call_value_internal (v0, loongarch_tls_symbol,
+						   const0_rtx);
+		 else
+		   {
+		     rtx reg = gen_reg_rtx (Pmode);
+		     emit_insn (gen_pcalau12i (Pmode, reg,
+					       loongarch_tls_symbol));
+		     call = gen_call_value_internal_1 (Pmode, v0, reg,
+						       loongarch_tls_symbol,
+						       const0_rtx);
+		   }
+		 insn = emit_call_insn (call);
 		}
 	      else
 		{
+		  rtx reg = gen_reg_rtx (Pmode);
 		  emit_move_insn (reg, loongarch_tls_symbol);
 		  insn = emit_call_insn (gen_call_value_internal (v0,
 								  reg,
@@ -2867,7 +2860,7 @@ loongarch_call_tls_get_addr (rtx sym, enum loongarch_symbol_type type, rtx v0)
 	case CMODEL_NORMAL:
 	case CMODEL_MEDIUM:
 	    {
-	      if (TARGET_EXPLICIT_RELOCS)
+	      if (loongarch_explicit_relocs_p (SYMBOL_GOT_DISP))
 		{
 		  rtx high = gen_reg_rtx (Pmode);
 		  loongarch_emit_move (high,
@@ -2883,22 +2876,34 @@ loongarch_call_tls_get_addr (rtx sym, enum loongarch_symbol_type type, rtx v0)
 
 	case CMODEL_EXTREME:
 	    {
-	      gcc_assert (TARGET_EXPLICIT_RELOCS);
+	      if (loongarch_explicit_relocs_p (SYMBOL_GOT_DISP))
+		{
+		  gcc_assert (la_opt_explicit_relocs != EXPLICIT_RELOCS_NONE);
 
-	      rtx tmp1 = gen_reg_rtx (Pmode);
-	      rtx high = gen_reg_rtx (Pmode);
+		  rtx part1 = gen_reg_rtx (Pmode);
+		  rtx part2 = gen_reg_rtx (Pmode);
 
-	      loongarch_emit_move (high,
-				   gen_rtx_HIGH (Pmode, loongarch_tls_symbol));
-	      loongarch_emit_move (tmp1, gen_rtx_LO_SUM (Pmode,
-							 gen_rtx_REG (Pmode, 0),
-							 loongarch_tls_symbol));
-	      emit_insn (gen_lui_h_lo20 (tmp1, tmp1, loongarch_tls_symbol));
-	      emit_insn (gen_lui_h_hi12 (tmp1, tmp1, loongarch_tls_symbol));
-	      loongarch_emit_move (dest,
-				   gen_rtx_MEM (Pmode,
-						gen_rtx_PLUS (Pmode,
-							      high, tmp1)));
+		  emit_insn (gen_la_pcrel64_two_parts (part1, part2,
+						       loongarch_tls_symbol));
+		  loongarch_emit_move (
+		    dest,
+		    gen_rtx_MEM (Pmode, gen_rtx_PLUS (Pmode,
+						      part1,
+						      part2)));
+
+		  /* Put an REG_EQUAL note here to allow CSE (storing
+		     part1 + part2, i.e. the address of tls_get_addr into
+		     a saved register and use it for multiple TLS
+		     accesses).  */
+		  rtx sum = gen_rtx_UNSPEC (
+		    Pmode, gen_rtvec (1, loongarch_tls_symbol),
+		    UNSPEC_ADDRESS_FIRST
+		    + loongarch_classify_symbol (loongarch_tls_symbol));
+		  set_unique_reg_note (get_last_insn (), REG_EQUAL, sum);
+		}
+	      else
+	       emit_insn (gen_movdi_symbolic_off64 (dest, loongarch_tls_symbol,
+						    gen_reg_rtx (DImode)));
 	    }
 	  break;
 
@@ -2928,24 +2933,43 @@ loongarch_call_tls_get_addr (rtx sym, enum loongarch_symbol_type type, rtx v0)
 static rtx
 loongarch_legitimize_tls_address (rtx loc)
 {
-  rtx dest, tp, tmp, tmp1, tmp2, tmp3;
+  rtx dest, tp, tmp, tmp1, tmp2, tmp3, a0;
   enum tls_model model = SYMBOL_REF_TLS_MODEL (loc);
   rtx_insn *insn;
 
   switch (model)
     {
     case TLS_MODEL_LOCAL_DYNAMIC:
-      tmp = gen_rtx_REG (Pmode, GP_RETURN);
-      dest = gen_reg_rtx (Pmode);
-      insn = loongarch_call_tls_get_addr (loc, SYMBOL_TLSLDM, tmp);
-      emit_libcall_block (insn, dest, tmp, loc);
-      break;
-
+      if (!TARGET_TLS_DESC)
+	{
+	  tmp = gen_rtx_REG (Pmode, GP_RETURN);
+	  dest = gen_reg_rtx (Pmode);
+	  insn = loongarch_call_tls_get_addr (loc, SYMBOL_TLSLDM, tmp);
+	  emit_libcall_block (insn, dest, tmp, loc);
+	  break;
+	}
+      /* Fall through.  */
     case TLS_MODEL_GLOBAL_DYNAMIC:
-      tmp = gen_rtx_REG (Pmode, GP_RETURN);
-      dest = gen_reg_rtx (Pmode);
-      insn = loongarch_call_tls_get_addr (loc, SYMBOL_TLSGD, tmp);
-      emit_libcall_block (insn, dest, tmp, loc);
+      if (TARGET_TLS_DESC)
+	{
+	  a0 = gen_rtx_REG (Pmode, GP_ARG_FIRST);
+	  dest = gen_reg_rtx (Pmode);
+	  tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
+
+	  if (TARGET_CMODEL_EXTREME)
+	    emit_insn (gen_got_load_tls_desc_off64 (loc, gen_reg_rtx (DImode)));
+	  else
+	    emit_insn (gen_got_load_tls_desc (Pmode, loc));
+
+	  emit_insn (gen_add3_insn (dest, a0, tp));
+	}
+      else
+	{
+	  tmp = gen_rtx_REG (Pmode, GP_RETURN);
+	  dest = gen_reg_rtx (Pmode);
+	  insn = loongarch_call_tls_get_addr (loc, SYMBOL_TLSGD, tmp);
+	  emit_libcall_block (insn, dest, tmp, loc);
+	}
       break;
 
     case TLS_MODEL_INITIAL_EXEC:
@@ -2953,33 +2977,37 @@ loongarch_legitimize_tls_address (rtx loc)
 	  /* la.tls.ie; tp-relative add.  */
 	  tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
 	  tmp1 = gen_reg_rtx (Pmode);
+	  tmp2 = loongarch_unspec_address (loc, SYMBOL_TLS_IE);
 	  dest = gen_reg_rtx (Pmode);
-	  if (la_opt_explicit_relocs != EXPLICIT_RELOCS_NONE)
+	  if (loongarch_explicit_relocs_p (SYMBOL_TLS_IE))
 	    {
-	      tmp2 = loongarch_unspec_address (loc, SYMBOL_TLS_IE);
-	      tmp3 = gen_reg_rtx (Pmode);
-	      rtx high = gen_rtx_HIGH (Pmode, copy_rtx (tmp2));
-	      high = loongarch_force_temporary (tmp3, high);
-
 	      if (TARGET_CMODEL_EXTREME)
 		{
-		  gcc_assert (TARGET_EXPLICIT_RELOCS);
+		  gcc_assert (la_opt_explicit_relocs
+			      != EXPLICIT_RELOCS_NONE);
 
-		  rtx tmp3 = gen_reg_rtx (Pmode);
-		  emit_insn (gen_tls_low (Pmode, tmp3,
-					  gen_rtx_REG (Pmode, 0), tmp2));
-		  emit_insn (gen_lui_h_lo20 (tmp3, tmp3, tmp2));
-		  emit_insn (gen_lui_h_hi12 (tmp3, tmp3, tmp2));
+		  rtx part1 = gen_reg_rtx (Pmode);
+		  rtx part2 = gen_reg_rtx (Pmode);
+
+		  emit_insn (gen_la_pcrel64_two_parts (part1, part2,
+						       tmp2));
 		  emit_move_insn (tmp1,
 				  gen_rtx_MEM (Pmode,
 					       gen_rtx_PLUS (Pmode,
-							     high, tmp3)));
+							     part1,
+							     part2)));
 		}
 	      else
-		emit_insn (gen_ld_from_got (Pmode, tmp1, high, tmp2));
+		{
+		  tmp3 = gen_reg_rtx (Pmode);
+		  rtx high = gen_rtx_HIGH (Pmode, copy_rtx (tmp2));
+
+		  high = loongarch_force_temporary (tmp3, high);
+		  emit_insn (gen_ld_from_got (Pmode, tmp1, high, tmp2));
+		}
 	    }
 	  else
-	    emit_insn (loongarch_got_load_tls_ie (tmp1, loc));
+	    emit_insn (loongarch_load_tls (tmp1, tmp2, SYMBOL_TLS_IE));
 	  emit_insn (gen_add3_insn (dest, tmp1, tp));
 	}
       break;
@@ -3011,11 +3039,11 @@ loongarch_legitimize_tls_address (rtx loc)
 
 	  tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
 	  tmp1 = gen_reg_rtx (Pmode);
+	  tmp2 = loongarch_unspec_address (loc, SYMBOL_TLS_LE);
 	  dest = gen_reg_rtx (Pmode);
 
-	  if (la_opt_explicit_relocs != EXPLICIT_RELOCS_NONE)
+	  if (loongarch_explicit_relocs_p (SYMBOL_TLS_LE))
 	    {
-	      tmp2 = loongarch_unspec_address (loc, SYMBOL_TLS_LE);
 	      tmp3 = gen_reg_rtx (Pmode);
 	      rtx high = gen_rtx_HIGH (Pmode, copy_rtx (tmp2));
 	      high = loongarch_force_temporary (tmp3, high);
@@ -3036,14 +3064,12 @@ loongarch_legitimize_tls_address (rtx loc)
 
 	      if (TARGET_CMODEL_EXTREME)
 		{
-		  gcc_assert (TARGET_EXPLICIT_RELOCS);
-
 		  emit_insn (gen_lui_h_lo20 (tmp1, tmp1, tmp2));
 		  emit_insn (gen_lui_h_hi12 (tmp1, tmp1, tmp2));
 		}
 	    }
 	  else
-	    emit_insn (loongarch_got_load_tls_le (tmp1, loc));
+	    emit_insn (loongarch_load_tls (tmp1, tmp2, SYMBOL_TLS_LE));
 	  emit_insn (gen_add3_insn (dest, tmp1, tp));
 	}
       break;
@@ -3116,7 +3142,7 @@ loongarch_force_address (rtx x, machine_mode mode)
   return x;
 }
 
-static bool
+bool
 loongarch_symbol_extreme_p (enum loongarch_symbol_type type)
 {
   switch (type)
@@ -3157,24 +3183,23 @@ loongarch_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
       || !loongarch_split_symbol_type (symbol_type))
     return false;
 
-  rtx high, temp1 = NULL;
+  rtx high;
 
   if (temp == NULL)
     temp = gen_reg_rtx (Pmode);
-
-  /* Get the 12-31 bits of the address.  */
-  high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
-  high = loongarch_force_temporary (temp, high);
 
   if (loongarch_symbol_extreme_p (symbol_type) && can_create_pseudo_p ())
     {
       gcc_assert (la_opt_explicit_relocs != EXPLICIT_RELOCS_NONE);
 
-      temp1 = gen_reg_rtx (Pmode);
-      emit_move_insn (temp1, gen_rtx_LO_SUM (Pmode, gen_rtx_REG (Pmode, 0),
-					     addr));
-      emit_insn (gen_lui_h_lo20 (temp1, temp1, addr));
-      emit_insn (gen_lui_h_hi12 (temp1, temp1, addr));
+      high = gen_reg_rtx (Pmode);
+      emit_insn (gen_la_pcrel64_two_parts (high, temp, addr));
+    }
+  else
+    {
+      /* Get the 12-31 bits of the address.  */
+      high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
+      high = loongarch_force_temporary (temp, high);
     }
 
   if (low_out)
@@ -3183,7 +3208,7 @@ loongarch_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
       case SYMBOL_PCREL64:
 	if (can_create_pseudo_p ())
 	  {
-	    *low_out = gen_rtx_PLUS (Pmode, high, temp1);
+	    *low_out = gen_rtx_PLUS (Pmode, high, temp);
 	    break;
 	  }
 	/* fall through */
@@ -3195,7 +3220,8 @@ loongarch_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 	/* SYMBOL_GOT_DISP symbols are loaded from the GOT.  */
 	{
 	  if (TARGET_CMODEL_EXTREME && can_create_pseudo_p ())
-	    *low_out = gen_rtx_MEM (Pmode, gen_rtx_PLUS (Pmode, high, temp1));
+	    *low_out = gen_rtx_MEM (Pmode, gen_rtx_PLUS (Pmode, high,
+							 temp));
 	  else
 	    {
 	      rtx low = gen_rtx_LO_SUM (Pmode, high, addr);
@@ -3217,6 +3243,22 @@ loongarch_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
       }
 
   return true;
+}
+
+/* Helper loongarch_legitimize_address.  Given X, return true if it
+   is a left shift by 1, 2 or 3 positions or a multiply by 2, 4 or 8.
+
+   This respectively represent canonical shift-add rtxs or scaled
+   memory addresses.  */
+static bool
+mem_shadd_or_shadd_rtx_p (rtx x)
+{
+  return ((GET_CODE (x) == ASHIFT
+	   || GET_CODE (x) == MULT)
+	  && CONST_INT_P (XEXP (x, 1))
+	  && ((GET_CODE (x) == ASHIFT && IN_RANGE (INTVAL (XEXP (x, 1)), 1, 3))
+	      || (GET_CODE (x) == MULT
+		  && IN_RANGE (exact_log2 (INTVAL (XEXP (x, 1))), 1, 3))));
 }
 
 /* This function is used to implement LEGITIMIZE_ADDRESS.  If X can
@@ -3242,6 +3284,33 @@ loongarch_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED,
   loongarch_split_plus (x, &base, &offset);
   if (offset != 0)
     {
+      /* Handle (plus (plus (mult (a) (mem_shadd_constant)) (fp)) (C)) case.  */
+      if (GET_CODE (base) == PLUS && mem_shadd_or_shadd_rtx_p (XEXP (base, 0))
+	  && IMM12_OPERAND (offset))
+	{
+	  rtx index = XEXP (base, 0);
+	  rtx fp = XEXP (base, 1);
+
+	  if (REG_P (fp) && REGNO (fp) == VIRTUAL_STACK_VARS_REGNUM)
+	    {
+	      /* If we were given a MULT, we must fix the constant
+		 as we're going to create the ASHIFT form.  */
+	      int shift_val = INTVAL (XEXP (index, 1));
+	      if (GET_CODE (index) == MULT)
+		shift_val = exact_log2 (shift_val);
+
+	      rtx reg1 = gen_reg_rtx (Pmode);
+	      rtx reg3 = gen_reg_rtx (Pmode);
+	      loongarch_emit_binary (PLUS, reg1, fp, GEN_INT (offset));
+	      loongarch_emit_binary (PLUS, reg3,
+				     gen_rtx_ASHIFT (Pmode, XEXP (index, 0),
+						     GEN_INT (shift_val)),
+				     reg1);
+
+	      return reg3;
+	    }
+	}
+
       if (!loongarch_valid_base_register_p (base, mode, false))
 	base = copy_to_mode_reg (Pmode, base);
       addr = loongarch_add_offset (NULL, base, offset);
@@ -3391,6 +3460,21 @@ loongarch_legitimize_move (machine_mode mode, rtx dest, rtx src)
     {
       loongarch_legitimize_const_move (mode, dest, src);
       set_unique_reg_note (get_last_insn (), REG_EQUAL, copy_rtx (src));
+      return true;
+    }
+
+  /* Obtain the address of the symbol through the macro instruction
+     of two registers.  */
+  enum loongarch_symbol_type symbol_type;
+  if (TARGET_64BIT && register_operand (dest, mode)
+      && loongarch_symbolic_constant_p (src, &symbol_type)
+      && loongarch_symbol_extreme_p (symbol_type))
+    {
+      gcc_assert (can_create_pseudo_p ());
+      rtx tmp_reg = gen_reg_rtx (DImode);
+      emit_insn (gen_movdi_symbolic_off64 (dest, src, tmp_reg));
+      set_unique_reg_note (get_last_insn (), REG_UNUSED, tmp_reg);
+      set_unique_reg_note (get_last_insn (), REG_EQUAL, src);
       return true;
     }
 
@@ -3597,6 +3681,27 @@ loongarch_set_reg_reg_piece_cost (machine_mode mode, unsigned int units)
   return COSTS_N_INSNS ((GET_MODE_SIZE (mode) + units - 1) / units);
 }
 
+static int
+loongarch_use_bstrins_for_ior_with_mask_1 (machine_mode mode,
+					   unsigned HOST_WIDE_INT mask1,
+					   unsigned HOST_WIDE_INT mask2)
+{
+  if (mask1 != ~mask2 || !mask1 || !mask2)
+    return 0;
+
+  /* Try to avoid a right-shift.  */
+  if (low_bitmask_len (mode, mask1) != -1)
+    return -1;
+
+  if (low_bitmask_len (mode, mask2 >> (ffs_hwi (mask2) - 1)) != -1)
+    return 1;
+
+  if (low_bitmask_len (mode, mask1 >> (ffs_hwi (mask1) - 1)) != -1)
+    return -1;
+
+  return 0;
+}
+
 /* Return the cost of moving between two registers of mode MODE.  */
 
 static int
@@ -3728,6 +3833,38 @@ loongarch_rtx_costs (rtx x, machine_mode mode, int outer_code,
       /* Fall through.  */
 
     case IOR:
+      {
+	rtx op[2] = {XEXP (x, 0), XEXP (x, 1)};
+	if (GET_CODE (op[0]) == AND && GET_CODE (op[1]) == AND
+	    && (mode == SImode || (TARGET_64BIT && mode == DImode)))
+	  {
+	    rtx rtx_mask0 = XEXP (op[0], 1), rtx_mask1 = XEXP (op[1], 1);
+	    if (CONST_INT_P (rtx_mask0) && CONST_INT_P (rtx_mask1))
+	      {
+		unsigned HOST_WIDE_INT mask0 = UINTVAL (rtx_mask0);
+		unsigned HOST_WIDE_INT mask1 = UINTVAL (rtx_mask1);
+		if (loongarch_use_bstrins_for_ior_with_mask_1 (mode,
+							       mask0,
+							       mask1))
+		  {
+		    /* A bstrins instruction */
+		    *total = COSTS_N_INSNS (1);
+
+		    /* A srai instruction */
+		    if (low_bitmask_len (mode, mask0) == -1
+			&& low_bitmask_len (mode, mask1) == -1)
+		      *total += COSTS_N_INSNS (1);
+
+		    for (int i = 0; i < 2; i++)
+		      *total += set_src_cost (XEXP (op[i], 0), mode, speed);
+
+		    return true;
+		  }
+	      }
+	  }
+      }
+
+      /* Fall through.  */
     case XOR:
       /* Double-word operations use two single-word operations.  */
       *total = loongarch_binary_cost (x, COSTS_N_INSNS (1), COSTS_N_INSNS (2),
@@ -4096,6 +4233,37 @@ loongarch_vector_costs::determine_suggested_unroll_factor (loop_vec_info loop_vi
   return 1 << ceil_log2 (uf);
 }
 
+/* Check if assign stmt rhs op comes from a multiply-add operation.  */
+static bool
+loongarch_multiply_add_p (vec_info *vinfo, stmt_vec_info stmt_info)
+{
+  gassign *assign = dyn_cast<gassign *> (stmt_info->stmt);
+  if (!assign)
+    return false;
+  tree_code code = gimple_assign_rhs_code (assign);
+  if (code != PLUS_EXPR && code != MINUS_EXPR)
+    return false;
+
+  auto is_mul_result = [&](int i)
+    {
+      tree rhs = gimple_op (assign, i);
+      if (TREE_CODE (rhs) != SSA_NAME)
+	return false;
+
+      stmt_vec_info def_stmt_info = vinfo->lookup_def (rhs);
+      if (!def_stmt_info
+	  || STMT_VINFO_DEF_TYPE (def_stmt_info) != vect_internal_def)
+	return false;
+      gassign *rhs_assign = dyn_cast<gassign *> (def_stmt_info->stmt);
+      if (!rhs_assign || gimple_assign_rhs_code (rhs_assign) != MULT_EXPR)
+	return false;
+
+      return true;
+    };
+
+  return is_mul_result (1) || is_mul_result (2);
+}
+
 unsigned
 loongarch_vector_costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
 				       stmt_vec_info stmt_info, slp_tree,
@@ -4108,6 +4276,23 @@ loongarch_vector_costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
     {
       int stmt_cost = loongarch_builtin_vectorization_cost (kind, vectype,
 							    misalign);
+      if (vectype && stmt_info)
+	{
+	  gassign *assign = dyn_cast<gassign *> (STMT_VINFO_STMT (stmt_info));
+	  machine_mode mode = TYPE_MODE (vectype);
+
+	  /* We found through testing that this strategy (the stmt that
+	     matches the multiply-add pattern) has positive returns only
+	     when applied to the 128-bit vector stmt, so this restriction
+	     is currently made.  */
+	  if (kind == vector_stmt && GET_MODE_SIZE (mode) == 16 && assign)
+	    {
+	      if (!vect_is_reduction (stmt_info)
+		  && loongarch_multiply_add_p (m_vinfo, stmt_info))
+		stmt_cost = 0;
+	    }
+	}
+
       retval = adjust_cost_for_freq (stmt_info, where, count * stmt_cost);
       m_costs[where] += retval;
 
@@ -4187,6 +4372,33 @@ loongarch_address_cost (rtx addr, machine_mode mode,
   return loongarch_address_insns (addr, mode, false);
 }
 
+/* Implement TARGET_INSN_COST.  */
+
+static int
+loongarch_insn_cost (rtx_insn *insn, bool speed)
+{
+  rtx x = PATTERN (insn);
+  int cost = pattern_cost (x, speed);
+
+  /* On LA464, prevent movcf2fr and movfr2gr from merging into movcf2gr.  */
+  if (GET_CODE (x) == SET
+      && GET_MODE (XEXP (x, 0)) == FCCmode)
+    {
+      rtx dest, src;
+      dest = XEXP (x, 0);
+      src = XEXP (x, 1);
+
+      if (REG_P (dest) && REG_P (src))
+	{
+	  if (GP_REG_P (REGNO (dest)) && FCC_REG_P (REGNO (src)))
+	    cost = loongarch_cost->movcf2gr;
+	  else if (FCC_REG_P (REGNO (dest)) && GP_REG_P (REGNO (src)))
+	    cost = loongarch_cost->movgr2cf;
+	}
+    }
+  return cost;
+}
+
 /* Return one word of double-word value OP, taking into account the fixed
    endianness of certain registers.  HIGH_P is true to select the high part,
    false to select the low part.  */
@@ -4250,42 +4462,13 @@ loongarch_split_move_p (rtx dest, rtx src)
 void
 loongarch_split_move (rtx dest, rtx src)
 {
-  rtx low_dest;
-
   gcc_checking_assert (loongarch_split_move_p (dest, src));
   if (LSX_SUPPORTED_MODE_P (GET_MODE (dest)))
     loongarch_split_128bit_move (dest, src);
   else if (LASX_SUPPORTED_MODE_P (GET_MODE (dest)))
     loongarch_split_256bit_move (dest, src);
-  else if (FP_REG_RTX_P (dest) || FP_REG_RTX_P (src))
-    {
-      if (!TARGET_64BIT && GET_MODE (dest) == DImode)
-	emit_insn (gen_move_doubleword_fprdi (dest, src));
-      else if (!TARGET_64BIT && GET_MODE (dest) == DFmode)
-	emit_insn (gen_move_doubleword_fprdf (dest, src));
-      else if (TARGET_64BIT && GET_MODE (dest) == TFmode)
-	emit_insn (gen_move_doubleword_fprtf (dest, src));
-      else
-	gcc_unreachable ();
-    }
   else
-    {
-      /* The operation can be split into two normal moves.  Decide in
-	 which order to do them.  */
-      low_dest = loongarch_subword (dest, false);
-      if (REG_P (low_dest) && reg_overlap_mentioned_p (low_dest, src))
-	{
-	  loongarch_emit_move (loongarch_subword (dest, true),
-			       loongarch_subword (src, true));
-	  loongarch_emit_move (low_dest, loongarch_subword (src, false));
-	}
-      else
-	{
-	  loongarch_emit_move (low_dest, loongarch_subword (src, false));
-	  loongarch_emit_move (loongarch_subword (dest, true),
-			       loongarch_subword (src, true));
-	}
-    }
+    gcc_unreachable ();
 }
 
 /* Check if adding an integer constant value for a specific mode can be
@@ -4643,82 +4826,6 @@ loongarch_split_256bit_move (rtx dest, rtx src)
     }
 }
 
-
-/* Split a COPY_S.D with operands DEST, SRC and INDEX.  GEN is a function
-   used to generate subregs.  */
-
-void
-loongarch_split_lsx_copy_d (rtx dest, rtx src, rtx index,
-			    rtx (*gen_fn)(rtx, rtx, rtx))
-{
-  gcc_assert ((GET_MODE (src) == V2DImode && GET_MODE (dest) == DImode)
-	      || (GET_MODE (src) == V2DFmode && GET_MODE (dest) == DFmode));
-
-  /* Note that low is always from the lower index, and high is always
-     from the higher index.  */
-  rtx low = loongarch_subword (dest, false);
-  rtx high = loongarch_subword (dest, true);
-  rtx new_src = simplify_gen_subreg (V4SImode, src, GET_MODE (src), 0);
-
-  emit_insn (gen_fn (low, new_src, GEN_INT (INTVAL (index) * 2)));
-  emit_insn (gen_fn (high, new_src, GEN_INT (INTVAL (index) * 2 + 1)));
-}
-
-/* Split a INSERT.D with operand DEST, SRC1.INDEX and SRC2.  */
-
-void
-loongarch_split_lsx_insert_d (rtx dest, rtx src1, rtx index, rtx src2)
-{
-  int i;
-  gcc_assert (GET_MODE (dest) == GET_MODE (src1));
-  gcc_assert ((GET_MODE (dest) == V2DImode
-	       && (GET_MODE (src2) == DImode || src2 == const0_rtx))
-	      || (GET_MODE (dest) == V2DFmode && GET_MODE (src2) == DFmode));
-
-  /* Note that low is always from the lower index, and high is always
-     from the higher index.  */
-  rtx low = loongarch_subword (src2, false);
-  rtx high = loongarch_subword (src2, true);
-  rtx new_dest = simplify_gen_subreg (V4SImode, dest, GET_MODE (dest), 0);
-  rtx new_src1 = simplify_gen_subreg (V4SImode, src1, GET_MODE (src1), 0);
-  i = exact_log2 (INTVAL (index));
-  gcc_assert (i != -1);
-
-  emit_insn (gen_lsx_vinsgr2vr_w (new_dest, low, new_src1,
-				  GEN_INT (1 << (i * 2))));
-  emit_insn (gen_lsx_vinsgr2vr_w (new_dest, high, new_dest,
-				  GEN_INT (1 << (i * 2 + 1))));
-}
-
-/* Split FILL.D.  */
-
-void
-loongarch_split_lsx_fill_d (rtx dest, rtx src)
-{
-  gcc_assert ((GET_MODE (dest) == V2DImode
-	       && (GET_MODE (src) == DImode || src == const0_rtx))
-	      || (GET_MODE (dest) == V2DFmode && GET_MODE (src) == DFmode));
-
-  /* Note that low is always from the lower index, and high is always
-     from the higher index.  */
-  rtx low, high;
-  if (src == const0_rtx)
-    {
-      low = src;
-      high = src;
-    }
-  else
-    {
-      low = loongarch_subword (src, false);
-      high = loongarch_subword (src, true);
-    }
-  rtx new_dest = simplify_gen_subreg (V4SImode, dest, GET_MODE (dest), 0);
-  emit_insn (gen_lsx_vreplgr2vr_w (new_dest, low));
-  emit_insn (gen_lsx_vinsgr2vr_w (new_dest, high, new_dest, GEN_INT (1 << 1)));
-  emit_insn (gen_lsx_vinsgr2vr_w (new_dest, high, new_dest, GEN_INT (1 << 3)));
-}
-
-
 /* Return the appropriate instructions to move SRC into DEST.  Assume
    that SRC is operand 1 and DEST is operand 0.  */
 
@@ -4871,7 +4978,7 @@ loongarch_output_move (rtx dest, rtx src)
 	  if (type == SYMBOL_TLS_LE)
 	    return "lu12i.w\t%0,%h1";
 	  else
-	    return "pcalau12i\t%0,%h1";
+	    return "%Q1pcalau12i\t%0,%h1";
 	}
 
       if (src_code == CONST_INT)
@@ -5288,6 +5395,7 @@ loongarch_expand_conditional_move (rtx *operands)
   rtx op1_extend = op1;
 
   /* Record whether operands[2] and operands[3] modes are promoted to word_mode.  */
+  bool promote_op[2] = {false, false};
   bool promote_p = false;
   machine_mode mode = GET_MODE (operands[0]);
 
@@ -5295,9 +5403,15 @@ loongarch_expand_conditional_move (rtx *operands)
     loongarch_emit_float_compare (&code, &op0, &op1);
   else
     {
-      if ((REGNO (op0) == REGNO (operands[2])
-	   || (REGNO (op1) == REGNO (operands[3]) && (op1 != const0_rtx)))
-	  && (GET_MODE_SIZE (GET_MODE (op0)) < word_mode))
+      if (GET_MODE_SIZE (GET_MODE (op0)) < UNITS_PER_WORD)
+	{
+	  promote_op[0] = (REG_P (op0) && REG_P (operands[2]) &&
+			   REGNO (op0) == REGNO (operands[2]));
+	  promote_op[1] = (REG_P (op1) && REG_P (operands[3]) &&
+			   REGNO (op1) == REGNO (operands[3]));
+	}
+
+      if (promote_op[0] || promote_op[1])
 	{
 	  mode = word_mode;
 	  promote_p = true;
@@ -5339,7 +5453,7 @@ loongarch_expand_conditional_move (rtx *operands)
 
       if (promote_p)
 	{
-	  if (REGNO (XEXP (operands[1], 0)) == REGNO (operands[2]))
+	  if (promote_op[0])
 	    op2 = op0_extend;
 	  else
 	    {
@@ -5347,7 +5461,7 @@ loongarch_expand_conditional_move (rtx *operands)
 	      op2 = force_reg (mode, op2);
 	    }
 
-	  if (REGNO (XEXP (operands[1], 1)) == REGNO (operands[3]))
+	  if (promote_op[1])
 	    op3 = op1_extend;
 	  else
 	    {
@@ -5733,23 +5847,9 @@ bool loongarch_pre_reload_split (void)
 int
 loongarch_use_bstrins_for_ior_with_mask (machine_mode mode, rtx *op)
 {
-  unsigned HOST_WIDE_INT mask1 = UINTVAL (op[2]);
-  unsigned HOST_WIDE_INT mask2 = UINTVAL (op[4]);
-
-  if (mask1 != ~mask2 || !mask1 || !mask2)
-    return 0;
-
-  /* Try to avoid a right-shift.  */
-  if (low_bitmask_len (mode, mask1) != -1)
-    return -1;
-
-  if (low_bitmask_len (mode, mask2 >> (ffs_hwi (mask2) - 1)) != -1)
-    return 1;
-
-  if (low_bitmask_len (mode, mask1 >> (ffs_hwi (mask1) - 1)) != -1)
-    return -1;
-
-  return 0;
+  return loongarch_use_bstrins_for_ior_with_mask_1 (mode,
+						    UINTVAL (op[2]),
+						    UINTVAL (op[4]));
 }
 
 /* Rewrite a MEM for simple load/store under -mexplicit-relocs=auto
@@ -5793,17 +5893,6 @@ loongarch_print_operand_punctuation (FILE *file, int ch)
       gcc_unreachable ();
       break;
     }
-}
-
-/* Initialize loongarch_print_operand_punct.  */
-
-static void
-loongarch_init_print_operand_punct (void)
-{
-  const char *p;
-
-  for (p = ".$"; *p; p++)
-    loongarch_print_operand_punct[(unsigned char) *p] = true;
 }
 
 /* PRINT_OPERAND prefix LETTER refers to the integer branch instruction
@@ -6035,26 +6124,19 @@ loongarch_print_operand_reloc (FILE *file, rtx op, bool hi64_part,
    'L'  Print the low-part relocation associated with OP.
    'm'	Print one less than CONST_INT OP in decimal.
    'N'	Print the inverse of the integer branch condition for comparison OP.
+   'Q'  Print R_LARCH_RELAX for TLS IE.
    'r'  Print address 12-31bit relocation associated with OP.
    'R'  Print address 32-51bit relocation associated with OP.
    'T'	Print 'f' for (eq:CC ...), 't' for (ne:CC ...),
 	      'z' for (eq:?I ...), 'n' for (ne:?I ...).
    't'	Like 'T', but with the EQ/NE cases reversed
-   'F'	Print the FPU branch condition for comparison OP.
-   'W'	Print the inverse of the FPU branch condition for comparison OP.
-   'w'	Print a LSX register.
    'u'	Print a LASX register.
-   'T'	Print 'f' for (eq:CC ...), 't' for (ne:CC ...),
-	      'z' for (eq:?I ...), 'n' for (ne:?I ...).
-   't'	Like 'T', but with the EQ/NE cases reversed
-   'Y'	Print loongarch_fp_conditions[INTVAL (OP)]
-   'Z'	Print OP and a comma for 8CC, otherwise print nothing.
-   'z'	Print $0 if OP is zero, otherwise print OP normally.
    'v'	Print the insn size suffix b, h, w or d for vector modes V16QI, V8HI,
 	  V4SI, V2SI, and w, d for vector modes V4SF, V2DF respectively.
    'V'	Print exact log2 of CONST_INT OP element 0 of a replicated
 	  CONST_VECTOR in decimal.
    'W'	Print the inverse of the FPU branch condition for comparison OP.
+   'w'	Print a LSX register.
    'X'	Print CONST_INT OP in hexadecimal format.
    'x'	Print the low 16 bits of CONST_INT OP in hexadecimal format.
    'Y'	Print loongarch_fp_conditions[INTVAL (OP)]
@@ -6170,6 +6252,18 @@ loongarch_print_operand (FILE *file, rtx op, int letter)
     case 'N':
       loongarch_print_int_branch_condition (file, reverse_condition (code),
 					    letter);
+      break;
+
+    case 'Q':
+      if (!TARGET_LINKER_RELAXATION)
+	break;
+
+      if (code == HIGH)
+	op = XEXP (op, 0);
+
+      if (loongarch_classify_symbolic_expression (op) == SYMBOL_TLS_IE)
+	fprintf (file, ".reloc\t.,R_LARCH_RELAX\n\t");
+
       break;
 
     case 'r':
@@ -6623,31 +6717,29 @@ loongarch_hard_regno_mode_ok_uncached (unsigned int regno, machine_mode mode)
   size = GET_MODE_SIZE (mode);
   mclass = GET_MODE_CLASS (mode);
 
-  if (GP_REG_P (regno) && !LSX_SUPPORTED_MODE_P (mode)
+  if (GP_REG_P (regno)
+      && !LSX_SUPPORTED_MODE_P (mode)
       && !LASX_SUPPORTED_MODE_P (mode))
     return ((regno - GP_REG_FIRST) & 1) == 0 || size <= UNITS_PER_WORD;
 
-  /* For LSX, allow TImode and 128-bit vector modes in all FPR.  */
-  if (FP_REG_P (regno) && LSX_SUPPORTED_MODE_P (mode))
-    return true;
-
-  /* FIXED ME: For LASX, allow TImode and 256-bit vector modes in all FPR.  */
-  if (FP_REG_P (regno) && LASX_SUPPORTED_MODE_P (mode))
-    return true;
-
   if (FP_REG_P (regno))
     {
+      /* Allow 128-bit or 256-bit vector modes in all FPR.  */
+      if (LSX_SUPPORTED_MODE_P (mode)
+	  || LASX_SUPPORTED_MODE_P (mode))
+	return true;
+
       if (mclass == MODE_FLOAT
 	  || mclass == MODE_COMPLEX_FLOAT
 	  || mclass == MODE_VECTOR_FLOAT)
-	return size <= UNITS_PER_FPVALUE;
+	return size <= UNITS_PER_HWFPVALUE;
 
       /* Allow integer modes that fit into a single register.  We need
 	 to put integers into FPRs when using instructions like CVT
 	 and TRUNC.  There's no point allowing sizes smaller than a word,
 	 because the FPU has no appropriate load/store instructions.  */
       if (mclass == MODE_INT)
-	return size >= MIN_UNITS_PER_WORD && size <= UNITS_PER_FPREG;
+	return size >= MIN_UNITS_PER_WORD && size <= UNITS_PER_FP_REG;
     }
 
   return false;
@@ -6690,7 +6782,7 @@ loongarch_hard_regno_nregs (unsigned int regno, machine_mode mode)
       if (LASX_SUPPORTED_MODE_P (mode))
 	return 1;
 
-      return (GET_MODE_SIZE (mode) + UNITS_PER_FPREG - 1) / UNITS_PER_FPREG;
+      return (GET_MODE_SIZE (mode) + UNITS_PER_FP_REG - 1) / UNITS_PER_FP_REG;
     }
 
   /* All other registers are word-sized.  */
@@ -6725,7 +6817,7 @@ loongarch_class_max_nregs (enum reg_class rclass, machine_mode mode)
 	  else if (LSX_SUPPORTED_MODE_P (mode))
 	    size = MIN (size, UNITS_PER_LSX_REG);
 	  else
-	    size = MIN (size, UNITS_PER_FPREG);
+	    size = MIN (size, UNITS_PER_FP_REG);
 	}
       left &= ~reg_class_contents[FP_REGS];
     }
@@ -7450,12 +7542,25 @@ loongarch_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
      allowed, otherwise load the address into a register first.  */
   if (use_sibcall_p)
     {
+      /* If TARGET_CMODEL_EXTREME, we cannot do a direct jump at all
+	 and const_call_insn_operand should have returned false.  */
+      gcc_assert (!TARGET_CMODEL_EXTREME);
+
       insn = emit_call_insn (gen_sibcall_internal (fnaddr, const0_rtx));
       SIBLING_CALL_P (insn) = 1;
     }
   else
     {
-      loongarch_emit_move (temp1, fnaddr);
+      if (!TARGET_CMODEL_EXTREME)
+	loongarch_emit_move (temp1, fnaddr);
+      else if (la_opt_explicit_relocs == EXPLICIT_RELOCS_NONE)
+	emit_insn (gen_movdi_symbolic_off64 (temp1, fnaddr, temp2));
+      else
+	{
+	  emit_insn (gen_la_pcrel64_two_parts (temp1, temp2, fnaddr));
+	  emit_move_insn (temp1, gen_rtx_PLUS (Pmode, temp1, temp2));
+	}
+
       emit_jump_insn (gen_indirect_jump (temp1));
     }
 
@@ -7483,122 +7588,15 @@ loongarch_init_machine_status (void)
 }
 
 static void
-loongarch_cpu_option_override (struct loongarch_target *target,
-			       struct gcc_options *opts,
-			       struct gcc_options *opts_set)
+loongarch_global_init (void)
 {
-  /* alignments */
-  if (opts->x_flag_align_functions && !opts->x_str_align_functions)
-    opts->x_str_align_functions
-      = loongarch_cpu_align[target->cpu_tune].function;
-
-  if (opts->x_flag_align_labels && !opts->x_str_align_labels)
-    opts->x_str_align_labels = loongarch_cpu_align[target->cpu_tune].label;
-
-  /* Set up parameters to be used in prefetching algorithm.  */
-  int simultaneous_prefetches
-    = loongarch_cpu_cache[target->cpu_tune].simultaneous_prefetches;
-
-  SET_OPTION_IF_UNSET (opts, opts_set, param_simultaneous_prefetches,
-		       simultaneous_prefetches);
-
-  SET_OPTION_IF_UNSET (opts, opts_set, param_l1_cache_line_size,
-		       loongarch_cpu_cache[target->cpu_tune].l1d_line_size);
-
-  SET_OPTION_IF_UNSET (opts, opts_set, param_l1_cache_size,
-		       loongarch_cpu_cache[target->cpu_tune].l1d_size);
-
-  SET_OPTION_IF_UNSET (opts, opts_set, param_l2_cache_size,
-		       loongarch_cpu_cache[target->cpu_tune].l2d_size);
-}
-
-static void
-loongarch_option_override_internal (struct gcc_options *opts,
-				    struct gcc_options *opts_set)
-{
-  int i, regno, mode;
-
-  if (flag_pic)
-    g_switch_value = 0;
-
-  loongarch_init_target (&la_target,
-			 la_opt_cpu_arch, la_opt_cpu_tune, la_opt_fpu,
-			 la_opt_simd, la_opt_abi_base, la_opt_abi_ext,
-			 la_opt_cmodel, opts->x_la_isa_evolution,
-			 opts_set->x_la_isa_evolution);
-
-  /* Handle target-specific options: compute defaults/conflicts etc.  */
-  loongarch_config_target (&la_target, NULL, 0);
-
-  loongarch_update_gcc_opt_status (&la_target, opts, opts_set);
-  loongarch_cpu_option_override (&la_target, opts, opts_set);
-
-  if (TARGET_ABI_LP64)
-    flag_pcc_struct_return = 0;
-
-  /* Decide which rtx_costs structure to use.  */
-  if (optimize_size)
-    loongarch_cost = &loongarch_rtx_cost_optimize_size;
-  else
-    loongarch_cost = &loongarch_cpu_rtx_cost_data[la_target.cpu_tune];
-
-  /* If the user hasn't specified a branch cost, use the processor's
-     default.  */
-  if (la_branch_cost == 0)
-    la_branch_cost = loongarch_cost->branch_cost;
-
-  /* Enable sw prefetching at -O3 and higher.  */
-  if (opts->x_flag_prefetch_loop_arrays < 0
-      && (opts->x_optimize >= 3 || opts->x_flag_profile_use)
-      && !opts->x_optimize_size)
-    opts->x_flag_prefetch_loop_arrays = 1;
-
-  if (TARGET_DIRECT_EXTERN_ACCESS && flag_shlib)
-    error ("%qs cannot be used for compiling a shared library",
-	   "-mdirect-extern-access");
-
-  switch (la_target.cmodel)
-    {
-      case CMODEL_EXTREME:
-	if (la_opt_explicit_relocs == EXPLICIT_RELOCS_NONE)
-	  error ("code model %qs is not compatible with %s",
-		 "extreme", "-mexplicit-relocs=none");
-
-	if (opts->x_flag_plt)
-	  {
-	    if (global_options_set.x_flag_plt)
-	      error ("code model %qs is not compatible with %s",
-		     "extreme", "-fplt");
-	    opts->x_flag_plt = 0;
-	  }
-	break;
-
-      case CMODEL_TINY_STATIC:
-      case CMODEL_MEDIUM:
-      case CMODEL_NORMAL:
-      case CMODEL_TINY:
-      case CMODEL_LARGE:
-	break;
-
-      default:
-	gcc_unreachable ();
-    }
-
-  /* Validate the guard size.  */
-  int guard_size = param_stack_clash_protection_guard_size;
-
-  /* Enforce that interval is the same size as size so the mid-end does the
-     right thing.  */
-  SET_OPTION_IF_UNSET (opts, &global_options_set,
-		       param_stack_clash_protection_probe_interval,
-		       guard_size);
-
-  loongarch_init_print_operand_punct ();
+  /* Initialize loongarch_print_operand_punct.  */
+  for (const char *p = ".$"; *p; p++)
+    loongarch_print_operand_punct[(unsigned char) *p] = true;
 
   /* Set up array to map GCC register number to debug register number.
      Ignore the special purpose register numbers.  */
-
-  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+  for (int i = 0; i < FIRST_PSEUDO_REGISTER; i++)
     {
       if (GP_REG_P (i) || FP_REG_P (i))
 	loongarch_dwarf_regno[i] = i;
@@ -7606,108 +7604,116 @@ loongarch_option_override_internal (struct gcc_options *opts,
 	loongarch_dwarf_regno[i] = INVALID_REGNUM;
     }
 
-  /* Set up loongarch_hard_regno_mode_ok.  */
-  for (mode = 0; mode < MAX_MACHINE_MODE; mode++)
-    for (regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-      loongarch_hard_regno_mode_ok_p[mode][regno]
-	= loongarch_hard_regno_mode_ok_uncached (regno, (machine_mode) mode);
-
   /* Function to allocate machine-dependent function status.  */
   init_machine_status = &loongarch_init_machine_status;
+};
 
-  /* -mrecip options.  */
-  static struct
-    {
-      const char *string;	    /* option name.  */
-      unsigned int mask;	    /* mask bits to set.  */
-    }
-  const recip_options[] = {
-	{ "all",       RECIP_MASK_ALL },
-	{ "none",      RECIP_MASK_NONE },
-	{ "div",       RECIP_MASK_DIV },
-	{ "sqrt",      RECIP_MASK_SQRT },
-	{ "rsqrt",     RECIP_MASK_RSQRT },
-	{ "vec-div",   RECIP_MASK_VEC_DIV },
-	{ "vec-sqrt",  RECIP_MASK_VEC_SQRT },
-	{ "vec-rsqrt", RECIP_MASK_VEC_RSQRT },
-  };
-
-  if (la_recip_name)
-    {
-      char *p = ASTRDUP (la_recip_name);
-      char *q;
-      unsigned int mask, i;
-      bool invert;
-
-      while ((q = strtok (p, ",")) != NULL)
-	{
-	  p = NULL;
-	  if (*q == '!')
-	    {
-	      invert = true;
-	      q++;
-	    }
-	  else
-	    invert = false;
-
-	  if (!strcmp (q, "default"))
-	    mask = RECIP_MASK_ALL;
-	  else
-	    {
-	      for (i = 0; i < ARRAY_SIZE (recip_options); i++)
-		if (!strcmp (q, recip_options[i].string))
-		  {
-		    mask = recip_options[i].mask;
-		    break;
-		  }
-
-	      if (i == ARRAY_SIZE (recip_options))
-		{
-		  error ("unknown option for %<-mrecip=%s%>", q);
-		  invert = false;
-		  mask = RECIP_MASK_NONE;
-		}
-	    }
-
-	  if (invert)
-	    recip_mask &= ~mask;
-	  else
-	    recip_mask |= mask;
-	}
-    }
-  if (la_recip)
-    recip_mask |= RECIP_MASK_ALL;
-  if (!ISA_HAS_FRECIPE)
-    recip_mask = RECIP_MASK_NONE;
-
-#define INIT_TARGET_FLAG(NAME, INIT) \
-  { \
-    if (!(target_flags_explicit & MASK_##NAME)) \
-      { \
-	if (INIT) \
-	  target_flags |= MASK_##NAME; \
-	else \
-	  target_flags &= ~MASK_##NAME; \
-      } \
-  }
-
-  /* Enable conditional moves for int and float by default.  */
-  INIT_TARGET_FLAG (COND_MOVE_INT, 1)
-  INIT_TARGET_FLAG (COND_MOVE_FLOAT, 1)
-
-  /* Set mrelax default.  */
-  INIT_TARGET_FLAG (LINKER_RELAXATION,
-		    HAVE_AS_MRELAX_OPTION && HAVE_AS_COND_BRANCH_RELAXATION)
-
-#undef INIT_TARGET_FLAG
-
-  if (la_opt_explicit_relocs == M_OPT_UNSET)
-    la_opt_explicit_relocs = (HAVE_AS_EXPLICIT_RELOCS
-			      ? (TARGET_LINKER_RELAXATION
-				 ? EXPLICIT_RELOCS_AUTO
-				 : EXPLICIT_RELOCS_ALWAYS)
-			      : EXPLICIT_RELOCS_NONE);
+static void
+loongarch_reg_init (void)
+{
+  /* Set up loongarch_hard_regno_mode_ok.  */
+  for (int mode = 0; mode < MAX_MACHINE_MODE; mode++)
+    for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+      loongarch_hard_regno_mode_ok_p[mode][regno]
+	= loongarch_hard_regno_mode_ok_uncached (regno, (machine_mode) mode);
 }
+
+static void
+loongarch_option_override_internal (struct loongarch_target *target,
+				    struct gcc_options *opts,
+				    struct gcc_options *opts_set)
+{
+  /* Handle options not covered by struct loongarch_target.  */
+  loongarch_init_misc_options (opts, opts_set);
+
+  /* Resolve the target struct.  */
+  loongarch_init_target (target,
+			 opts->x_la_opt_cpu_arch,
+			 opts->x_la_opt_cpu_tune,
+			 opts->x_la_opt_fpu,
+			 opts->x_la_opt_simd,
+			 opts->x_la_opt_abi_base,
+			 opts->x_la_opt_abi_ext,
+			 opts->x_la_opt_cmodel,
+			 opts->x_la_opt_tls_dialect,
+			 opts->x_la_isa_evolution,
+			 opts_set->x_la_isa_evolution);
+
+  loongarch_config_target (target, NULL, 0);
+
+  /* Override some options according to the resolved target.  */
+  loongarch_target_option_override (target, opts, opts_set);
+
+  target_option_default_node = target_option_current_node
+    = build_target_option_node (opts, opts_set);
+
+  loongarch_reg_init ();
+}
+
+/* Remember the last target of loongarch_set_current_function.  */
+
+static GTY(()) tree loongarch_previous_fndecl;
+
+/* Restore or save the TREE_TARGET_GLOBALS from or to new_tree.
+   Used by loongarch_set_current_function to
+   make sure optab availability predicates are recomputed when necessary.  */
+
+static void
+loongarch_save_restore_target_globals (tree new_tree)
+{
+  if (TREE_TARGET_GLOBALS (new_tree))
+    restore_target_globals (TREE_TARGET_GLOBALS (new_tree));
+  else if (new_tree == target_option_default_node)
+    restore_target_globals (&default_target_globals);
+  else
+    TREE_TARGET_GLOBALS (new_tree) = save_target_globals_default_opts ();
+}
+
+/* Implement TARGET_SET_CURRENT_FUNCTION.  */
+
+static void
+loongarch_set_current_function (tree fndecl)
+{
+  if (fndecl == loongarch_previous_fndecl)
+    return;
+
+  tree old_tree;
+  if (loongarch_previous_fndecl == NULL_TREE)
+    old_tree = target_option_current_node;
+  else if (DECL_FUNCTION_SPECIFIC_TARGET (loongarch_previous_fndecl))
+    old_tree = DECL_FUNCTION_SPECIFIC_TARGET (loongarch_previous_fndecl);
+  else
+    old_tree = target_option_default_node;
+
+  if (fndecl == NULL_TREE)
+    {
+      if (old_tree != target_option_current_node)
+	{
+	  loongarch_previous_fndecl = NULL_TREE;
+	  cl_target_option_restore (&global_options, &global_options_set,
+				    TREE_TARGET_OPTION
+				    (target_option_current_node));
+	}
+      return;
+    }
+
+  tree new_tree = DECL_FUNCTION_SPECIFIC_TARGET (fndecl);
+  if (new_tree == NULL_TREE)
+    new_tree = target_option_default_node;
+
+  loongarch_previous_fndecl = fndecl;
+
+  if (new_tree == old_tree)
+    return;
+
+  cl_target_option_restore (&global_options, &global_options_set,
+			    TREE_TARGET_OPTION (new_tree));
+
+  loongarch_reg_init ();
+
+  loongarch_save_restore_target_globals (new_tree);
+}
+
 
 
 /* Implement TARGET_OPTION_OVERRIDE.  */
@@ -7715,7 +7721,14 @@ loongarch_option_override_internal (struct gcc_options *opts,
 static void
 loongarch_option_override (void)
 {
-  loongarch_option_override_internal (&global_options, &global_options_set);
+  /* Global initializations.  */
+  loongarch_global_init ();
+
+  /* Setting up the target configuration.  */
+  loongarch_option_override_internal (&la_target,
+				      &global_options,
+				      &global_options_set);
+
 }
 
 /* Implement TARGET_OPTION_SAVE.  */
@@ -7741,6 +7754,7 @@ loongarch_option_restore (struct gcc_options *,
   la_target.isa.evolution = ptr->x_la_isa_evolution;
 
   la_target.cmodel = ptr->x_la_opt_cmodel;
+  la_target.tls_dialect = ptr->x_la_opt_tls_dialect;
 }
 
 /* Implement TARGET_CONDITIONAL_REGISTER_USAGE.  */
@@ -7911,7 +7925,8 @@ struct expand_vec_perm_d
 
 static bool
 loongarch_expand_vselect (rtx target, rtx op0,
-			  const unsigned char *perm, unsigned nelt)
+			  const unsigned char *perm, unsigned nelt,
+			  bool testing_p)
 {
   rtx rperm[MAX_VECT_LEN], x;
   rtx_insn *insn;
@@ -7930,6 +7945,9 @@ loongarch_expand_vselect (rtx target, rtx op0,
       remove_insn (insn);
       return false;
     }
+
+  if (testing_p)
+      remove_insn (insn);
   return true;
 }
 
@@ -7937,7 +7955,8 @@ loongarch_expand_vselect (rtx target, rtx op0,
 
 static bool
 loongarch_expand_vselect_vconcat (rtx target, rtx op0, rtx op1,
-				  const unsigned char *perm, unsigned nelt)
+				  const unsigned char *perm, unsigned nelt,
+				  bool testing_p)
 {
   machine_mode v2mode;
   rtx x;
@@ -7945,7 +7964,7 @@ loongarch_expand_vselect_vconcat (rtx target, rtx op0, rtx op1,
   if (!GET_MODE_2XWIDER_MODE (GET_MODE (op0)).exists (&v2mode))
     return false;
   x = gen_rtx_VEC_CONCAT (v2mode, op0, op1);
-  return loongarch_expand_vselect (target, x, perm, nelt);
+  return loongarch_expand_vselect (target, x, perm, nelt, testing_p);
 }
 
 static tree
@@ -7978,14 +7997,6 @@ loongarch_handle_model_attribute (tree *node, tree name, tree arg, int,
 	  error_at (DECL_SOURCE_LOCATION (decl),
 		    "%qE attribute cannot be specified for register "
 		    "variables", name);
-	  *no_add_attrs = true;
-	  return NULL_TREE;
-	}
-      if (la_opt_explicit_relocs == EXPLICIT_RELOCS_NONE)
-	{
-	  error_at (DECL_SOURCE_LOCATION (decl),
-		    "%qE attribute is not compatible with %s", name,
-		    "-mexplicit-relocs=none");
 	  *no_add_attrs = true;
 	  return NULL_TREE;
 	}
@@ -8093,7 +8104,7 @@ loongarch_get_separate_components (void)
 	if (IMM12_OPERAND (offset))
 	  bitmap_set_bit (components, regno);
 
-	offset -= UNITS_PER_FPREG;
+	offset -= UNITS_PER_FP_REG;
       }
 
   /* Don't mess with the hard frame pointer.  */
@@ -8172,7 +8183,7 @@ loongarch_process_components (sbitmap components, loongarch_save_restore_fn fn)
 	if (bitmap_bit_p (components, regno))
 	  loongarch_save_restore_reg (mode, regno, offset, fn);
 
-	offset -= UNITS_PER_FPREG;
+	offset -= UNITS_PER_FP_REG;
       }
 }
 
@@ -8207,11 +8218,87 @@ loongarch_set_handled_components (sbitmap components)
 #define TARGET_ASM_ALIGNED_SI_OP "\t.word\t"
 #undef TARGET_ASM_ALIGNED_DI_OP
 #define TARGET_ASM_ALIGNED_DI_OP "\t.dword\t"
-/* Construct (set target (vec_select op0 (parallel selector))) and
-   return true if that's a valid instruction in the active ISA.  */
+
+/* Use the vshuf instruction to implement all 128-bit constant vector
+   permuatation.  */
 
 static bool
-loongarch_expand_lsx_shuffle (struct expand_vec_perm_d *d)
+loongarch_try_expand_lsx_vshuf_const (struct expand_vec_perm_d *d)
+{
+  int i;
+  rtx target, op0, op1, sel, tmp;
+  rtx rperm[MAX_VECT_LEN];
+
+  if (GET_MODE_SIZE (d->vmode) == 16)
+    {
+      target = d->target;
+      op0 = d->op0;
+      op1 = d->one_vector_p ? d->op0 : d->op1;
+
+      if (GET_MODE (op0) != GET_MODE (op1)
+	  || GET_MODE (op0) != GET_MODE (target))
+	return false;
+
+      if (d->testing_p)
+	return true;
+
+      for (i = 0; i < d->nelt; i += 1)
+	  rperm[i] = GEN_INT (d->perm[i]);
+
+      if (d->vmode == E_V2DFmode)
+	{
+	  sel = gen_rtx_CONST_VECTOR (E_V2DImode, gen_rtvec_v (d->nelt, rperm));
+	  tmp = simplify_gen_subreg (E_V2DImode, d->target, d->vmode, 0);
+	  emit_move_insn (tmp, sel);
+	}
+      else if (d->vmode == E_V4SFmode)
+	{
+	  sel = gen_rtx_CONST_VECTOR (E_V4SImode, gen_rtvec_v (d->nelt, rperm));
+	  tmp = simplify_gen_subreg (E_V4SImode, d->target, d->vmode, 0);
+	  emit_move_insn (tmp, sel);
+	}
+      else
+	{
+	  sel = gen_rtx_CONST_VECTOR (d->vmode, gen_rtvec_v (d->nelt, rperm));
+	  emit_move_insn (d->target, sel);
+	}
+
+      switch (d->vmode)
+	{
+	case E_V2DFmode:
+	  emit_insn (gen_lsx_vshuf_d_f (target, target, op1, op0));
+	  break;
+	case E_V2DImode:
+	  emit_insn (gen_lsx_vshuf_d (target, target, op1, op0));
+	  break;
+	case E_V4SFmode:
+	  emit_insn (gen_lsx_vshuf_w_f (target, target, op1, op0));
+	  break;
+	case E_V4SImode:
+	  emit_insn (gen_lsx_vshuf_w (target, target, op1, op0));
+	  break;
+	case E_V8HImode:
+	  emit_insn (gen_lsx_vshuf_h (target, target, op1, op0));
+	  break;
+	case E_V16QImode:
+	  emit_insn (gen_lsx_vshuf_b (target, op1, op0, target));
+	  break;
+	default:
+	  break;
+	}
+
+      return true;
+    }
+  return false;
+}
+
+/* Construct (set target (vec_select op0 (parallel selector))) and
+   return true if that's a valid instruction in the active ISA.
+   In fact, it matches the special constant vector with repeated
+   4-element sets.  */
+
+static bool
+loongarch_is_imm_set_shuffle (struct expand_vec_perm_d *d)
 {
   rtx x, elts[MAX_VECT_LEN];
   rtvec v;
@@ -8230,6 +8317,9 @@ loongarch_expand_lsx_shuffle (struct expand_vec_perm_d *d)
   if (!loongarch_const_vector_shuffle_set_p (x, d->vmode))
     return false;
 
+  if (d->testing_p)
+    return true;
+
   x = gen_rtx_VEC_SELECT (d->vmode, d->op0, x);
   x = gen_rtx_SET (d->target, x);
 
@@ -8240,6 +8330,27 @@ loongarch_expand_lsx_shuffle (struct expand_vec_perm_d *d)
       return false;
     }
   return true;
+}
+
+static bool
+loongarch_expand_vec_perm_even_odd (struct expand_vec_perm_d *);
+
+/* Try to match and expand all kinds of 128-bit const vector permutation
+   cases.  */
+
+static bool
+loongarch_expand_lsx_shuffle (struct expand_vec_perm_d *d)
+{
+  if (!ISA_HAS_LSX && GET_MODE_SIZE (d->vmode) != 16)
+    return false;
+
+  if (loongarch_is_imm_set_shuffle (d))
+      return true;
+
+  if (loongarch_expand_vec_perm_even_odd (d))
+    return true;
+
+  return loongarch_try_expand_lsx_vshuf_const (d);
 }
 
 /* Try to simplify a two vector permutation using 2 intra-lane interleave
@@ -8334,7 +8445,7 @@ loongarch_expand_vec_perm_interleave (struct expand_vec_perm_d *d)
   return true;
 }
 
-/* Implement extract-even and extract-odd permutations.  */
+/* Implement 128-bit and 256-bit extract-even and extract-odd permutations.  */
 
 static bool
 loongarch_expand_vec_perm_even_odd_1 (struct expand_vec_perm_d *d, unsigned odd)
@@ -8349,6 +8460,50 @@ loongarch_expand_vec_perm_even_odd_1 (struct expand_vec_perm_d *d, unsigned odd)
 
   switch (d->vmode)
     {
+    /* 128 bit.  */
+    case E_V2DFmode:
+      if (odd)
+	emit_insn (gen_lsx_vilvh_d_f (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vilvl_d_f (d->target, d->op0, d->op1));
+      break;
+
+    case E_V2DImode:
+      if (odd)
+	emit_insn (gen_lsx_vilvh_d (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vilvl_d (d->target, d->op0, d->op1));
+      break;
+
+    case E_V4SFmode:
+      if (odd)
+	emit_insn (gen_lsx_vpickod_w_f (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vpickev_w_f (d->target, d->op0, d->op1));
+      break;
+
+    case E_V4SImode:
+      if (odd)
+	emit_insn (gen_lsx_vpickod_w (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vpickev_w (d->target, d->op0, d->op1));
+      break;
+
+    case E_V8HImode:
+      if (odd)
+	emit_insn (gen_lsx_vpickod_h (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vpickev_h (d->target, d->op0, d->op1));
+      break;
+
+    case E_V16QImode:
+      if (odd)
+	emit_insn (gen_lsx_vpickod_b (d->target, d->op0, d->op1));
+      else
+	emit_insn (gen_lsx_vpickev_b (d->target, d->op0, d->op1));
+      break;
+
+    /* 256 bit.  */
     case E_V4DFmode:
       /* Shuffle the lanes around into { 0 4 2 6 } and { 1 5 3 7 }.  */
       if (odd)
@@ -8423,7 +8578,7 @@ static bool
 loongarch_expand_vec_perm_even_odd (struct expand_vec_perm_d *d)
 {
   unsigned i, odd, nelt = d->nelt;
-  if (!ISA_HAS_LASX)
+  if (!ISA_HAS_LASX && !ISA_HAS_LSX)
     return false;
 
   odd = d->perm[0];
@@ -8887,44 +9042,6 @@ loongarch_is_quad_duplicate (struct expand_vec_perm_d *d)
 }
 
 static bool
-loongarch_is_odd_extraction (struct expand_vec_perm_d *d)
-{
-  bool result = true;
-  unsigned char buf = 1;
-
-  for (int i = 0; i < d->nelt; i += 1)
-    {
-      if (buf != d->perm[i])
-	{
-	  result = false;
-	  break;
-	}
-      buf += 2;
-    }
-
-  return result;
-}
-
-static bool
-loongarch_is_even_extraction (struct expand_vec_perm_d *d)
-{
-  bool result = true;
-  unsigned char buf = 0;
-
-  for (int i = 0; i < d->nelt; i += 1)
-    {
-      if (buf != d->perm[i])
-	{
-	  result = false;
-	  break;
-	}
-      buf += 2;
-    }
-
-  return result;
-}
-
-static bool
 loongarch_is_extraction_permutation (struct expand_vec_perm_d *d)
 {
   bool result = true;
@@ -9180,32 +9297,29 @@ loongarch_expand_vec_perm_const (struct expand_vec_perm_d *d)
 	  for (i = 1; i < d->nelt; i += 2)
 	    perm2[i] += d->nelt;
 	  if (loongarch_expand_vselect_vconcat (d->target, d->op0, d->op1,
-						perm2, d->nelt))
+						perm2, d->nelt, d->testing_p))
 	    return true;
 	}
       else
 	{
 	  if (loongarch_expand_vselect_vconcat (d->target, d->op0, d->op1,
-						d->perm, d->nelt))
+						d->perm, d->nelt,
+						d->testing_p))
 	    return true;
 
 	  /* Try again with swapped operands.  */
 	  for (i = 0; i < d->nelt; ++i)
 	    perm2[i] = (d->perm[i] + d->nelt) & (2 * d->nelt - 1);
 	  if (loongarch_expand_vselect_vconcat (d->target, d->op1, d->op0,
-						perm2, d->nelt))
+						perm2, d->nelt, d->testing_p))
 	    return true;
 	}
 
-      if (loongarch_expand_lsx_shuffle (d))
+      if (loongarch_is_imm_set_shuffle (d))
 	return true;
 
-      if (loongarch_is_odd_extraction (d)
-	  || loongarch_is_even_extraction (d))
-	{
-	  if (loongarch_expand_vec_perm_even_odd (d))
-	    return true;
-	}
+      if (loongarch_expand_vec_perm_even_odd (d))
+	return true;
 
       if (loongarch_is_lasx_lowpart_interleave (d)
 	  || loongarch_is_lasx_lowpart_interleave_2 (d)
@@ -9529,9 +9643,10 @@ loongarch_cpu_sched_reassociation_width (struct loongarch_target *target,
 
   switch (target->cpu_tune)
     {
-    case CPU_LOONGARCH64:
-    case CPU_LA464:
-    case CPU_LA664:
+    case TUNE_GENERIC:
+    case TUNE_LOONGARCH64:
+    case TUNE_LA464:
+    case TUNE_LA664:
       /* Vector part.  */
       if (LSX_SUPPORTED_MODE_P (mode) || LASX_SUPPORTED_MODE_P (mode))
 	{
@@ -10569,30 +10684,12 @@ loongarch_expand_vec_cond_mask_expr (machine_mode mode, machine_mode vimode,
 }
 
 /* Expand integer vector comparison */
-bool
+void
 loongarch_expand_vec_cmp (rtx operands[])
 {
 
   rtx_code code = GET_CODE (operands[1]);
   loongarch_expand_lsx_cmp (operands[0], code, operands[2], operands[3]);
-  return true;
-}
-
-/* Implement TARGET_CASE_VALUES_THRESHOLD.  */
-
-unsigned int
-loongarch_case_values_threshold (void)
-{
-  return default_case_values_threshold ();
-}
-
-/* Implement TARGET_SPILL_CLASS.  */
-
-static reg_class_t
-loongarch_spill_class (reg_class_t rclass ATTRIBUTE_UNUSED,
-		       machine_mode mode ATTRIBUTE_UNUSED)
-{
-  return NO_REGS;
 }
 
 /* Implement TARGET_PROMOTE_FUNCTION_MODE.  */
@@ -10883,6 +10980,18 @@ loongarch_builtin_support_vector_misalignment (machine_mode mode,
 						      is_packed);
 }
 
+/* Implement TARGET_C_MODE_FOR_FLOATING_TYPE.  Return TFmode or DFmode
+   for TI_LONG_DOUBLE_TYPE which is for long double type, go with the
+   default one for the others.  */
+
+static machine_mode
+loongarch_c_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_LONG_DOUBLE_TYPE)
+    return TARGET_64BIT ? TFmode : DFmode;
+  return default_mode_for_floating_type (ti);
+}
+
 static bool
 use_rsqrt_p (void)
 {
@@ -10918,9 +11027,9 @@ loongarch_asm_code_end (void)
   if (flag_verbose_asm)
     {
       fprintf (asm_out_file, "\n%s CPU: %s\n", ASM_COMMENT_START,
-	       loongarch_cpu_strings [la_target.cpu_arch]);
+	       loongarch_arch_strings[la_target.cpu_arch]);
       fprintf (asm_out_file, "%s Tune: %s\n", ASM_COMMENT_START,
-	       loongarch_cpu_strings [la_target.cpu_tune]);
+	       loongarch_tune_strings[la_target.cpu_tune]);
       fprintf (asm_out_file, "%s Base ISA: %s\n", ASM_COMMENT_START,
 	       loongarch_isa_base_strings [la_target.isa.base]);
       DUMP_FEATURE (ISA_HAS_FRECIPE);
@@ -10948,6 +11057,9 @@ loongarch_asm_code_end (void)
 #define TARGET_OPTION_SAVE loongarch_option_save
 #undef TARGET_OPTION_RESTORE
 #define TARGET_OPTION_RESTORE loongarch_option_restore
+
+#undef TARGET_SET_CURRENT_FUNCTION
+#define TARGET_SET_CURRENT_FUNCTION loongarch_set_current_function
 
 #undef TARGET_LEGITIMIZE_ADDRESS
 #define TARGET_LEGITIMIZE_ADDRESS loongarch_legitimize_address
@@ -10989,6 +11101,8 @@ loongarch_asm_code_end (void)
 #define TARGET_RTX_COSTS loongarch_rtx_costs
 #undef TARGET_ADDRESS_COST
 #define TARGET_ADDRESS_COST loongarch_address_cost
+#undef TARGET_INSN_COST
+#define TARGET_INSN_COST loongarch_insn_cost
 #undef TARGET_VECTORIZE_BUILTIN_VECTORIZATION_COST
 #define TARGET_VECTORIZE_BUILTIN_VECTORIZATION_COST \
   loongarch_builtin_vectorization_cost
@@ -11048,9 +11162,6 @@ loongarch_asm_code_end (void)
 #define TARGET_FUNCTION_ARG_ADVANCE loongarch_function_arg_advance
 #undef TARGET_FUNCTION_ARG_BOUNDARY
 #define TARGET_FUNCTION_ARG_BOUNDARY loongarch_function_arg_boundary
-
-#undef TARGET_OPTAB_SUPPORTED_P
-#define TARGET_OPTAB_SUPPORTED_P loongarch_optab_supported_p
 
 #undef TARGET_VECTOR_MODE_SUPPORTED_P
 #define TARGET_VECTOR_MODE_SUPPORTED_P loongarch_vector_mode_supported_p
@@ -11121,17 +11232,11 @@ loongarch_asm_code_end (void)
 #undef TARGET_SCHED_REASSOCIATION_WIDTH
 #define TARGET_SCHED_REASSOCIATION_WIDTH loongarch_sched_reassociation_width
 
-#undef TARGET_CASE_VALUES_THRESHOLD
-#define TARGET_CASE_VALUES_THRESHOLD loongarch_case_values_threshold
-
 #undef TARGET_ATOMIC_ASSIGN_EXPAND_FENV
 #define TARGET_ATOMIC_ASSIGN_EXPAND_FENV loongarch_atomic_assign_expand_fenv
 
 #undef TARGET_CALL_FUSAGE_CONTAINS_NON_CALLEE_CLOBBERS
 #define TARGET_CALL_FUSAGE_CONTAINS_NON_CALLEE_CLOBBERS true
-
-#undef TARGET_SPILL_CLASS
-#define TARGET_SPILL_CLASS loongarch_spill_class
 
 #undef TARGET_HARD_REGNO_NREGS
 #define TARGET_HARD_REGNO_NREGS loongarch_hard_regno_nregs
@@ -11198,6 +11303,9 @@ loongarch_asm_code_end (void)
 #undef TARGET_VECTORIZE_SUPPORT_VECTOR_MISALIGNMENT
 #define TARGET_VECTORIZE_SUPPORT_VECTOR_MISALIGNMENT \
   loongarch_builtin_support_vector_misalignment
+
+#undef TARGET_C_MODE_FOR_FLOATING_TYPE
+#define TARGET_C_MODE_FOR_FLOATING_TYPE loongarch_c_mode_for_floating_type
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

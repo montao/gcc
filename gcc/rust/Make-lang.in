@@ -64,6 +64,7 @@ gccrs$(exeext): $(GCCRS_D_OBJS) $(EXTRA_GCC_OBJS) libcommon-target.a $(LIBDEPS)
 # The compiler proper, not driver
 GRS_OBJS = \
     rust/rust-lang.o \
+    rust/rust-attribs.o \
     rust/rust-object-export.o \
     rust/rust-linemap.o \
     rust/rust-diagnostics.o \
@@ -84,6 +85,8 @@ GRS_OBJS = \
     rust/rust-session-manager.o \
     rust/rust-compile.o \
     rust/rust-mangle.o \
+    rust/rust-mangle-v0.o \
+    rust/rust-mangle-legacy.o \
     rust/rust-compile-resolve-path.o \
     rust/rust-macro-expand.o \
     rust/rust-cfg-strip.o \
@@ -108,6 +111,7 @@ GRS_OBJS = \
     rust/rust-ast-lower-base.o \
     rust/rust-ast-lower-pattern.o \
     rust/rust-ast-lower-item.o \
+    rust/rust-ast-lower-implitem.o \
     rust/rust-ast-lower-expr.o \
     rust/rust-ast-lower-type.o \
     rust/rust-ast-lower-stmt.o \
@@ -116,6 +120,7 @@ GRS_OBJS = \
     rust/rust-default-resolver.o \
     rust/rust-toplevel-name-resolver-2.0.o \
     rust/rust-early-name-resolver-2.0.o \
+    rust/rust-late-name-resolver-2.0.o \
     rust/rust-early-name-resolver.o \
     rust/rust-name-resolver.o \
     rust/rust-ast-resolve.o \
@@ -203,14 +208,16 @@ RUST_ALL_OBJS = $(GRS_OBJS) $(RUST_TARGET_OBJS)
 
 rust_OBJS = $(RUST_ALL_OBJS) rust/rustspec.o
 
-RUST_LDFLAGS = $(LDFLAGS) -L./../libgrust/libproc_macro_internal
-RUST_LIBDEPS = $(LIBDEPS) ../libgrust/libproc_macro_internal/libproc_macro_internal.a
+LIBPROC_MACRO_INTERNAL = ../libgrust/libproc_macro_internal/libproc_macro_internal.a
+
+
+RUST_LIBDEPS = $(LIBDEPS) $(LIBPROC_MACRO_INTERNAL)
 
 # The compiler itself is called crab1
 crab1$(exeext): $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(RUST_LIBDEPS) $(rust.prev)
 	@$(call LINK_PROGRESS,$(INDEX.rust),start)
-	+$(LLINKER) $(ALL_LINKERFLAGS) $(RUST_LDFLAGS) -o $@ \
-	      $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBS) ../libgrust/libproc_macro_internal/libproc_macro_internal.a $(BACKENDLIBS)
+	+$(LLINKER) $(ALL_LINKERFLAGS) $(LDFLAGS) -o $@ \
+	      $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBS) $(LIBPROC_MACRO_INTERNAL) $(BACKENDLIBS)
 	@$(call LINK_PROGRESS,$(INDEX.rust),end)
 
 # Build hooks.
@@ -337,6 +344,8 @@ selftest-rust-valgrind: $(RUST_SELFTEST_DEPS)
 # should have dependencies on info files that should be installed.
 rust.install-info:
 
+rust.install-dvi:
+rust.install-html:
 rust.install-pdf:
 
 # Install man pages for the front end. This target should ignore errors.

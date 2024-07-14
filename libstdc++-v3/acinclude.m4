@@ -4493,7 +4493,7 @@ AC_DEFUN([GLIBCXX_CHECK_GTHREADS], [
 # Check whether LC_MESSAGES is available in <locale.h>.
 # Ulrich Drepper <drepper@cygnus.com>, 1995.
 #
-# This file file be copied and used freely without restrictions.  It can
+# This file can be copied and used freely without restrictions.  It can
 # be used in projects which are not available under the GNU Public License
 # but which still want to provide support for the GNU gettext functionality.
 # Please note that the actual code is *not* freely available.
@@ -5481,6 +5481,11 @@ AC_DEFUN([GLIBCXX_ENABLE_BACKTRACE], [
     BACKTRACE_CPPFLAGS="$BACKTRACE_CPPFLAGS -DHAVE_DL_ITERATE_PHDR=1"
   fi
   AC_CHECK_HEADERS(windows.h)
+  AC_CHECK_HEADERS(tlhelp32.h, [], [],
+  [#ifdef HAVE_WINDOWS_H
+  #  include <windows.h>
+  #endif
+  ])
 
   # Check for the fcntl function.
   if test -n "${with_target_subdir}"; then
@@ -5834,6 +5839,9 @@ AC_LANG_SAVE
   AC_MSG_CHECKING([whether nl_langinfo_l is defined in <langinfo.h>])
   AC_TRY_COMPILE([
   #include <locale.h>
+  #if __has_include(<xlocale.h>)
+  # include <xlocale.h>
+  #endif
   #include <langinfo.h>
   ],[
     locale_t loc = newlocale(LC_ALL_MASK, "", (locale_t)0);

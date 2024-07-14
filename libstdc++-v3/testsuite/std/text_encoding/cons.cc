@@ -1,4 +1,5 @@
 // { dg-do run { target c++26 } }
+// { dg-require-cpp-feature-test "__cpp_lib_text_encoding" }
 
 #include <text_encoding>
 #include <string_view>
@@ -53,6 +54,11 @@ test_construct_by_name()
   VERIFY( e4.name() == s );
   VERIFY( ! e4.aliases().empty() );
   VERIFY( e4.aliases().front() == "US-ASCII"sv ); // primary name
+
+  s = "ascii";
+  std::text_encoding e5(s);
+  VERIFY( e5.mib() == std::text_encoding::ASCII );
+  VERIFY( e5.name() == s );
 }
 
 constexpr void

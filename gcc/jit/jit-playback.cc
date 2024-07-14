@@ -281,6 +281,12 @@ get_tree_node_for_type (enum gcc_jit_types type_)
 
     case GCC_JIT_TYPE_FLOAT:
       return float_type_node;
+    case GCC_JIT_TYPE_BFLOAT16:
+#ifndef HAVE_BFmode
+      add_error (NULL, "gcc_jit_types value unsupported on this target: %i",
+		 type_);
+#endif
+      return bfloat16_type_node;
     case GCC_JIT_TYPE_DOUBLE:
       return double_type_node;
     case GCC_JIT_TYPE_LONG_DOUBLE:
@@ -1112,6 +1118,27 @@ new_rvalue_from_const <void *> (type *type,
 
 playback::rvalue *
 playback::context::
+new_sizeof (type *type)
+{
+  tree inner = TYPE_SIZE_UNIT (type->as_tree ());
+  return new rvalue (this, inner);
+}
+
+/* Construct a playback::rvalue instance (wrapping a tree).  */
+
+playback::rvalue *
+playback::context::
+new_alignof (type *type)
+{
+  int alignment = TYPE_ALIGN (type->as_tree ()) / BITS_PER_UNIT;
+  tree inner = build_int_cst (integer_type_node, alignment);
+  return new rvalue (this, inner);
+}
+
+/* Construct a playback::rvalue instance (wrapping a tree).  */
+
+playback::rvalue *
+playback::context::
 new_string_literal (const char *value)
 {
   /* Compare with c-family/c-common.cc: fix_string_type.  */
@@ -1592,11 +1619,11 @@ new_bitcast (location *loc,
   {
     active_playback_ctxt->add_error (loc,
       "bitcast with types of different sizes");
-    fprintf (stderr, "input expression (size: %ld):\n",
-      (long) tree_to_uhwi (expr_size));
+    fprintf (stderr, "input expression (size: " HOST_WIDE_INT_PRINT_DEC "):\n",
+	     tree_to_uhwi (expr_size));
     debug_tree (t_expr);
-    fprintf (stderr, "requested type (size: %ld):\n",
-      (long) tree_to_uhwi (type_size));
+    fprintf (stderr, "requested type (size: " HOST_WIDE_INT_PRINT_DEC "):\n",
+	     tree_to_uhwi (type_size));
     debug_tree (t_dst_type);
   }
   tree t_bitcast = build1 (VIEW_CONVERT_EXPR, t_dst_type, t_expr);

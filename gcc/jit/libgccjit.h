@@ -604,7 +604,9 @@ enum gcc_jit_types
   GCC_JIT_TYPE_INT16_T,
   GCC_JIT_TYPE_INT32_T,
   GCC_JIT_TYPE_INT64_T,
-  GCC_JIT_TYPE_INT128_T
+  GCC_JIT_TYPE_INT128_T,
+
+  GCC_JIT_TYPE_BFLOAT16,
 };
 
 extern gcc_jit_type *
@@ -1092,6 +1094,31 @@ gcc_jit_context_new_rvalue_from_ptr (gcc_jit_context *ctxt,
 extern gcc_jit_rvalue *
 gcc_jit_context_null (gcc_jit_context *ctxt,
 		      gcc_jit_type *pointer_type);
+
+#define LIBGCCJIT_HAVE_gcc_jit_context_new_sizeof
+
+/* Generates an rvalue that is equal to the size of type.
+
+   This API entrypoint was added in LIBGCCJIT_ABI_27; you can test for its
+   presence using
+     #ifdef LIBGCCJIT_HAVE_gcc_jit_context_new_sizeof  */
+
+extern gcc_jit_rvalue *
+gcc_jit_context_new_sizeof (gcc_jit_context *ctxt,
+			    gcc_jit_type *type);
+
+#define LIBGCCJIT_HAVE_gcc_jit_context_new_alignof
+
+/* Generates an rvalue that is equal to the alignment of type.
+
+   This API entrypoint was added in LIBGCCJIT_ABI_38; you can test for its
+   presence using
+     #ifdef LIBGCCJIT_HAVE_gcc_jit_context_new_alignof  */
+
+extern gcc_jit_rvalue *
+gcc_jit_context_new_alignof (gcc_jit_context *ctxt,
+			     gcc_jit_type *type);
+
 
 /* String literals. */
 extern gcc_jit_rvalue *

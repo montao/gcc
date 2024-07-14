@@ -65,6 +65,7 @@ enum
 #define AVR_HAVE_JMP_CALL (avr_arch->have_jmp_call && ! AVR_SHORT_CALLS)
 #define AVR_HAVE_MUL (avr_arch->have_mul)
 #define AVR_HAVE_MOVW (avr_arch->have_movw_lpmx)
+#define AVR_HAVE_ADIW (!AVR_TINY)
 #define AVR_HAVE_LPM (!AVR_TINY)
 #define AVR_HAVE_LPMX (avr_arch->have_movw_lpmx)
 #define AVR_HAVE_ELPM (avr_arch->have_elpm)
@@ -142,9 +143,6 @@ FIXME: DRIVER_SELF_SPECS has changed.
 #define SHORT_TYPE_SIZE (INT_TYPE_SIZE == 8 ? INT_TYPE_SIZE : 16)
 #define LONG_TYPE_SIZE (INT_TYPE_SIZE == 8 ? 16 : 32)
 #define LONG_LONG_TYPE_SIZE (INT_TYPE_SIZE == 8 ? 32 : 64)
-#define FLOAT_TYPE_SIZE 32
-#define DOUBLE_TYPE_SIZE (avr_double)
-#define LONG_DOUBLE_TYPE_SIZE (avr_long_double)
 
 #define LONG_LONG_ACCUM_TYPE_SIZE 64
 
@@ -332,6 +330,10 @@ typedef struct avr_args
 
   /* Next available register number */
   int regno;
+
+  /* Whether some of the arguments are passed on the stack,
+     and hence an arg pointer is needed.  */
+  int has_stack_args;
 } CUMULATIVE_ARGS;
 
 #define INIT_CUMULATIVE_ARGS(CUM, FNTYPE, LIBNAME, FNDECL, N_NAMED_ARGS) \

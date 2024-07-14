@@ -72,9 +72,10 @@ build_one (function_builder &b, const function_group_info &group,
   if (TARGET_XTHEADVECTOR && !check_type (return_type, argument_types))
     return;
 
-  b.add_overloaded_function (function_instance, *group.shape);
+  b.add_overloaded_function (function_instance, *group.shape,
+			     group.required_extensions);
   b.add_unique_function (function_instance, (*group.shape), return_type,
-			 argument_types);
+			 argument_types, group.required_extensions);
 }
 
 /* Add a function instance for every operand && predicate && args
@@ -101,7 +102,7 @@ build_all (function_builder &b, const function_group_info &group)
 
 #define BASE_NAME_MAX_LEN 16
 
-/* Base class for for build.  */
+/* Base class for build.  */
 struct build_base : public function_shape
 {
   void build (function_builder &b,
@@ -249,9 +250,10 @@ build_th_loadstore (function_builder &b, const function_group_info &group,
   if (strstr (group.base_name, "w") && (sew == 8 || sew ==16))
     return;
 
-  b.add_overloaded_function (function_instance, *group.shape);
+  b.add_overloaded_function (function_instance, *group.shape,
+			     group.required_extensions);
   b.add_unique_function (function_instance, (*group.shape), return_type,
-			 argument_types);
+			 argument_types, group.required_extensions);
 }
 
 /* th_loadstore_width_def class.  */
@@ -383,7 +385,10 @@ struct alu_def : public build_base
     /* Check whether rounding mode argument is a valid immediate.  */
     if (c.base->has_rounding_mode_operand_p ())
       {
-	if (!c.any_type_float_p ())
+	/* Some invalid overload intrinsic like below will have zero for
+	   c.arg_num ().  Thus, make sure arg_num is big enough here.
+	   __riscv_vaadd () will make c.arg_num () == 0.  */
+	if (!c.any_type_float_p () && c.arg_num () >= 2)
 	  return c.require_immediate (c.arg_num () - 2, VXRM_RNU, VXRM_ROD);
 	/* TODO: We will support floating-point intrinsic modeling
 	   rounding mode in the future.  */
@@ -411,8 +416,11 @@ struct build_frm_base : public build_base
   {
     gcc_assert (c.any_type_float_p ());
 
-    /* Check whether rounding mode argument is a valid immediate.  */
-    if (c.base->has_rounding_mode_operand_p ())
+    /* Check whether rounding mode argument is a valid immediate.
+       Some invalid overload intrinsic like below will have zero for
+       c.arg_num ().  Thus, make sure arg_num is big enough here.
+       __riscv_vaadd () will make c.arg_num () == 0.  */
+    if (c.base->has_rounding_mode_operand_p () && c.arg_num () >= 2)
       {
 	unsigned int frm_num = c.arg_num () - 2;
 
@@ -679,7 +687,10 @@ struct narrow_alu_def : public build_base
     /* Check whether rounding mode argument is a valid immediate.  */
     if (c.base->has_rounding_mode_operand_p ())
       {
-	if (!c.any_type_float_p ())
+	/* Some invalid overload intrinsic like below will have zero for
+	   c.arg_num ().  Thus, make sure arg_num is big enough here.
+	   __riscv_vaadd () will make c.arg_num () == 0.  */
+	if (!c.any_type_float_p () && c.arg_num () >= 2)
 	  return c.require_immediate (c.arg_num () - 2, VXRM_RNU, VXRM_ROD);
 	/* TODO: We will support floating-point intrinsic modeling
 	   rounding mode in the future.  */
@@ -922,7 +933,7 @@ struct vcreate_def : public build_base
 	    argument_types.quick_push (arg_type);
 
 	  b.add_unique_function (function_instance, (*group.shape), return_type,
-	    argument_types);
+	    argument_types, group.required_extensions);
      }
   }
 
@@ -957,7 +968,8 @@ struct read_vl_def : public function_shape
   {
     auto_vec<tree> argument_types;
     b.add_unique_function (get_read_vl_instance (), (*group.shape),
-			   size_type_node, argument_types);
+			   size_type_node, argument_types,
+			   group.required_extensions);
   }
 
   char *get_name (function_builder &b, const function_instance &instance,
@@ -1015,7 +1027,8 @@ struct vlenb_def : public function_shape
 					 *group.shape, group.ops_infos.types[0],
 					 group.preds[0], &group.ops_infos);
     b.add_unique_function (function_instance, (*group.shape),
-			   long_unsigned_type_node, argument_types);
+			   long_unsigned_type_node, argument_types,
+			   group.required_extensions);
   }
 
   char *get_name (function_builder &b, const function_instance &instance,
