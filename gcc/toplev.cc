@@ -2083,6 +2083,7 @@ standard_type_bitsize (int bitsize)
 static void
 do_compile ()
 {
+  printf("DO COMPILE");	
   /* Don't do any more if an error has already occurred.  */
   if (!seen_error ())
     {
