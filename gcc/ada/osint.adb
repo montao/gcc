@@ -2037,7 +2037,7 @@ package body Osint is
 
          when Binder
             | Gnatls
-          =>
+         =>
             Dir_Name := Normalize_Directory_Name (Dir_Name.all);
             Lib_Search_Directories.Table (Primary_Directory) := Dir_Name;
 
@@ -2350,10 +2350,10 @@ package body Osint is
    begin
       --  Construct a C compatible character string buffer
 
-      Buffer (1 .. Search_Dir_Prefix.all'Length)
-        := Search_Dir_Prefix.all;
-      Buffer (Search_Dir_Prefix.all'Length + 1 .. Buffer'Last - 1)
-        := Search_File.all;
+      Buffer (1 .. Search_Dir_Prefix.all'Length) :=
+        Search_Dir_Prefix.all;
+      Buffer (Search_Dir_Prefix.all'Length + 1 .. Buffer'Last - 1) :=
+        Search_File.all;
       Buffer (Buffer'Last) := ASCII.NUL;
 
       File_FD := Open_Read (Buffer'Address, Binary);

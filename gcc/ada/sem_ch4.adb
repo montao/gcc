@@ -27,6 +27,7 @@ with Accessibility;  use Accessibility;
 with Aspects;        use Aspects;
 with Atree;          use Atree;
 with Debug;          use Debug;
+with Diagnostics.Constructors; use Diagnostics.Constructors;
 with Einfo;          use Einfo;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
@@ -154,11 +155,11 @@ package body Sem_Ch4 is
    --  the operand of the operator node.
 
    procedure Analyze_One_Call
-      (N          : Node_Id;
-       Nam        : Entity_Id;
-       Report     : Boolean;
-       Success    : out Boolean;
-       Skip_First : Boolean := False);
+     (N          : Node_Id;
+      Nam        : Entity_Id;
+      Report     : Boolean;
+      Success    : out Boolean;
+      Skip_First : Boolean := False);
    --  Check one interpretation of an overloaded subprogram name for
    --  compatibility with the types of the actuals in a call. If there is a
    --  single interpretation which does not match, post error if Report is
@@ -278,6 +279,7 @@ package body Sem_Ch4 is
            (N /= Original_Node (N)
              and then Is_Effectively_Visible_Operator
                         (N => Original_Node (N), Typ => Typ))
+         or else Checking_Potentially_Static_Expression
          or else not Comes_From_Source (N));
    --  Return True iff either Is_Visible_Operator returns True or if
    --  there is a reason it is ok for Is_Visible_Operator to return False.
@@ -1994,6 +1996,7 @@ package body Sem_Ch4 is
               (Root_Type (LT) = Standard_String
                  or else Scope (LT) /= Standard_Standard)
               and then Etype (R) = Any_String
+              and then not Is_Component_Left_Opnd (N)
             then
                Add_One_Interp (N, Op_Id, LT);
 
@@ -2001,6 +2004,7 @@ package body Sem_Ch4 is
               (Root_Type (RT) = Standard_String
                  or else Scope (RT) /= Standard_Standard)
               and then Etype (L) = Any_String
+              and then not Is_Component_Right_Opnd (N)
             then
                Add_One_Interp (N, Op_Id, RT);
 
@@ -2410,6 +2414,8 @@ package body Sem_Ch4 is
 
          case Nkind (A) is
             when N_Object_Declaration =>
+               Inspect_Deferred_Constant_Completion (A);
+
                if Nkind (Object_Definition (A)) = N_Access_Definition then
                   Error_Msg_N
                     ("anonymous access type not allowed in declare_expression",
@@ -3629,11 +3635,11 @@ package body Sem_Ch4 is
    ----------------------
 
    procedure Analyze_One_Call
-      (N          : Node_Id;
-       Nam        : Entity_Id;
-       Report     : Boolean;
-       Success    : out Boolean;
-       Skip_First : Boolean := False)
+     (N          : Node_Id;
+      Nam        : Entity_Id;
+      Report     : Boolean;
+      Success    : out Boolean;
+      Skip_First : Boolean := False)
    is
       Actuals : constant List_Id   := Parameter_Associations (N);
       Prev_T  : constant Entity_Id := Etype (N);
@@ -4709,13 +4715,6 @@ package body Sem_Ch4 is
       begin
          if Warn_On_Suspicious_Contract
            and then not Is_Internal_Name (Chars (Loop_Id))
-
-           --  Generating C, this check causes spurious warnings on inlined
-           --  postconditions; we can safely disable it because this check
-           --  was previously performed when analyzing the internally built
-           --  postconditions procedure.
-
-           and then not (Modify_Tree_For_C and In_Inlined_Body)
          then
             if not Referenced (Loop_Id, Cond) then
                Error_Msg_N ("?.t?unused variable &", Loop_Id);
@@ -6489,19 +6488,6 @@ package body Sem_Ch4 is
       Operator_Check (N);
    end Analyze_Unary_Op;
 
-   ----------------------------------
-   -- Analyze_Unchecked_Expression --
-   ----------------------------------
-
-   procedure Analyze_Unchecked_Expression (N : Node_Id) is
-      Expr : constant Node_Id := Expression (N);
-
-   begin
-      Analyze (Expr, Suppress => All_Checks);
-      Set_Etype (N, Etype (Expr));
-      Save_Interps (Expr, N);
-   end Analyze_Unchecked_Expression;
-
    ---------------------------------------
    -- Analyze_Unchecked_Type_Conversion --
    ---------------------------------------
@@ -7456,6 +7442,8 @@ package body Sem_Ch4 is
                then
                   It := Disambiguate (L, Valid_I, I, Any_Type);
 
+                  --  Note the ambiguity for later, see below
+
                   if It = No_Interp then
                      L_Typ := Any_Type;
                      R_Typ := T;
@@ -7472,6 +7460,12 @@ package body Sem_Ch4 is
 
             Get_Next_Interp (I, It);
          end loop;
+
+         --  Record the operator as an interpretation of the operation if we
+         --  have found a valid pair of types for the two operands. If we have
+         --  found more than one such pair and did not manage to disambiguate
+         --  them, record an "ambiguous" operator as the interpretation, that
+         --  Disambiguate in Sem_Type will specifically recognize.
 
          if Present (L_Typ) then
             Set_Etype (L, L_Typ);
@@ -9503,7 +9497,6 @@ package body Sem_Ch4 is
                Error_Msg_NE
                  ("expect variable in call to&", Prefix (N), Entity (Subprog));
             end if;
-
          --  Conversely, if the formal is an access parameter and the object is
          --  not an access type or a reference type (i.e. a type with the
          --  Implicit_Dereference aspect specified), replace the actual with a
@@ -9573,6 +9566,8 @@ package body Sem_Ch4 is
          end if;
 
          Rewrite (Node_To_Replace, Call_Node);
+
+         Set_Is_Expanded_Prefixed_Call (Node_To_Replace);
 
          --  Propagate the interpretations collected in subprog to the new
          --  function call node, to be resolved from context.
@@ -10739,6 +10734,7 @@ package body Sem_Ch4 is
             Complete_Object_Operation
               (Call_Node       => New_Call_Node,
                Node_To_Replace => Node_To_Replace);
+
             return True;
          end if;
 
@@ -10865,40 +10861,86 @@ package body Sem_Ch4 is
             end loop;
 
             if No (Op_Id) then
-               Error_Msg_N ("invalid operand types for operator&", N);
+               if Debug_Flag_Underscore_DD then
+                  if Nkind (N) /= N_Op_Concat then
+                     if Nkind (N) in N_Op_Multiply | N_Op_Divide
+                       and then Is_Fixed_Point_Type (Etype (L))
+                       and then Is_Integer_Type (Etype (R))
+                     then
+                        Record_Invalid_Operand_Types_For_Operator_R_Int_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
 
-               if Nkind (N) /= N_Op_Concat then
-                  Error_Msg_NE ("\left operand has}!",  N, Etype (L));
-                  Error_Msg_NE ("\right operand has}!", N, Etype (R));
+                     elsif Nkind (N) = N_Op_Multiply
+                       and then Is_Fixed_Point_Type (Etype (R))
+                       and then Is_Integer_Type (Etype (L))
+                     then
+                        Record_Invalid_Operand_Types_For_Operator_L_Int_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
+                     else
+                        Record_Invalid_Operand_Types_For_Operator_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
+                     end if;
+                  elsif Is_Access_Type (Etype (L)) then
+                     Record_Invalid_Operand_Types_For_Operator_L_Acc_Error
+                          (Op     => N,
+                           L      => L);
 
-                  --  For multiplication and division operators with
-                  --  a fixed-point operand and an integer operand,
-                  --  indicate that the integer operand should be of
-                  --  type Integer.
-
-                  if Nkind (N) in N_Op_Multiply | N_Op_Divide
-                    and then Is_Fixed_Point_Type (Etype (L))
-                    and then Is_Integer_Type (Etype (R))
-                  then
-                     Error_Msg_N ("\convert right operand to `Integer`", N);
-
-                  elsif Nkind (N) = N_Op_Multiply
-                    and then Is_Fixed_Point_Type (Etype (R))
-                    and then Is_Integer_Type (Etype (L))
-                  then
-                     Error_Msg_N ("\convert left operand to `Integer`", N);
+                  elsif Is_Access_Type (Etype (R)) then
+                     Record_Invalid_Operand_Types_For_Operator_R_Acc_Error
+                          (Op     => N,
+                           R      => R);
+                  else
+                     Record_Invalid_Operand_Types_For_Operator_General_Error
+                      (N);
                   end if;
+               else
+                  Error_Msg_N ("invalid operand types for operator&", N);
 
-               --  For concatenation operators it is more difficult to
-               --  determine which is the wrong operand. It is worth
-               --  flagging explicitly an access type, for those who
-               --  might think that a dereference happens here.
+                  if Nkind (N) /= N_Op_Concat then
+                     Error_Msg_NE ("\left operand has}!", N, Etype (L));
+                     Error_Msg_NE ("\right operand has}!", N, Etype (R));
 
-               elsif Is_Access_Type (Etype (L)) then
-                  Error_Msg_N ("\left operand is access type", N);
+                     --  For multiplication and division operators with
+                     --  a fixed-point operand and an integer operand,
+                     --  indicate that the integer operand should be of
+                     --  type Integer.
 
-               elsif Is_Access_Type (Etype (R)) then
-                  Error_Msg_N ("\right operand is access type", N);
+                     if Nkind (N) in N_Op_Multiply | N_Op_Divide
+                        and then Is_Fixed_Point_Type (Etype (L))
+                        and then Is_Integer_Type (Etype (R))
+                     then
+                        Error_Msg_N ("\convert right operand to `Integer`", N);
+
+                     elsif Nkind (N) = N_Op_Multiply
+                        and then Is_Fixed_Point_Type (Etype (R))
+                        and then Is_Integer_Type (Etype (L))
+                     then
+                        Error_Msg_N ("\convert left operand to `Integer`", N);
+                     end if;
+
+                  --  For concatenation operators it is more difficult to
+                  --  determine which is the wrong operand. It is worth
+                  --  flagging explicitly an access type, for those who
+                  --  might think that a dereference happens here.
+
+                  elsif Is_Access_Type (Etype (L)) then
+                     Error_Msg_N ("\left operand is access type", N);
+
+                  elsif Is_Access_Type (Etype (R)) then
+                     Error_Msg_N ("\right operand is access type", N);
+                  end if;
                end if;
             end if;
          end if;

@@ -1778,11 +1778,6 @@ package body Sem_Elab is
       --  Determine whether arbitrary entity Id denotes internally generated
       --  routine Default_Initial_Condition.
 
-      function Is_Finalizer_Proc (Id : Entity_Id) return Boolean;
-      pragma Inline (Is_Finalizer_Proc);
-      --  Determine whether arbitrary entity Id denotes internally generated
-      --  routine _Finalizer.
-
       function Is_Initial_Condition_Proc (Id : Entity_Id) return Boolean;
       pragma Inline (Is_Initial_Condition_Proc);
       --  Determine whether arbitrary entity Id denotes internally generated
@@ -2438,7 +2433,7 @@ package body Sem_Elab is
          --  Calls to _Finalizer procedures must not appear in the output
          --  because this creates confusing noise.
 
-         elsif Is_Finalizer_Proc (Subp_Id) then
+         elsif Is_Finalizer (Subp_Id) then
             null;
 
          --  Initial_Condition
@@ -5338,7 +5333,7 @@ package body Sem_Elab is
 
             return
               (Is_Controlled_Procedure (Subp_Id, Name_Finalize)
-                 or else Is_Finalizer_Proc (Subp_Id)
+                 or else Is_Finalizer (Subp_Id)
                  or else Is_TSS (Subp_Id, TSS_Deep_Finalize))
                and then In_Initialization_Context (Call);
          end Is_Partial_Finalization_Proc;
@@ -6607,7 +6602,7 @@ package body Sem_Elab is
             --  Calls to _Finalizer procedures must not appear in the output
             --  because this creates confusing noise.
 
-            elsif Is_Finalizer_Proc (Subp_Id) then
+            elsif Is_Finalizer (Subp_Id) then
                null;
 
             --  Initial_Condition
@@ -8466,9 +8461,9 @@ package body Sem_Elab is
             Set_Context_Items (Main_Cunit, Items);
          end if;
 
-         --  Locate the with clause for the unit. Note that there may not be a
-         --  clause if the unit is visible through a subunit-body, body-spec,
-         --  or spec-parent relationship.
+         --  Locate the with clause for the unit. Note that there might not be
+         --  a with clause if the unit is visible through a subunit-body,
+         --  body-spec, or spec-parent relationship.
 
          Clause :=
            Find_With_Clause
@@ -8480,16 +8475,16 @@ package body Sem_Elab is
 
          --  Note that adding implicit with clauses is safe because analysis,
          --  resolution, and expansion have already taken place and it is not
-         --  possible to interfere with visibility.
+         --  possible to interfere with visibility. Note that this implicit
+         --  with clause can point at (for example) a package body, which
+         --  is not the case for normal with clauses.
 
          if No (Clause) then
             Clause :=
               Make_With_Clause (Loc,
                 Name => New_Occurrence_Of (Unit_Id, Loc));
-
-            Set_Implicit_With (Clause);
-            Set_Library_Unit  (Clause, Unit_Cunit);
-
+            Set_Is_Implicit_With (Clause);
+            Set_Withed_Lib_Unit (Clause, Unit_Cunit);
             Append_To (Items, Clause);
          end if;
 
@@ -9892,7 +9887,7 @@ package body Sem_Elab is
             elsif Nkind (Item) = N_Package_Body_Stub
               and then Chars (Defining_Entity (Item)) = Spec_Nam
             then
-               Lib_Unit := Library_Unit (Item);
+               Lib_Unit := Stub_Subunit (Item);
 
                --  The corresponding subunit was previously loaded
 
@@ -10881,20 +10876,7 @@ package body Sem_Elab is
          Spec_Id : Entity_Id;
 
       begin
-         Spec_Id := Subp_Id;
-
-         --  The elaboration target denotes an internal function that returns a
-         --  constrained array type in a SPARK-to-C compilation. In this case
-         --  the function receives a corresponding procedure which has an out
-         --  parameter. The proper body for ABE checks and diagnostics is that
-         --  of the procedure.
-
-         if Ekind (Spec_Id) = E_Function
-           and then Rewritten_For_C (Spec_Id)
-         then
-            Spec_Id := Corresponding_Procedure (Spec_Id);
-         end if;
-
+         Spec_Id  := Subp_Id;
          Rec.Kind := Subprogram_Target;
 
          Spec_And_Body_From_Entity
@@ -13111,7 +13093,7 @@ package body Sem_Elab is
             --  Controlled finalization actions
 
             elsif Is_Controlled_Procedure (Targ_Id, Name_Finalize)
-              or else Is_Finalizer_Proc (Targ_Id)
+              or else Is_Finalizer (Targ_Id)
             then
                Extra := First_Formal_Type (Targ_Id);
                Kind  := Controlled_Finalization;
@@ -14480,7 +14462,7 @@ package body Sem_Elab is
       begin
          return
            Is_Accept_Alternative_Proc (Id)
-             or else Is_Finalizer_Proc (Id)
+             or else Is_Finalizer (Id)
              or else Is_Partial_Invariant_Proc (Id)
              or else Is_TSS (Id, TSS_Deep_Adjust)
              or else Is_TSS (Id, TSS_Deep_Finalize)
@@ -14500,17 +14482,6 @@ package body Sem_Elab is
 
          return Ekind (Id) = E_Procedure and then Is_DIC_Procedure (Id);
       end Is_Default_Initial_Condition_Proc;
-
-      -----------------------
-      -- Is_Finalizer_Proc --
-      -----------------------
-
-      function Is_Finalizer_Proc (Id : Entity_Id) return Boolean is
-      begin
-         --  To qualify, the entity must denote a _Finalizer procedure
-
-         return Ekind (Id) = E_Procedure and then Chars (Id) = Name_uFinalizer;
-      end Is_Finalizer_Proc;
 
       -------------------------------
       -- Is_Initial_Condition_Proc --
@@ -16347,9 +16318,9 @@ package body Sem_Elab is
    --  to be the enclosing compilation unit of this scope.
 
    procedure Set_Elaboration_Constraint
-    (Call : Node_Id;
-     Subp : Entity_Id;
-     Scop : Entity_Id);
+     (Call : Node_Id;
+      Subp : Entity_Id;
+      Scop : Entity_Id);
    --  The current unit U may depend semantically on some unit P that is not
    --  in the current context. If there is an elaboration call that reaches P,
    --  we need to indicate that P requires an Elaborate_All, but this is not
@@ -16403,6 +16374,8 @@ package body Sem_Elab is
       --  This procedure is called when the elaborate indication must be
       --  applied to a unit not in the context of the referencing unit. The
       --  unit gets added to the context as an implicit with.
+      --  Note that we can be with-ing (for example) a package body, which
+      --  is not the case for normal with clauses.
 
       function In_Withs_Of (UEs : Entity_Id) return Boolean;
       --  UEs is the spec entity of a unit. If the unit to be marked is
@@ -16422,8 +16395,8 @@ package body Sem_Elab is
                   Name => Name (Itm));
 
       begin
-         Set_Library_Unit  (CW, Library_Unit (Itm));
-         Set_Implicit_With (CW);
+         Set_Is_Implicit_With (CW);
+         Set_Withed_Lib_Unit (CW, Withed_Lib_Unit (Itm));
 
          --  Set elaborate all desirable on copy and then append the copy to
          --  the list of body with's and we are done.
@@ -16446,7 +16419,7 @@ package body Sem_Elab is
          while Present (Itm) loop
             if Nkind (Itm) = N_With_Clause then
                Ent :=
-                 Cunit_Entity (Get_Cunit_Unit_Number (Library_Unit (Itm)));
+                 Cunit_Entity (Get_Cunit_Unit_Number (Withed_Lib_Unit (Itm)));
 
                if U = Ent then
                   return True;
@@ -16494,7 +16467,8 @@ package body Sem_Elab is
       Itm := First (CI);
       while Present (Itm) loop
          if Nkind (Itm) = N_With_Clause then
-            Ent := Cunit_Entity (Get_Cunit_Unit_Number (Library_Unit (Itm)));
+            Ent :=
+              Cunit_Entity (Get_Cunit_Unit_Number (Withed_Lib_Unit (Itm)));
 
             --  If we find it, then mark elaborate all desirable and return
 
@@ -16568,10 +16542,10 @@ package body Sem_Elab is
         (Msg_D : String;
          Msg_S : String;
          Ent   : Node_Or_Entity_Id);
-       --  Generate a call to Error_Msg_NE with parameters Msg_D or Msg_S (for
-       --  dynamic or static elaboration model), N and Ent. Msg_D is a real
-       --  warning (output if Msg_D is non-null and Elab_Warnings is set),
-       --  Msg_S is an info message (output if Elab_Info_Messages is set).
+      --  Generate a call to Error_Msg_NE with parameters Msg_D or Msg_S (for
+      --  dynamic or static elaboration model), N and Ent. Msg_D is a real
+      --  warning (output if Msg_D is non-null and Elab_Warnings is set),
+      --  Msg_S is an info message (output if Elab_Info_Messages is set).
 
       function Find_W_Scope return Entity_Id;
       --  Find top-level scope for called entity (not following renamings
@@ -19084,8 +19058,8 @@ package body Sem_Elab is
             elsif Nkind (Nod) = N_Package_Body_Stub
               and then Chars (Defining_Identifier (Nod)) = Chars (E)
             then
-               if Present (Library_Unit (Nod)) then
-                  return Unit (Library_Unit (Nod));
+               if Present (Stub_Subunit (Nod)) then
+                  return Unit (Stub_Subunit (Nod));
 
                else
                   return Load_Package_Body (Get_Unit_Name (Nod));
@@ -19549,9 +19523,9 @@ package body Sem_Elab is
    --------------------------------
 
    procedure Set_Elaboration_Constraint
-    (Call : Node_Id;
-     Subp : Entity_Id;
-     Scop : Entity_Id)
+     (Call : Node_Id;
+      Subp : Entity_Id;
+      Scop : Entity_Id)
    is
       Elab_Unit : Entity_Id;
 
@@ -19785,7 +19759,7 @@ package body Sem_Elab is
                   --  in each N_Compilation_Unit node, but that would involve
                   --  rearranging N_Compilation_Unit_Aux to make room.
 
-                  Helper (Get_Cunit_Unit_Number (Library_Unit (Item)));
+                  Helper (Get_Cunit_Unit_Number (Withed_Lib_Unit (Item)));
 
                   if Result then
                      return;

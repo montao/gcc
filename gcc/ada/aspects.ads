@@ -96,6 +96,7 @@ package Aspects is
       Aspect_Dispatching_Domain,
       Aspect_Dynamic_Predicate,
       Aspect_Exceptional_Cases,             -- GNAT
+      Aspect_External_Initialization,       -- GNAT
       Aspect_External_Name,
       Aspect_External_Tag,
       Aspect_Finalizable,                   -- GNAT
@@ -196,8 +197,10 @@ package Aspects is
       Aspect_Effective_Writes,              -- GNAT
       Aspect_Exclusive_Functions,
       Aspect_Export,
+      Aspect_Extended_Access,               -- GNAT
       Aspect_Extensions_Visible,            -- GNAT
       Aspect_Favor_Top_Level,               -- GNAT
+      Aspect_First_Controlling_Parameter,   -- GNAT
       Aspect_Full_Access_Only,
       Aspect_Ghost,                         -- GNAT
       Aspect_Import,
@@ -210,6 +213,7 @@ package Aspects is
       Aspect_No_Caching,                    -- GNAT
       Aspect_No_Controlled_Parts,
       Aspect_No_Inline,                     -- GNAT
+      Aspect_No_Raise,                      -- GNAT
       Aspect_No_Return,
       Aspect_No_Tagged_Streams,             -- GNAT
       Aspect_No_Task_Parts,                 -- GNAT
@@ -290,9 +294,12 @@ package Aspects is
       Aspect_Effective_Reads            => True,
       Aspect_Effective_Writes           => True,
       Aspect_Exceptional_Cases          => True,
+      Aspect_Extended_Access            => True,
       Aspect_Extensions_Visible         => True,
+      Aspect_External_Initialization    => True,
       Aspect_Favor_Top_Level            => True,
       Aspect_Finalizable                => True,
+      Aspect_First_Controlling_Parameter => True,
       Aspect_Ghost                      => True,
       Aspect_Ghost_Predicate            => True,
       Aspect_Global                     => True,
@@ -309,6 +316,7 @@ package Aspects is
       Aspect_No_Caching                 => True,
       Aspect_No_Elaboration_Code_All    => True,
       Aspect_No_Inline                  => True,
+      Aspect_No_Raise                   => True,
       Aspect_No_Tagged_Streams          => True,
       Aspect_No_Task_Parts              => True,
       Aspect_Obsolescent                => True,
@@ -433,6 +441,7 @@ package Aspects is
       Aspect_Dispatching_Domain         => Expression,
       Aspect_Dynamic_Predicate          => Expression,
       Aspect_Exceptional_Cases          => Expression,
+      Aspect_External_Initialization    => Expression,
       Aspect_External_Name              => Expression,
       Aspect_External_Tag               => Expression,
       Aspect_Finalizable                => Expression,
@@ -532,9 +541,12 @@ package Aspects is
       Aspect_Dynamic_Predicate            => False,
       Aspect_Exceptional_Cases            => False,
       Aspect_Exclusive_Functions          => False,
-      Aspect_External_Name                => False,
+      Aspect_Extended_Access              => True,
+      Aspect_External_Initialization      => False,
+      Aspect_External_Name                => True,
       Aspect_External_Tag                 => False,
       Aspect_Finalizable                  => False,
+      Aspect_First_Controlling_Parameter  => False,
       Aspect_Ghost_Predicate              => False,
       Aspect_Global                       => False,
       Aspect_GNAT_Annotate                => False,
@@ -629,6 +641,7 @@ package Aspects is
       Aspect_No_Caching                   => False,
       Aspect_No_Controlled_Parts          => False,
       Aspect_No_Inline                    => False,
+      Aspect_No_Raise                     => False,
       Aspect_No_Return                    => False,
       Aspect_No_Tagged_Streams            => False,
       Aspect_No_Task_Parts                => False,
@@ -704,11 +717,14 @@ package Aspects is
       Aspect_Exceptional_Cases            => Name_Exceptional_Cases,
       Aspect_Exclusive_Functions          => Name_Exclusive_Functions,
       Aspect_Export                       => Name_Export,
+      Aspect_Extended_Access              => Name_Extended_Access,
       Aspect_Extensions_Visible           => Name_Extensions_Visible,
+      Aspect_External_Initialization      => Name_External_Initialization,
       Aspect_External_Name                => Name_External_Name,
       Aspect_External_Tag                 => Name_External_Tag,
       Aspect_Favor_Top_Level              => Name_Favor_Top_Level,
       Aspect_Finalizable                  => Name_Finalizable,
+      Aspect_First_Controlling_Parameter  => Name_First_Controlling_Parameter,
       Aspect_Full_Access_Only             => Name_Full_Access_Only,
       Aspect_Ghost                        => Name_Ghost,
       Aspect_Ghost_Predicate              => Name_Ghost_Predicate,
@@ -741,6 +757,7 @@ package Aspects is
       Aspect_No_Task_Parts                => Name_No_Task_Parts,
       Aspect_No_Elaboration_Code_All      => Name_No_Elaboration_Code_All,
       Aspect_No_Inline                    => Name_No_Inline,
+      Aspect_No_Raise                     => Name_No_Raise,
       Aspect_No_Return                    => Name_No_Return,
       Aspect_No_Tagged_Streams            => Name_No_Tagged_Streams,
       Aspect_Object_Size                  => Name_Object_Size,
@@ -956,7 +973,6 @@ package Aspects is
       Aspect_Dynamic_Predicate            => Always_Delay,
       Aspect_Elaborate_Body               => Always_Delay,
       Aspect_Exclusive_Functions          => Always_Delay,
-      Aspect_External_Name                => Always_Delay,
       Aspect_External_Tag                 => Always_Delay,
       Aspect_Favor_Top_Level              => Always_Delay,
       Aspect_Finalizable                  => Always_Delay,
@@ -973,10 +989,9 @@ package Aspects is
       Aspect_Invariant                    => Always_Delay,
       Aspect_Iterable                     => Always_Delay,
       Aspect_Iterator_Element             => Always_Delay,
-      Aspect_Link_Name                    => Always_Delay,
-      Aspect_Linker_Section               => Always_Delay,
       Aspect_Lock_Free                    => Always_Delay,
       Aspect_No_Inline                    => Always_Delay,
+      Aspect_No_Raise                     => Always_Delay,
       Aspect_No_Return                    => Always_Delay,
       Aspect_Output                       => Always_Delay,
       Aspect_Persistent_BSS               => Always_Delay,
@@ -1041,6 +1056,8 @@ package Aspects is
       Aspect_Exceptional_Cases            => Never_Delay,
       Aspect_Export                       => Never_Delay,
       Aspect_Extensions_Visible           => Never_Delay,
+      Aspect_External_Initialization      => Never_Delay,
+      Aspect_First_Controlling_Parameter  => Never_Delay,
       Aspect_Ghost                        => Never_Delay,
       Aspect_Global                       => Never_Delay,
       Aspect_GNAT_Annotate                => Never_Delay,
@@ -1079,7 +1096,11 @@ package Aspects is
       Aspect_Atomic_Components            => Rep_Aspect,
       Aspect_Bit_Order                    => Rep_Aspect,
       Aspect_Component_Size               => Rep_Aspect,
+      Aspect_Extended_Access              => Rep_Aspect,
+      Aspect_External_Name                => Rep_Aspect,
       Aspect_Full_Access_Only             => Rep_Aspect,
+      Aspect_Link_Name                    => Rep_Aspect,
+      Aspect_Linker_Section               => Rep_Aspect,
       Aspect_Machine_Radix                => Rep_Aspect,
       Aspect_Object_Size                  => Rep_Aspect,
       Aspect_Pack                         => Rep_Aspect,

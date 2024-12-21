@@ -22,7 +22,7 @@
 (define_insn "*zero_extendsidi2_bitmanip"
   [(set (match_operand:DI 0 "register_operand" "=r,r")
 	(zero_extend:DI (match_operand:SI 1 "nonimmediate_operand" "r,m")))]
-  "TARGET_64BIT && TARGET_ZBA"
+  "TARGET_64BIT && TARGET_ZBA && !TARGET_XTHEADMEMIDX"
   "@
    zext.w\t%0,%1
    lwu\t%0,%1"
@@ -549,23 +549,33 @@
 
 ;; Optimize the common case of a SImode min/max against a constant
 ;; that is safe both for sign- and zero-extension.
-(define_insn_and_split "*minmax"
-  [(set (match_operand:DI 0 "register_operand" "=r")
+(define_split
+  [(set (match_operand:DI 0 "register_operand")
 	(sign_extend:DI
 	  (subreg:SI
-	    (bitmanip_minmax:DI (zero_extend:DI (match_operand:SI 1 "register_operand" "r"))
-						(match_operand:DI 2 "immediate_operand" "i"))
-	   0)))
-   (clobber (match_scratch:DI 3 "=&r"))
-   (clobber (match_scratch:DI 4 "=&r"))]
+	    (bitmanip_minmax:DI (zero_extend:DI
+				  (match_operand:SI 1 "register_operand"))
+				(match_operand:DI 2 "immediate_operand")) 0)))
+   (clobber (match_operand:DI 3 "register_operand"))
+   (clobber (match_operand:DI 4 "register_operand"))]
   "TARGET_64BIT && TARGET_ZBB && sext_hwi (INTVAL (operands[2]), 32) >= 0"
-  "#"
-  "&& reload_completed"
-  [(set (match_dup 3) (sign_extend:DI (match_dup 1)))
-   (set (match_dup 4) (match_dup 2))
-   (set (match_dup 0) (<minmax_optab>:DI (match_dup 3) (match_dup 4)))]
-  ""
-  [(set_attr "type" "bitmanip")])
+  [(set (match_dup 0) (<uminmax_optab>:DI (match_dup 4) (match_dup 3)))]
+  "
+{
+  /* Load the constant into a register.  */
+  emit_move_insn (operands[3], operands[2]);
+
+  /* If operands[1] is a sign extended SUBREG, then we can use it
+     directly.  Otherwise extend it into another temporary.  */
+  if (SUBREG_P (operands[1])
+      && SUBREG_PROMOTED_VAR_P (operands[1])
+      && SUBREG_PROMOTED_SIGNED_P (operands[1]))
+    operands[4] = SUBREG_REG (operands[1]);
+  else
+    emit_move_insn (operands[4], gen_rtx_SIGN_EXTEND (DImode, operands[1]));
+
+  /* The minmax is actually emitted from the split pattern.  */
+}")
 
 ;; ZBS extension.
 
@@ -633,7 +643,10 @@
     (set (match_dup 3) (and:DI (not:DI (match_dup 1)) (match_dup 3)))
     (set (match_dup 0) (zero_extend:DI
 			 (ashift:SI (const_int 1) (match_dup 4))))]
-  { operands[4] = gen_lowpart (QImode, operands[3]); }
+{
+  operands[4] = gen_lowpart (QImode, operands[3]);
+  operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f);
+}
   [(set_attr "type" "bitmanip")])
 
 (define_insn_and_split ""
@@ -652,7 +665,7 @@
    (set (match_dup 0) (zero_extend:DI (ashift:SI
 				     (const_int 1)
 				     (subreg:QI (match_dup 0) 0))))]
-  { }
+  { operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f); }
   [(set_attr "type" "bitmanip")])
 
 ;; Similarly two patterns for IOR/XOR generating bset/binv to
@@ -675,9 +688,12 @@
   "#"
   "&& reload_completed"
    [(set (match_dup 4) (match_dup 2))
-    (set (match_dup 4) (and:DI (not:DI (match_dup 4)) (match_dup 1)))
+    (set (match_dup 4) (and:DI (not:DI (match_dup 1)) (match_dup 4)))
     (set (match_dup 0) (any_or:DI (ashift:DI (const_int 1) (match_dup 5)) (match_dup 3)))]
-  { operands[5] = gen_lowpart (QImode, operands[4]); }
+{
+  operands[5] = gen_lowpart (QImode, operands[4]);
+  operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f);
+}
   [(set_attr "type" "bitmanip")])
 
 (define_insn_and_split ""
@@ -698,7 +714,7 @@
   "&& reload_completed"
    [(set (match_dup 4) (and:DI (match_dup 1) (match_dup 2)))
     (set (match_dup 0) (any_or:DI (ashift:DI (const_int 1) (subreg:QI (match_dup 4) 0)) (match_dup 3)))]
-  { }
+  { operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f); }
   [(set_attr "type" "bitmanip")])
 
 ;; Similarly two patterns for AND generating bclr to
@@ -724,7 +740,10 @@
    [(set (match_dup 4) (match_dup 2))
     (set (match_dup 4) (and:DI (not:DI (match_dup 1)) (match_dup 4)))
     (set (match_dup 0) (and:DI (rotate:DI (const_int -2) (match_dup 5)) (match_dup 3)))]
-  { operands[5] = gen_lowpart (QImode, operands[4]); }
+{
+  operands[5] = gen_lowpart (QImode, operands[4]);
+  operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f);
+}
   [(set_attr "type" "bitmanip")])
 
 
@@ -747,7 +766,10 @@
   "&& reload_completed"
    [(set (match_dup 4) (and:DI (match_dup 1) (match_dup 2)))
     (set (match_dup 0) (and:DI (rotate:DI (const_int -2) (match_dup 5)) (match_dup 3)))]
-  { operands[5] = gen_lowpart (QImode, operands[4]); }
+{
+  operands[5] = gen_lowpart (QImode, operands[4]);
+  operands[2] = GEN_INT (INTVAL (operands[2]) & 0x1f);
+}
   [(set_attr "type" "bitmanip")])
 
 (define_insn "*bset<mode>_1_mask"
@@ -1056,7 +1078,7 @@
    && TARGET_ZBA
    && !paradoxical_subreg_p (operands[1])
    /* Only profitable if synthesis takes more than one insn.  */
-   && riscv_const_insns (operands[2]) != 1
+   && riscv_const_insns (operands[2], false) != 1
    /* We need the upper half to be zero.  */
    && (INTVAL (operands[2]) & HOST_WIDE_INT_C (0xffffffff00000000)) == 0
    /* And the the adjusted constant must either be something we can
@@ -1170,3 +1192,66 @@
   "TARGET_ZBC"
   "clmulr\t%0,%1,%2"
   [(set_attr "type" "clmul")])
+
+;; Reversed CRC 8, 16, 32 for TARGET_64
+(define_expand "crc_rev<ANYI1:mode><ANYI:mode>4"
+	;; return value (calculated CRC)
+  [(set (match_operand:ANYI 0 "register_operand" "=r")
+		      ;; initial CRC
+	(unspec:ANYI [(match_operand:ANYI 1 "register_operand" "r")
+		      ;; data
+		      (match_operand:ANYI1 2 "register_operand" "r")
+		      ;; polynomial without leading 1
+		      (match_operand:ANYI 3)]
+		      UNSPEC_CRC_REV))]
+  /* We don't support the case when data's size is bigger than CRC's size.  */
+  "<ANYI:MODE>mode >= <ANYI1:MODE>mode"
+{
+  /* If we have the ZBC or ZBKC extension (ie, clmul) and
+     it is possible to store the quotient within a single variable
+     (E.g.  CRC64's quotient may need 65 bits,
+     we can't keep it in 64 bit variable.)
+     then use clmul instruction to implement the CRC,
+     otherwise (TARGET_ZBKB) generate table based using brev.  */
+  if ((TARGET_ZBKC || TARGET_ZBC) && <ANYI:MODE>mode < word_mode)
+    expand_reversed_crc_using_clmul (<ANYI:MODE>mode, <ANYI1:MODE>mode,
+				     operands);
+  else if (TARGET_ZBKB)
+    /* Generate table-based CRC.
+       To reflect values use brev and bswap instructions.  */
+    expand_reversed_crc_table_based (operands[0], operands[1],
+				     operands[2], operands[3],
+				     GET_MODE (operands[2]),
+				     generate_reflecting_code_using_brev);
+  else
+    /* Generate table-based CRC.
+       To reflect values use standard reflecting algorithm.  */
+    expand_reversed_crc_table_based (operands[0], operands[1],
+				     operands[2], operands[3],
+				     GET_MODE (operands[2]),
+				     generate_reflecting_code_standard);
+  DONE;
+})
+
+;; CRC 8, 16, (32 for TARGET_64)
+(define_expand "crc<SUBX1:mode><SUBX:mode>4"
+	;; return value (calculated CRC)
+  [(set (match_operand:SUBX 0 "register_operand" "=r")
+		      ;; initial CRC
+	(unspec:SUBX [(match_operand:SUBX 1 "register_operand" "r")
+		      ;; data
+		      (match_operand:SUBX1 2 "register_operand" "r")
+		      ;; polynomial without leading 1
+		      (match_operand:SUBX 3)]
+		      UNSPEC_CRC))]
+  /* We don't support the case when data's size is bigger than CRC's size.  */
+  "(TARGET_ZBKC || TARGET_ZBC) && <SUBX:MODE>mode >= <SUBX1:MODE>mode"
+{
+  /* If we have the ZBC or ZBKC extension (ie, clmul) and
+     it is possible to store the quotient within a single variable
+     (E.g.  CRC64's quotient may need 65 bits,
+     we can't keep it in 64 bit variable.)
+     then use clmul instruction to implement the CRC.  */
+  expand_crc_using_clmul (<SUBX:MODE>mode, <SUBX1:MODE>mode, operands);
+  DONE;
+})

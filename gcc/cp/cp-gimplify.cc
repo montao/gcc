@@ -42,6 +42,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "cgraph.h"
 #include "omp-general.h"
 #include "opts.h"
+#include "gcc-urlifier.h"
 
 /* Keep track of forward references to immediate-escalating functions in
    case they become consteval.  This vector contains ADDR_EXPRs and
@@ -53,6 +54,10 @@ static GTY(()) hash_set<tree> *deferred_escalating_exprs;
 static void
 remember_escalating_expr (tree t)
 {
+  if (uses_template_parms (t))
+    /* Templates don't escalate, and cp_fold_immediate can get confused by
+       other template trees in the function body (c++/115986).  */
+    return;
   if (!deferred_escalating_exprs)
     deferred_escalating_exprs = hash_set<tree>::create_ggc (37);
   deferred_escalating_exprs->add (t);
@@ -1465,13 +1470,19 @@ cp_fold_r (tree *stmt_p, int *walk_subtrees, void *data_)
       if (data->flags & ff_genericize)
 	cp_genericize_target_expr (stmt_p);
 
-      /* Folding might replace e.g. a COND_EXPR with a TARGET_EXPR; in
-	 that case, strip it in favor of this one.  */
       if (tree &init = TARGET_EXPR_INITIAL (stmt))
 	{
 	  cp_walk_tree (&init, cp_fold_r, data, NULL);
 	  cp_walk_tree (&TARGET_EXPR_CLEANUP (stmt), cp_fold_r, data, NULL);
 	  *walk_subtrees = 0;
+	  if (!flag_no_inline)
+	    {
+	      tree folded = maybe_constant_init (init, TARGET_EXPR_SLOT (stmt));
+	      if (folded != init && TREE_CONSTANT (folded))
+		init = folded;
+	    }
+	  /* Folding might replace e.g. a COND_EXPR with a TARGET_EXPR; in
+	     that case, strip it in favor of this one.  */
 	  if (TREE_CODE (init) == TARGET_EXPR)
 	    {
 	      tree sub = TARGET_EXPR_INITIAL (init);
@@ -2088,15 +2099,6 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
       break;
 
     case CALL_EXPR:
-      /* Evaluate function concept checks instead of treating them as
-	 normal functions.  */
-      if (concept_check_p (stmt))
-	{
-	  *stmt_p = evaluate_concept_check (stmt);
-	  * walk_subtrees = 0;
-	  break;
-	}
-
       if (!wtd->no_sanitize_p
 	  && sanitize_flags_p ((SANITIZE_NULL
 				| SANITIZE_ALIGNMENT | SANITIZE_VPTR)))
@@ -3309,6 +3311,7 @@ cp_fold (tree x, fold_flags_t flags)
 	    && DECL_NAME (callee) != NULL_TREE
 	    && (id_equal (DECL_NAME (callee), "move")
 		|| id_equal (DECL_NAME (callee), "forward")
+		|| id_equal (DECL_NAME (callee), "forward_like")
 		|| id_equal (DECL_NAME (callee), "addressof")
 		/* This addressof equivalent is used heavily in libstdc++.  */
 		|| id_equal (DECL_NAME (callee), "__addressof")
@@ -3628,8 +3631,11 @@ process_stmt_hotness_attribute (tree std_attrs, location_t attrs_loc)
       SET_EXPR_LOCATION (pred, attrs_loc);
       add_stmt (pred);
       if (tree other = lookup_hotness_attribute (TREE_CHAIN (attr)))
-	warning (OPT_Wattributes, "ignoring attribute %qE after earlier %qE",
-		 get_attribute_name (other), name);
+	{
+	  auto_urlify_attributes sentinel;
+	  warning (OPT_Wattributes, "ignoring attribute %qE after earlier %qE",
+		   get_attribute_name (other), name);
+	}
       std_attrs = remove_hotness_attribute (std_attrs);
     }
   return std_attrs;
@@ -3929,7 +3935,14 @@ fold_builtin_source_location (const_tree t)
 	      const char *name = "";
 
 	      if (current_function_decl)
-		name = cxx_printable_name (current_function_decl, 2);
+		{
+		  /* If this is a coroutine, we should get the name of the user
+		     function rather than the actor we generate.  */
+		  if (tree ramp = DECL_RAMP_FN (current_function_decl))
+		    name = cxx_printable_name (ramp, 2);
+		  else
+		    name = cxx_printable_name (current_function_decl, 2);
+		}
 
 	      val = build_string_literal (name);
 	    }

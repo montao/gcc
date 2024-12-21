@@ -23,6 +23,12 @@
 
 namespace riscv_vector {
 
+enum frm_op_type
+{
+  NO_FRM,
+  HAS_FRM,
+};
+
 namespace bases {
 extern const function_base *const vsetvl;
 extern const function_base *const vsetvlmax;
@@ -339,6 +345,13 @@ extern const function_base *const vsm4k;
 extern const function_base *const vsm4r;
 extern const function_base *const vsm3me;
 extern const function_base *const vsm3c;
+/* Zvfbfmin*/
+extern const function_base *const vfncvtbf16_f;
+extern const function_base *const vfncvtbf16_f_frm;
+extern const function_base *const vfwcvtbf16_f;
+/* Zvfbfwma */
+extern const function_base *const vfwmaccbf16;
+extern const function_base *const vfwmaccbf16_frm;
 }
 
 } // end namespace riscv_vector

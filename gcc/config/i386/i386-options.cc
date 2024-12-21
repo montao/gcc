@@ -131,10 +131,12 @@ along with GCC; see the file COPYING3.  If not see
 #define m_ARROWLAKE (HOST_WIDE_INT_1U<<PROCESSOR_ARROWLAKE)
 #define m_ARROWLAKE_S (HOST_WIDE_INT_1U<<PROCESSOR_ARROWLAKE_S)
 #define m_PANTHERLAKE (HOST_WIDE_INT_1U<<PROCESSOR_PANTHERLAKE)
+#define m_DIAMONDRAPIDS (HOST_WIDE_INT_1U<<PROCESSOR_DIAMONDRAPIDS)
 #define m_CORE_AVX512 (m_SKYLAKE_AVX512 | m_CANNONLAKE \
 		       | m_ICELAKE_CLIENT | m_ICELAKE_SERVER | m_CASCADELAKE \
 		       | m_TIGERLAKE | m_COOPERLAKE | m_SAPPHIRERAPIDS \
-		       | m_ROCKETLAKE | m_GRANITERAPIDS | m_GRANITERAPIDS_D)
+		       | m_ROCKETLAKE | m_GRANITERAPIDS | m_GRANITERAPIDS_D \
+		       | m_DIAMONDRAPIDS)
 #define m_CORE_AVX2 (m_HASWELL | m_SKYLAKE | m_CORE_AVX512)
 #define m_CORE_ALL (m_CORE2 | m_NEHALEM  | m_SANDYBRIDGE | m_CORE_AVX2)
 #define m_CORE_HYBRID (m_ALDERLAKE | m_ARROWLAKE | m_ARROWLAKE_S \
@@ -260,7 +262,15 @@ static struct ix86_target_opts isa2_opts[] =
   { "-mevex512",	OPTION_MASK_ISA2_EVEX512 },
   { "-musermsr",	OPTION_MASK_ISA2_USER_MSR },
   { "-mavx10.1-256",	OPTION_MASK_ISA2_AVX10_1_256 },
-  { "-mavx10.1-512",	OPTION_MASK_ISA2_AVX10_1_512 }
+  { "-mavx10.1-512",	OPTION_MASK_ISA2_AVX10_1_512 },
+  { "-mavx10.2-256",	OPTION_MASK_ISA2_AVX10_2_256 },
+  { "-mavx10.2-512",	OPTION_MASK_ISA2_AVX10_2_512 },
+  { "-mamx-avx512",	OPTION_MASK_ISA2_AMX_AVX512 },
+  { "-mamx-tf32",	OPTION_MASK_ISA2_AMX_TF32 },
+  { "-mamx-transpose",	OPTION_MASK_ISA2_AMX_TRANSPOSE },
+  { "-mamx-fp8", 	OPTION_MASK_ISA2_AMX_FP8 },
+  { "-mmovrs",		OPTION_MASK_ISA2_MOVRS },
+  { "-mamx-movrs",	OPTION_MASK_ISA2_AMX_MOVRS }
 };
 static struct ix86_target_opts isa_opts[] =
 {
@@ -752,7 +762,7 @@ static unsigned HOST_WIDE_INT initial_ix86_arch_features[X86_ARCH_LAST] = {
   ~m_386,
 };
 
-/* This table must be in sync with enum processor_type in i386.h.  */ 
+/* This table must be in sync with enum processor_type in i386.h.  */
 static const struct processor_costs *processor_cost_table[] =
 {
   &generic_cost,
@@ -791,6 +801,7 @@ static const struct processor_costs *processor_cost_table[] =
   &alderlake_cost,
   &alderlake_cost,
   &alderlake_cost,
+  &icelake_cost,
   &intel_cost,
   &lujiazui_cost,
   &yongfeng_cost,
@@ -1126,6 +1137,15 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
     IX86_ATTR_ISA ("avx10.1", OPT_mavx10_1_256),
     IX86_ATTR_ISA ("avx10.1-256", OPT_mavx10_1_256),
     IX86_ATTR_ISA ("avx10.1-512", OPT_mavx10_1_512),
+    IX86_ATTR_ISA ("avx10.2", OPT_mavx10_2_256),
+    IX86_ATTR_ISA ("avx10.2-256", OPT_mavx10_2_256),
+    IX86_ATTR_ISA ("avx10.2-512", OPT_mavx10_2_512),
+    IX86_ATTR_ISA ("amx-avx512", OPT_mamx_avx512),
+    IX86_ATTR_ISA ("amx-tf32", OPT_mamx_tf32),
+    IX86_ATTR_ISA ("amx-transpose", OPT_mamx_transpose),
+    IX86_ATTR_ISA ("amx-fp8", OPT_mamx_fp8),
+    IX86_ATTR_ISA ("movrs", OPT_mmovrs),
+    IX86_ATTR_ISA ("amx-movrs", OPT_mamx_movrs),
 
     /* enum options */
     IX86_ATTR_ENUM ("fpmath=",	OPT_mfpmath_),
@@ -1540,9 +1560,9 @@ ix86_valid_target_attribute_p (tree fndecl,
   tree old_optimize = build_optimization_node (&global_options,
 					       &global_options_set);
 
-  /* Get the optimization options of the current function.  */  
+  /* Get the optimization options of the current function.  */
   tree func_optimize = DECL_FUNCTION_SPECIFIC_OPTIMIZATION (fndecl);
- 
+
   if (!func_optimize)
     func_optimize = old_optimize;
 
@@ -1911,6 +1931,12 @@ ix86_recompute_optlev_based_flags (struct gcc_options *opts,
 	    opts->x_flag_pcc_struct_return = DEFAULT_PCC_STRUCT_RETURN;
 	}
     }
+
+  /* Keep nonleaf frame pointers.  */
+  if (opts->x_flag_omit_frame_pointer)
+    opts->x_target_flags &= ~MASK_OMIT_LEAF_FRAME_POINTER;
+  else if (TARGET_OMIT_LEAF_FRAME_POINTER_P (opts->x_target_flags))
+    opts->x_flag_omit_frame_pointer = 1;
 }
 
 /* Implement part of TARGET_OVERRIDE_OPTIONS_AFTER_CHANGE hook.  */
@@ -2345,7 +2371,8 @@ ix86_option_override_internal (bool main_args_p,
 #define DEF_PTA(NAME) \
 	if (((processor_alias_table[i].flags & PTA_ ## NAME) != 0) \
 	    && PTA_ ## NAME != PTA_64BIT \
-	    && (TARGET_64BIT || PTA_ ## NAME != PTA_UINTR) \
+	    && (TARGET_64BIT || (PTA_ ## NAME != PTA_UINTR \
+				 && PTA_ ## NAME != PTA_APX_F))\
 	    && !TARGET_EXPLICIT_ ## NAME ## _P (opts)) \
 	  SET_TARGET_ ## NAME (opts);
 #include "i386-isa.def"
@@ -2590,12 +2617,6 @@ ix86_option_override_internal (bool main_args_p,
         opts->x_target_flags |= MASK_NO_RED_ZONE;
     }
 
-  /* Keep nonleaf frame pointers.  */
-  if (opts->x_flag_omit_frame_pointer)
-    opts->x_target_flags &= ~MASK_OMIT_LEAF_FRAME_POINTER;
-  else if (TARGET_OMIT_LEAF_FRAME_POINTER_P (opts->x_target_flags))
-    opts->x_flag_omit_frame_pointer = 1;
-
   /* If we're doing fast math, we don't care about comparison order
      wrt NaNs.  This lets us use a shorter comparison sequence.  */
   if (opts->x_flag_finite_math_only)
@@ -2830,7 +2851,7 @@ ix86_option_override_internal (bool main_args_p,
   /* For all chips supporting SSE2, -mfpmath=sse performs better than
      fpmath=387.  The second is however default at many targets since the
      extra 80bit precision of temporaries is considered to be part of ABI.
-     Overwrite the default at least for -ffast-math. 
+     Overwrite the default at least for -ffast-math.
      TODO: -mfpmath=both seems to produce same performing code with bit
      smaller binaries.  It is however not clear if register allocation is
      ready for this setting.
@@ -2853,6 +2874,10 @@ ix86_option_override_internal (bool main_args_p,
 
       case ix86_veclibabi_type_acml:
 	ix86_veclib_handler = &ix86_veclibabi_acml;
+	break;
+
+      case ix86_veclibabi_type_aocl:
+	ix86_veclib_handler = &ix86_veclibabi_aocl;
 	break;
 
       default:
@@ -3017,6 +3042,9 @@ ix86_option_override_internal (bool main_args_p,
 	      if (TARGET_AVX512F_P (opts->x_ix86_isa_flags)
 		  && TARGET_EVEX512_P (opts->x_ix86_isa_flags2))
 		opts->x_ix86_move_max = PVW_AVX512;
+	      /* Align with vectorizer to avoid potential STLF issue.  */
+	      else if (TARGET_AVX_P (opts->x_ix86_isa_flags))
+		opts->x_ix86_move_max = PVW_AVX256;
 	      else
 		opts->x_ix86_move_max = PVW_AVX128;
 	    }
@@ -3041,6 +3069,9 @@ ix86_option_override_internal (bool main_args_p,
 	      if (TARGET_AVX512F_P (opts->x_ix86_isa_flags)
 		  && TARGET_EVEX512_P (opts->x_ix86_isa_flags2))
 		opts->x_ix86_store_max = PVW_AVX512;
+	      /* Align with vectorizer to avoid potential STLF issue.  */
+	      else if (TARGET_AVX_P (opts->x_ix86_isa_flags))
+		opts->x_ix86_store_max = PVW_AVX256;
 	      else
 		opts->x_ix86_store_max = PVW_AVX128;
 	    }
@@ -3668,8 +3699,8 @@ char *
 ix86_offload_options (void)
 {
   if (TARGET_LP64)
-    return xstrdup ("-foffload-abi=lp64");
-  return xstrdup ("-foffload-abi=ilp32");
+    return xstrdup ("-foffload-abi=lp64 -foffload-abi-host-opts=-m64");
+  return xstrdup ("-foffload-abi=ilp32 -foffload-abi-host-opts=-m32");
 }
 
 /* Handle "cdecl", "stdcall", "fastcall", "regparm", "thiscall",

@@ -105,7 +105,7 @@ package body Debug is
    --  d.r  Disable reordering of components in record types
    --  d.s  Strict secondary stack management
    --  d.t  Disable static allocation of library level dispatch tables
-   --  d.u  Enable Modify_Tree_For_C (update tree for c)
+   --  d.u
    --  d.v  Enforce SPARK elaboration rules in SPARK code
    --  d.w  Do not check for infinite loops
    --  d.x  No exception handlers
@@ -150,7 +150,7 @@ package body Debug is
    --  d_j  Read JSON files and populate Repinfo tables (opposite of -gnatRjs)
    --  d_k  In CodePeer mode disable expansion of assertion checks
    --  d_l  Disable strict alignment of array types with aliased component
-   --  d_m
+   --  d_m  Run adareducer on crash
    --  d_n
    --  d_o
    --  d_p  Ignore assertion pragmas for elaboration
@@ -168,19 +168,19 @@ package body Debug is
    --  d_A  Stop generation of ALI file
    --  d_B  Warn on build-in-place function calls
    --  d_C
-   --  d_D
-   --  d_E
+   --  d_D  Use improved diagnostics
+   --  d_E  Print diagnostics and switch repository
    --  d_F  Encode full invocation paths in ALI files
    --  d_G
    --  d_H
-   --  d_I
+   --  d_I  Note generic formal type inference
    --  d_J
    --  d_K  (Reserved) Enable reporting a warning on known-problem issues
    --  d_L  Output trace information on elaboration checking
-   --  d_M
+   --  d_M  Ignore Source_File_Name and Source_File_Name_Project pragmas
    --  d_N
    --  d_O
-   --  d_P
+   --  d_P  Disable runtime check for null prefix of prefixed subprogram call
    --  d_Q
    --  d_R  For LLVM, dump the representation of records
    --  d_S
@@ -207,7 +207,7 @@ package body Debug is
    --  d.3  Output debugging information from Exp_Unst
    --  d.4  Do not delete generated C file in case of errors
    --  d.5  Do not generate imported subprogram definitions in C code
-   --  d.6  Do not avoid declaring unreferenced types in C code
+   --  d.6
    --  d.7  Disable unsound heuristics in gnat2scil (for CP as SPARK prover)
    --  d.8  Disable unconditional inlining of expression functions
    --  d.9
@@ -797,8 +797,7 @@ package body Debug is
    --       previous dynamic construction of tables. It is there as a possible
    --       work around if we run into trouble with the new implementation.
 
-   --  d.u  Sets Modify_Tree_For_C mode in which tree is modified to make it
-   --       easier to generate code using a C compiler.
+   --  d.u
 
    --  d.v  This flag enforces the elaboration rules defined in the SPARK
    --       Reference Manual, chapter 7.7, to all SPARK code within a unit. As
@@ -1030,6 +1029,9 @@ package body Debug is
    --       an external target, offering additional information to GNATBIND for
    --       purposes of error diagnostics.
 
+   --  d_I  Generic formal type inference: print a "note:" message for each
+   --       actual type that is inferred, or could be inferred.
+
    --  d_K  (Reserved) Enable reporting a warning on known-problem issues of
    --       previous releases. No action performed in the wavefront.
 
@@ -1037,6 +1039,15 @@ package body Debug is
    --       causes output to be generated showing each call or instantiation as
    --       it is checked, and the progress of the recursive trace through
    --       elaboration calls at compile time.
+
+   --  d_P  For prefixed subprogram calls with an access-type prefix, disable
+   --       the generation of a null-excluding runtime check on the prefix,
+   --       even when the called subprogram has a first access parameter that
+   --       does not exclude null (that is the case only for class-wide
+   --       parameter, as controlling parameters are automatically null-
+   --       excluding). In such a case, P.Proc is equivalent to the call
+   --       Proc(P.all'Access); see RM 6.4(9.1/5). This includes a dereference,
+   --       and thus a null check.
 
    --  d_R  In the LLVM backend, output the internal representation of
    --       each record
@@ -1117,10 +1128,6 @@ package body Debug is
    --  d.5  By default a subprogram imported generates a subprogram profile.
    --       This debug flag disables this generation when generating C code,
    --       assuming a proper #include will be used instead.
-
-   --  d.6  By default the C back-end avoids declaring types that are not
-   --       referenced by the generated C code. This debug flag restores the
-   --       output of all the types.
 
    --  d.7  Indicates (to gnat2scil) that CodePeer is being invoked as a
    --       prover by the SPARK tools and that therefore gnat2scil should

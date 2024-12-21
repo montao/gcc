@@ -141,14 +141,14 @@ package body Exp_Util is
    --  function body that computes image.
 
    procedure Build_Task_Image_Prefix
-      (Loc    : Source_Ptr;
-       Len    : out Entity_Id;
-       Res    : out Entity_Id;
-       Pos    : out Entity_Id;
-       Prefix : Entity_Id;
-       Sum    : Node_Id;
-       Decls  : List_Id;
-       Stats  : List_Id);
+     (Loc    : Source_Ptr;
+      Len    : out Entity_Id;
+      Res    : out Entity_Id;
+      Pos    : out Entity_Id;
+      Prefix : Entity_Id;
+      Sum    : Node_Id;
+      Decls  : List_Id;
+      Stats  : List_Id);
    --  Common processing for Task_Array_Image and Task_Record_Image. Create
    --  local variables and assign prefix of name to result string.
 
@@ -1079,10 +1079,11 @@ package body Exp_Util is
               Unchecked_Convert_To (RTE (RE_Storage_Offset),
                 Make_Attribute_Reference (Loc,
                   Prefix         =>
-                    (if No (Alloc_Expr) then
-                       Make_Explicit_Dereference (Loc, Relocate_Node (Expr))
+                    (if Is_Allocate then
+                       Duplicate_Subexpr_No_Checks (Expression (Alloc_Expr))
                      else
-                       Relocate_Node (Expression (Alloc_Expr))),
+                       Make_Explicit_Dereference (Loc,
+                         Duplicate_Subexpr_No_Checks (Expr))),
                   Attribute_Name => Name_Alignment)));
          end if;
 
@@ -1094,7 +1095,6 @@ package body Exp_Util is
 
                Flag_Expr : Node_Id;
                Param     : Node_Id;
-               Pref      : Node_Id;
                Temp      : Node_Id;
 
             begin
@@ -1136,7 +1136,7 @@ package body Exp_Util is
                   if Is_RTE (Etype (Temp), RE_Tag_Ptr) then
                      Param :=
                        Make_Explicit_Dereference (Loc,
-                         Prefix => Relocate_Node (Temp));
+                         Prefix => Duplicate_Subexpr_No_Checks (Temp));
 
                   --  In the default case, obtain the tag of the object about
                   --  to be allocated / deallocated. Generate:
@@ -1149,16 +1149,14 @@ package body Exp_Util is
                   --  in the code that follows.
 
                   else
-                     Pref := Temp;
-
-                     if Nkind (Parent (Pref)) = N_Unchecked_Type_Conversion
+                     if Nkind (Parent (Temp)) = N_Unchecked_Type_Conversion
                      then
-                        Pref := Parent (Pref);
+                        Temp := Parent (Temp);
                      end if;
 
                      Param :=
                        Make_Attribute_Reference (Loc,
-                         Prefix         => Relocate_Node (Pref),
+                         Prefix         => Duplicate_Subexpr_No_Checks (Temp),
                          Attribute_Name => Name_Tag);
                   end if;
 
@@ -4061,91 +4059,6 @@ package body Exp_Util is
       Restore_Ghost_Region (Saved_GM, Saved_IGR);
    end Build_Invariant_Procedure_Declaration;
 
-   --------------------------
-   -- Build_Procedure_Form --
-   --------------------------
-
-   procedure Build_Procedure_Form (N : Node_Id) is
-      Loc  : constant Source_Ptr := Sloc (N);
-      Subp : constant Entity_Id := Defining_Entity (N);
-
-      Func_Formal  : Entity_Id;
-      Proc_Formals : List_Id;
-      Proc_Decl    : Node_Id;
-
-   begin
-      --  No action needed if this transformation was already done, or in case
-      --  of subprogram renaming declarations.
-
-      if Nkind (Specification (N)) = N_Procedure_Specification
-        or else Nkind (N) = N_Subprogram_Renaming_Declaration
-      then
-         return;
-      end if;
-
-      --  Ditto when dealing with an expression function, where both the
-      --  original expression and the generated declaration end up being
-      --  expanded here.
-
-      if Rewritten_For_C (Subp) then
-         return;
-      end if;
-
-      Proc_Formals := New_List;
-
-      --  Create a list of formal parameters with the same types as the
-      --  function.
-
-      Func_Formal := First_Formal (Subp);
-      while Present (Func_Formal) loop
-         Append_To (Proc_Formals,
-           Make_Parameter_Specification (Loc,
-             Defining_Identifier =>
-               Make_Defining_Identifier (Loc, Chars (Func_Formal)),
-             Parameter_Type      =>
-               New_Occurrence_Of (Etype (Func_Formal), Loc)));
-
-         Next_Formal (Func_Formal);
-      end loop;
-
-      --  Add an extra out parameter to carry the function result
-
-      Append_To (Proc_Formals,
-        Make_Parameter_Specification (Loc,
-          Defining_Identifier =>
-            Make_Defining_Identifier (Loc, Name_UP_RESULT),
-          Out_Present         => True,
-          Parameter_Type      => New_Occurrence_Of (Etype (Subp), Loc)));
-
-      --  The new procedure declaration is inserted before the function
-      --  declaration. The processing in Build_Procedure_Body_Form relies on
-      --  this order. Note that we insert before because in the case of a
-      --  function body with no separate spec, we do not want to insert the
-      --  new spec after the body which will later get rewritten.
-
-      Proc_Decl :=
-        Make_Subprogram_Declaration (Loc,
-          Specification =>
-            Make_Procedure_Specification (Loc,
-              Defining_Unit_Name       =>
-                Make_Defining_Identifier (Loc, Chars (Subp)),
-              Parameter_Specifications => Proc_Formals));
-
-      Insert_Before_And_Analyze (Unit_Declaration_Node (Subp), Proc_Decl);
-
-      --  Entity of procedure must remain invisible so that it does not
-      --  overload subsequent references to the original function.
-
-      Set_Is_Immediately_Visible (Defining_Entity (Proc_Decl), False);
-
-      --  Mark the function as having a procedure form and link the function
-      --  and its internally built procedure.
-
-      Set_Rewritten_For_C (Subp);
-      Set_Corresponding_Procedure (Subp, Defining_Entity (Proc_Decl));
-      Set_Corresponding_Function (Defining_Entity (Proc_Decl), Subp);
-   end Build_Procedure_Form;
-
    ------------------------
    -- Build_Runtime_Call --
    ------------------------
@@ -4481,6 +4394,10 @@ package body Exp_Util is
                  Nkind (Parent (Id_Ref)) = N_Assignment_Statement
                    and then
                  Nkind (Expression (Parent (Id_Ref))) = N_Allocator;
+      Id     : constant Node_Id :=
+        (if Nkind (Id_Ref) = N_Expanded_Name then Selector_Name (Id_Ref)
+         else Id_Ref);
+      --  Replace expanded_name X.Y with Y
 
       Component_Suffix_Index : constant Int :=
         (if In_Init_Proc then -1 else 0);
@@ -4506,11 +4423,10 @@ package body Exp_Util is
                Expression =>
                  Make_String_Literal (Loc,
                    Strval => String_From_Name_Buffer)));
+      end if;
 
-      else
-         if Nkind (Id_Ref) = N_Identifier
-           or else Nkind (Id_Ref) = N_Defining_Identifier
-         then
+      case Nkind (Id) is
+         when N_Identifier | N_Defining_Identifier =>
             --  For a simple variable, the image of the task is built from
             --  the name of the variable. To avoid possible conflict with the
             --  anonymous type created for a single protected object, add a
@@ -4518,29 +4434,31 @@ package body Exp_Util is
 
             T_Id :=
               Make_Defining_Identifier (Loc,
-                New_External_Name (Chars (Id_Ref), 'T', 1));
+                New_External_Name (Chars (Id), 'T', 1));
 
-            Get_Name_String (Chars (Id_Ref));
+            Get_Name_String (Chars (Id));
 
             Expr :=
               Make_String_Literal (Loc,
                 Strval => String_From_Name_Buffer);
 
-         elsif Nkind (Id_Ref) = N_Selected_Component then
+         when N_Selected_Component =>
             T_Id :=
               Make_Defining_Identifier (Loc,
-                New_External_Name (Chars (Selector_Name (Id_Ref)), 'T',
+                New_External_Name (Chars (Selector_Name (Id)), 'T',
                   Suffix_Index => Component_Suffix_Index));
-            Fun := Build_Task_Record_Image (Loc, Id_Ref, Is_Dyn);
+            Fun := Build_Task_Record_Image (Loc, Id, Is_Dyn);
 
-         elsif Nkind (Id_Ref) = N_Indexed_Component then
+         when N_Indexed_Component =>
             T_Id :=
               Make_Defining_Identifier (Loc,
                 New_External_Name (Chars (A_Type), 'N'));
 
-            Fun := Build_Task_Array_Image (Loc, Id_Ref, A_Type, Is_Dyn);
-         end if;
-      end if;
+            Fun := Build_Task_Array_Image (Loc, Id, A_Type, Is_Dyn);
+
+         when others =>
+            raise Program_Error;
+      end case;
 
       if Present (Fun) then
          Append (Fun, Decls);
@@ -4598,14 +4516,14 @@ package body Exp_Util is
    -----------------------------
 
    procedure Build_Task_Image_Prefix
-      (Loc    : Source_Ptr;
-       Len    : out Entity_Id;
-       Res    : out Entity_Id;
-       Pos    : out Entity_Id;
-       Prefix : Entity_Id;
-       Sum    : Node_Id;
-       Decls  : List_Id;
-       Stats  : List_Id)
+     (Loc    : Source_Ptr;
+      Len    : out Entity_Id;
+      Res    : out Entity_Id;
+      Pos    : out Entity_Id;
+      Prefix : Entity_Id;
+      Sum    : Node_Id;
+      Decls  : List_Id;
+      Stats  : List_Id)
    is
    begin
       Len := Make_Temporary (Loc, 'L', Sum);
@@ -5091,7 +5009,7 @@ package body Exp_Util is
       --  declarations of the package spec.
 
       if Nkind (U) = N_Package_Body then
-         U := Unit (Library_Unit (Cunit (Current_Sem_Unit)));
+         U := Unit (Spec_Lib_Unit (Cunit (Current_Sem_Unit)));
       end if;
 
       if Nkind (U) = N_Package_Declaration then
@@ -5115,6 +5033,23 @@ package body Exp_Util is
       return Decls;
    end Current_Sem_Unit_Declarations;
 
+   -------------------------------------------
+   -- Delay_Conditional_Expressions_Between --
+   -------------------------------------------
+
+   procedure Delay_Conditional_Expressions_Between (From, To : Node_Id) is
+      N : Node_Id := From;
+
+   begin
+      while N /= To loop
+         if Nkind (N) in N_Case_Expression | N_If_Expression then
+            Set_Expansion_Delayed (N);
+         end if;
+
+         N := Parent (N);
+      end loop;
+   end Delay_Conditional_Expressions_Between;
+
    -----------------------
    -- Duplicate_Subexpr --
    -----------------------
@@ -5134,23 +5069,17 @@ package body Exp_Util is
    ---------------------------------
 
    function Duplicate_Subexpr_No_Checks
-     (Exp           : Node_Id;
-      Name_Req      : Boolean   := False;
-      Renaming_Req  : Boolean   := False;
-      Related_Id    : Entity_Id := Empty;
-      Is_Low_Bound  : Boolean   := False;
-      Is_High_Bound : Boolean   := False) return Node_Id
+     (Exp          : Node_Id;
+      Name_Req     : Boolean := False;
+      Renaming_Req : Boolean := False) return Node_Id
    is
       New_Exp : Node_Id;
 
    begin
       Remove_Side_Effects
-        (Exp           => Exp,
-         Name_Req      => Name_Req,
-         Renaming_Req  => Renaming_Req,
-         Related_Id    => Related_Id,
-         Is_Low_Bound  => Is_Low_Bound,
-         Is_High_Bound => Is_High_Bound);
+        (Exp          => Exp,
+         Name_Req     => Name_Req,
+         Renaming_Req => Renaming_Req);
 
       New_Exp := New_Copy_Tree (Exp);
       Remove_Checks (New_Exp);
@@ -6793,7 +6722,7 @@ package body Exp_Util is
       --  then we need to insert at the appropriate (inner) location in
       --  the not as an action on Node_To_Be_Wrapped.
 
-      In_Cond_Expr : constant Boolean := Within_Case_Or_If_Expression (N);
+      In_Cond_Expr : constant Boolean := Within_Conditional_Expression (N);
 
    begin
       --  When the node is inside a case/if expression, the lifetime of any
@@ -6804,8 +6733,14 @@ package body Exp_Util is
          Par := N;
          Top := N;
          while Present (Par) loop
-            if Nkind (Original_Node (Par)) in
-                 N_Case_Expression | N_If_Expression
+            if Nkind (Original_Node (Par)) in N_Case_Expression
+                                            | N_If_Expression
+            then
+               Top := Par;
+
+            elsif Nkind (Par) in N_Case_Statement
+                               | N_If_Statement
+              and then From_Conditional_Expression (Par)
             then
                Top := Par;
 
@@ -6833,6 +6768,7 @@ package body Exp_Util is
                                         | N_Aggregate
                                         | N_Delta_Aggregate
                                         | N_Extension_Aggregate
+                                        | N_Elsif_Part
               and then Nkind (Parent (Par)) not in N_Function_Call
                                                  | N_Procedure_Call_Statement
                                                  | N_Entry_Call_Statement
@@ -7592,9 +7528,9 @@ package body Exp_Util is
             --  type T identifies T.
 
             when N_Indexed_Component
-              |  N_Selected_Component
-              |  N_Aggregate
-              |  N_Extension_Aggregate
+               | N_Selected_Component
+               | N_Aggregate
+               | N_Extension_Aggregate
             =>
                return True;
 
@@ -8206,9 +8142,9 @@ package body Exp_Util is
             --  If a component association appears within a loop created for
             --  an array aggregate, attach the actions to the association so
             --  they can be subsequently inserted within the loop. For other
-            --  component associations insert outside of the aggregate. For
+            --  component associations, insert outside of the aggregate. For
             --  an association that will generate a loop, its Loop_Actions
-            --  attribute is already initialized (see exp_aggr.adb).
+            --  field is already initialized (see exp_aggr.adb).
 
             --  The list of Loop_Actions can in turn generate additional ones,
             --  that are inserted before the associated node. If the associated
@@ -8221,26 +8157,12 @@ package body Exp_Util is
                | N_Iterated_Element_Association
             =>
                if Nkind (Parent (P)) in N_Aggregate | N_Delta_Aggregate
-
-                 --  We must not climb up out of an N_Iterated_xxx_Association
-                 --  because the actions might contain references to the loop
-                 --  parameter, except if we come from the Discrete_Choices of
-                 --  N_Iterated_Component_Association which cannot contain any.
-                 --  But it turns out that setting the Loop_Actions field in
-                 --  the case of an N_Component_Association when the field was
-                 --  not already set can lead to gigi assertion failures that
-                 --  are presumably due to malformed trees, so don't do that.
-
-                 and then (Nkind (P) /= N_Iterated_Component_Association
-                            or else not Is_List_Member (N)
-                            or else
-                              List_Containing (N) /= Discrete_Choices (P))
-                 and then (Nkind (P) /= N_Component_Association
-                            or else Present (Loop_Actions (P)))
+                 and then Present (Loop_Actions (P))
                then
                   if Is_Empty_List (Loop_Actions (P)) then
                      Set_Loop_Actions (P, Ins_Actions);
                      Analyze_List (Ins_Actions);
+
                   else
                      declare
                         Decl : Node_Id;
@@ -8270,9 +8192,6 @@ package body Exp_Util is
                   end if;
 
                   return;
-
-               else
-                  null;
                end if;
 
             --  Special case: an attribute denoting a procedure call
@@ -8353,6 +8272,7 @@ package body Exp_Util is
                | N_Expanded_Name
                | N_Explicit_Dereference
                | N_Extension_Aggregate
+               | N_External_Initializer
                | N_Floating_Point_Definition
                | N_Formal_Decimal_Fixed_Point_Definition
                | N_Formal_Derived_Type_Definition
@@ -8446,7 +8366,6 @@ package body Exp_Util is
                | N_Terminate_Alternative
                | N_Triggering_Alternative
                | N_Type_Conversion
-               | N_Unchecked_Expression
                | N_Unchecked_Type_Conversion
                | N_Unconstrained_Array_Definition
                | N_Unused_At_End
@@ -8645,6 +8564,49 @@ package body Exp_Util is
       end if;
    end Is_Captured_Function_Call;
 
+   ------------------------------------------
+   -- Is_Conversion_Or_Reference_To_Formal --
+   ------------------------------------------
+
+   function Is_Conversion_Or_Reference_To_Formal (N : Node_Id) return Boolean
+   is
+   begin
+      return Nkind (N) in N_Type_Conversion | N_Unchecked_Type_Conversion
+        or else (Nkind (N) = N_Explicit_Dereference
+                  and then Nkind (Prefix (N)) in N_Type_Conversion
+                                               | N_Unchecked_Type_Conversion)
+        or else (Is_Entity_Name (N)
+                  and then Present (Entity (N))
+                  and then Is_Formal (Entity (N)));
+   end Is_Conversion_Or_Reference_To_Formal;
+
+   ---------------------------------------
+   -- Is_Delayed_Conditional_Expression --
+   ---------------------------------------
+
+   function Is_Delayed_Conditional_Expression (N : Node_Id) return Boolean is
+      Unqual_N : constant Node_Id := Unqualify (N);
+
+   begin
+      return Nkind (Unqual_N) in N_Case_Expression | N_If_Expression
+        and then Expansion_Delayed (Unqual_N);
+   end Is_Delayed_Conditional_Expression;
+
+   --------------------------------------------------
+   -- Is_Expanded_Class_Wide_Interface_Object_Decl --
+   --------------------------------------------------
+
+   function Is_Expanded_Class_Wide_Interface_Object_Decl
+     (N : Node_Id) return Boolean is
+   begin
+      return not Comes_From_Source (N)
+        and then Nkind (Original_Node (N)) = N_Object_Declaration
+        and then Nkind (N) = N_Object_Renaming_Declaration
+        and then Is_Class_Wide_Type (Etype (Defining_Identifier (N)))
+        and then Is_Interface (Etype (Defining_Identifier (N)))
+        and then Nkind (Name (N)) = N_Explicit_Dereference;
+   end Is_Expanded_Class_Wide_Interface_Object_Decl;
+
    ------------------------------
    -- Is_Finalizable_Transient --
    ------------------------------
@@ -8756,12 +8718,12 @@ package body Exp_Util is
                     and then Nkind (Selector_Name (Param)) = N_Identifier
                   then
                      declare
-                        Actual : constant Node_Id
-                          := Explicit_Actual_Parameter (Param);
-                        Formal : constant Node_Id
-                          := Selector_Name (Param);
-                        Name   : constant String
-                          := Get_Name_String (Chars (Formal));
+                        Actual : constant Node_Id :=
+                          Explicit_Actual_Parameter (Param);
+                        Formal : constant Node_Id :=
+                          Selector_Name (Param);
+                        Name   : constant String :=
+                          Get_Name_String (Chars (Formal));
 
                      begin
                         --  A nonnull BIPaccess has been found
@@ -9252,6 +9214,16 @@ package body Exp_Util is
    begin
       return Is_Tagged_Type (Typ) and then Is_Library_Level_Entity (Typ);
    end Is_Library_Level_Tagged_Type;
+
+   --------------------
+   -- Is_LSP_Wrapper --
+   --------------------
+
+   function Is_LSP_Wrapper (E : Entity_Id) return Boolean is
+   begin
+      return Is_Dispatch_Table_Wrapper (E)
+        and then Present (LSP_Subprogram (E));
+   end Is_LSP_Wrapper;
 
    --------------------------
    -- Is_Non_BIP_Func_Call --
@@ -10391,8 +10363,8 @@ package body Exp_Util is
       pragma Assert (Has_Invariants (Typ));
       Proc_Id  : constant Entity_Id := Invariant_Procedure (Typ);
       pragma Assert (Present (Proc_Id));
-      Inv_Typ  : constant Entity_Id
-                   := Base_Type (Etype (First_Formal (Proc_Id)));
+      Inv_Typ  : constant Entity_Id :=
+        Base_Type (Etype (First_Formal (Proc_Id)));
 
       Arg : Node_Id;
 
@@ -10903,7 +10875,11 @@ package body Exp_Util is
          --  operator on private type might not be visible and won't be
          --  resolved.
 
-         else pragma Assert (Is_RTE (Base_Type (Typ), RE_Big_Integer));
+         else pragma Assert (Is_RTE (Base_Type (Typ), RE_Big_Integer)
+                               or else
+                             Is_RTE (Base_Type (Typ), RO_GH_Big_Integer)
+                               or else
+                             Is_RTE (Base_Type (Typ), RO_SP_Big_Integer));
             return
               Make_Function_Call (Loc,
                 Name                   =>
@@ -11620,6 +11596,27 @@ package body Exp_Util is
       return True;
    end May_Generate_Large_Temp;
 
+   ---------------------------------------
+   -- Move_To_Initialization_Statements --
+   ---------------------------------------
+
+   procedure Move_To_Initialization_Statements (Decl, Stop : Node_Id) is
+      Obj_Id : constant Entity_Id := Defining_Identifier (Decl);
+      Stmts  : constant List_Id   := New_List;
+      Stmt   : constant Node_Id   :=
+                 Make_Compound_Statement (Sloc (Decl), Actions => Stmts);
+
+   begin
+      while Next (Decl) /= Stop loop
+         Append_To (Stmts, Remove_Next (Decl));
+      end loop;
+
+      pragma Assert (No (Initialization_Statements (Obj_Id)));
+
+      Insert_After (Decl, Stmt);
+      Set_Initialization_Statements (Obj_Id, Stmt);
+   end Move_To_Initialization_Statements;
+
    --------------------------------
    -- Name_Of_Controlled_Prim_Op --
    --------------------------------
@@ -11634,10 +11631,10 @@ package body Exp_Util is
       --  The aspect Finalizable may change the name of the primitives when
       --  present, but it's a GNAT extension.
 
-      if All_Extensions_Allowed then
+      if Core_Extensions_Allowed then
          declare
-            Rep : constant Node_Id
-              := Get_Rep_Item (Typ, Name_Finalizable, Check_Parents => True);
+            Rep : constant Node_Id :=
+              Get_Rep_Item (Typ, Name_Finalizable, Check_Parents => True);
 
             Assoc : Node_Id;
 
@@ -11724,6 +11721,22 @@ package body Exp_Util is
          return True;
       end if;
    end Needs_Constant_Address;
+
+   -------------------------------------
+   -- Needs_Initialization_Statements --
+   -------------------------------------
+
+   function Needs_Initialization_Statements (Decl : Node_Id) return Boolean is
+      Obj_Id : constant Entity_Id := Defining_Identifier (Decl);
+
+   begin
+      --  See the documentation of Initialization_Statements in Einfo
+
+      return Comes_From_Source (Decl)
+        and then (Has_Delayed_Aspects (Obj_Id)
+                   or else Present (Following_Address_Clause (Decl))
+                   or else Init_Or_Norm_Scalars);
+   end Needs_Initialization_Statements;
 
    ----------------------------
    -- New_Class_Wide_Subtype --
@@ -12186,6 +12199,22 @@ package body Exp_Util is
          Init_Call := Initialization_Statements (Var);
          Set_Initialization_Statements (Var, Empty);
 
+         --  Note that we rewrite Init_Call into a null statement, rather than
+         --  just removing it, because Freeze_All may rely on this particular
+         --  node still being present in the enclosing list to know where to
+         --  stop freezing (see Explode_Initialization_Compound_Statement).
+
+         if Nkind (Init_Call) = N_Compound_Statement then
+            declare
+               Init_Actions : constant List_Id    := Actions (Init_Call);
+               Loc          : constant Source_Ptr := Sloc (Init_Call);
+
+            begin
+               Rewrite (Init_Call, Make_Null_Statement (Loc));
+               return Make_Compound_Statement (Loc, Init_Actions);
+            end;
+         end if;
+
       elsif not Has_Non_Null_Base_Init_Proc (Typ) then
 
          --  No init proc for the type, so obviously no call to be found
@@ -12451,16 +12480,6 @@ package body Exp_Util is
         and then Side_Effect_Free (Exp, Name_Req, Variable_Ref)
       then
          return;
-
-      --  Generating C code we cannot remove side effect of function returning
-      --  class-wide types since there is no secondary stack (required to use
-      --  'reference).
-
-      elsif Modify_Tree_For_C
-        and then Nkind (Exp) = N_Function_Call
-        and then Is_Class_Wide_Type (Etype (Exp))
-      then
-         return;
       end if;
 
       --  The remaining processing is done with all checks suppressed
@@ -12603,30 +12622,7 @@ package body Exp_Util is
         and then Etype (Expression (Exp)) /= Universal_Integer
       then
          Remove_Side_Effects (Expression (Exp), Name_Req, Variable_Ref);
-
-         --  Generating C code the type conversion of an access to constrained
-         --  array type into an access to unconstrained array type involves
-         --  initializing a fat pointer and the expression must be free of
-         --  side effects to safely compute its bounds.
-
-         if Modify_Tree_For_C
-           and then Is_Access_Type (Etype (Exp))
-           and then Is_Array_Type (Designated_Type (Etype (Exp)))
-           and then not Is_Constrained (Designated_Type (Etype (Exp)))
-         then
-            Def_Id := Build_Temporary (Loc, 'R', Exp);
-            Set_Etype (Def_Id, Exp_Type);
-            Res := New_Occurrence_Of (Def_Id, Loc);
-
-            Insert_Action (Exp,
-              Make_Object_Declaration (Loc,
-                Defining_Identifier => Def_Id,
-                Object_Definition   => New_Occurrence_Of (Exp_Type, Loc),
-                Constant_Present    => True,
-                Expression          => Relocate_Node (Exp)));
-         else
-            goto Leave;
-         end if;
+         goto Leave;
 
       --  If this is an unchecked conversion that Gigi can't handle, make
       --  a copy or a use a renaming to capture the value.
@@ -12712,30 +12708,6 @@ package body Exp_Util is
       --  Otherwise we generate a reference to the expression
 
       else
-         --  When generating C code we cannot consider side-effect-free object
-         --  declarations that have discriminants and are initialized by means
-         --  of a function call since on this target there is no secondary
-         --  stack to store the return value and the expander may generate an
-         --  extra call to the function to compute the discriminant value. In
-         --  addition, for targets that have secondary stack, the expansion of
-         --  functions with side effects involves the generation of an access
-         --  type to capture the return value stored in the secondary stack;
-         --  by contrast when generating C code such expansion generates an
-         --  internal object declaration (no access type involved) which must
-         --  be identified here to avoid entering into a never-ending loop
-         --  generating internal object declarations.
-
-         if Modify_Tree_For_C
-           and then Nkind (Parent (Exp)) = N_Object_Declaration
-           and then
-             (Nkind (Exp) /= N_Function_Call
-                or else not Has_Discriminants (Exp_Type)
-                or else Is_Internal_Name
-                          (Chars (Defining_Identifier (Parent (Exp)))))
-         then
-            goto Leave;
-         end if;
-
          --  Special processing for function calls that return a limited type.
          --  We need to build a declaration that will enable build-in-place
          --  expansion of the call. This is not done if the context is already
@@ -12774,10 +12746,8 @@ package body Exp_Util is
          --  the secondary stack. Since SPARK (and why) cannot process access
          --  types, use a different approach which ignores the secondary stack
          --  and "copies" the returned object.
-         --  When generating C code, no need for a 'reference since the
-         --  secondary stack is not supported.
 
-         if GNATprove_Mode or Modify_Tree_For_C then
+         if GNATprove_Mode then
             Res := New_Occurrence_Of (Def_Id, Loc);
             Ref_Type := Exp_Type;
 
@@ -12812,10 +12782,10 @@ package body Exp_Util is
          else
             E := Relocate_Node (E);
 
-            --  Do not generate a 'reference in SPARK mode or C generation
-            --  since the access type is not created in the first place.
+            --  Do not generate a 'reference in SPARK mode since the access
+            --  type is not created in the first place.
 
-            if GNATprove_Mode or Modify_Tree_For_C then
+            if GNATprove_Mode then
                New_Exp := E;
 
             --  Otherwise generate reference, marking the value as non-null
@@ -12839,11 +12809,11 @@ package body Exp_Util is
                   --  was called).
 
                   if Is_Array_Type (Exp_Type) then
-                     Scope_Suppress.Suppress (Length_Check)
-                       := Svg_Suppress.Suppress (Length_Check);
+                     Scope_Suppress.Suppress (Length_Check) :=
+                       Svg_Suppress.Suppress (Length_Check);
                   else
-                     Scope_Suppress.Suppress (Discriminant_Check)
-                       := Svg_Suppress.Suppress (Discriminant_Check);
+                     Scope_Suppress.Suppress (Discriminant_Check) :=
+                       Svg_Suppress.Suppress (Discriminant_Check);
                   end if;
 
                   E := Make_Qualified_Expression (Loc,
@@ -12875,39 +12845,12 @@ package body Exp_Util is
             Set_Analyzed (E, False);
          end if;
 
-         --  Generating C code of object declarations that have discriminants
-         --  and are initialized by means of a function call we propagate the
-         --  discriminants of the parent type to the internally built object.
-         --  This is needed to avoid generating an extra call to the called
-         --  function.
-
-         --  For example, if we generate here the following declaration, it
-         --  will be expanded later adding an extra call to evaluate the value
-         --  of the discriminant (needed to compute the size of the object).
-         --
-         --     type Rec (D : Integer) is ...
-         --     Obj : constant Rec := SomeFunc;
-
-         if Modify_Tree_For_C
-           and then Nkind (Parent (Exp)) = N_Object_Declaration
-           and then Has_Discriminants (Exp_Type)
-           and then Nkind (Exp) = N_Function_Call
-         then
-            Insert_Action (Exp,
-              Make_Object_Declaration (Loc,
-                Defining_Identifier => Def_Id,
-                Object_Definition   => New_Copy_Tree
-                                         (Object_Definition (Parent (Exp))),
-                Constant_Present    => True,
-                Expression          => New_Exp));
-         else
-            Insert_Action (Exp,
-              Make_Object_Declaration (Loc,
-                Defining_Identifier => Def_Id,
-                Object_Definition   => New_Occurrence_Of (Ref_Type, Loc),
-                Constant_Present    => True,
-                Expression          => New_Exp));
-         end if;
+         Insert_Action (Exp,
+           Make_Object_Declaration (Loc,
+             Defining_Identifier => Def_Id,
+             Object_Definition   => New_Occurrence_Of (Ref_Type, Loc),
+             Constant_Present    => True,
+             Expression          => New_Exp));
       end if;
 
       --  Preserve the Assignment_OK flag in all copies, since at least one
@@ -13212,14 +13155,14 @@ package body Exp_Util is
       begin
          --  Examine the list of actual and formal parameters in parallel
 
-         A := First (Parameter_Associations (Call));
+         A := First_Actual (Call);
          F := First_Formal (Entity (Name (Call)));
          while Present (A) and then Present (F) loop
             if A = Actual then
                return Etype (F);
             end if;
 
-            Next (A);
+            Next_Actual (A);
             Next_Formal (F);
          end loop;
 
@@ -13447,6 +13390,12 @@ package body Exp_Util is
             elsif Is_Ignored_For_Finalization (Obj_Id) then
                null;
 
+            --  Ignored Ghost objects do not need any cleanup actions because
+            --  they will not appear in the final tree.
+
+            elsif Is_Ignored_Ghost_Entity (Obj_Id) then
+               null;
+
             --  Conversely, if one of the above cases created a Master_Node,
             --  finalization actions are required for the associated object.
 
@@ -13454,12 +13403,6 @@ package body Exp_Util is
               and then Is_RTE (Obj_Typ, RE_Master_Node)
             then
                return True;
-
-            --  Ignored Ghost objects do not need any cleanup actions because
-            --  they will not appear in the final tree.
-
-            elsif Is_Ignored_Ghost_Entity (Obj_Id) then
-               null;
 
             --  The object is of the form:
             --    Obj : [constant] Typ [:= Expr];
@@ -14306,19 +14249,6 @@ package body Exp_Util is
         and then Is_Class_Wide_Type (Typ)
       then
          return True;
-
-      --  Generating C the type conversion of an access to constrained array
-      --  type into an access to unconstrained array type involves initializing
-      --  a fat pointer and the expression cannot be assumed to be free of side
-      --  effects since it must referenced several times to compute its bounds.
-
-      elsif Modify_Tree_For_C
-        and then Nkind (N) = N_Type_Conversion
-        and then Is_Access_Type (Typ)
-        and then Is_Array_Type (Designated_Type (Typ))
-        and then not Is_Constrained (Designated_Type (Typ))
-      then
-         return False;
       end if;
 
       --  For other than entity names and compile time known values,
@@ -14419,7 +14349,6 @@ package body Exp_Util is
 
          when N_Qualified_Expression
             | N_Type_Conversion
-            | N_Unchecked_Expression
          =>
             return Side_Effect_Free (Expression (N), Name_Req, Variable_Ref);
 
@@ -14693,6 +14622,16 @@ package body Exp_Util is
       return Target;
    end Thunk_Target;
 
+   -----------------------
+   -- Try_Inline_Always --
+   -----------------------
+
+   function Try_Inline_Always (Subp : Entity_Id) return Boolean is
+     ((Is_Expression_Function (Subp) or else Is_Finalizer (Subp))
+       and then not Debug_Flag_Dot_8);
+   --  We want to inline expression functions and finalizers as much as
+   --  practical unless -gnatd.8.
+
    -------------------
    -- Type_Map_Hash --
    -------------------
@@ -14752,6 +14691,62 @@ package body Exp_Util is
       end if;
    end Type_May_Have_Bit_Aligned_Components;
 
+   ----------------------------------------------
+   -- Unanalyze_Delayed_Conditional_Expression --
+   ----------------------------------------------
+
+   procedure Unanalyze_Delayed_Conditional_Expression (N : Node_Id) is
+      Expr : Node_Id := N;
+
+   begin
+      --  Is_Delayed_Conditional_Expression looks through qualified expressions
+      --  surrounding conditional expressions, so we need to reset the Analyzed
+      --  flag on them as well.
+
+      loop
+         Set_Analyzed (Expr, False);
+
+         exit when Nkind (Expr) in N_Case_Expression | N_If_Expression;
+
+         pragma Assert (Nkind (Expr) = N_Qualified_Expression);
+         Expr := Expression (Expr);
+      end loop;
+   end Unanalyze_Delayed_Conditional_Expression;
+
+   --------------------------
+   -- Unconditional_Parent --
+   --------------------------
+
+   function Unconditional_Parent (N : Node_Id) return Node_Id is
+      Node        : Node_Id := N;
+      Parent_Node : Node_Id := Parent (Node);
+
+   begin
+      loop
+         case Nkind (Parent_Node) is
+            when N_Case_Expression_Alternative =>
+               null;
+
+            when N_Case_Expression =>
+               exit when Node = Expression (Parent_Node);
+
+            when N_If_Expression =>
+               exit when Node = First (Expressions (Parent_Node));
+
+            when N_Qualified_Expression =>
+               null;
+
+            when others =>
+               exit;
+         end case;
+
+         Node        := Parent_Node;
+         Parent_Node := Parent (Node);
+      end loop;
+
+      return Parent_Node;
+   end Unconditional_Parent;
+
    -------------------------------
    -- Update_Primitives_Mapping --
    -------------------------------
@@ -14768,18 +14763,19 @@ package body Exp_Util is
       Map_Types (Parent_Type, Derived_Type);
    end Update_Primitives_Mapping;
 
-   ----------------------------------
-   -- Within_Case_Or_If_Expression --
-   ----------------------------------
+   -----------------------------------
+   -- Within_Conditional_Expression --
+   -----------------------------------
 
-   function Within_Case_Or_If_Expression (N : Node_Id) return Boolean is
+   function Within_Conditional_Expression (N : Node_Id) return Boolean is
       Nod : Node_Id;
       Par : Node_Id;
 
    begin
       --  Locate an enclosing case or if expression. Note that these constructs
-      --  can be expanded into Expression_With_Actions, hence the test of the
-      --  original node.
+      --  can be rewritten as Expression_With_Actions nodes, hence the test of
+      --  the original node. Moreover, we need to take into account conditional
+      --  statements synthesized out of these expressions.
 
       Nod := N;
       Par := Parent (Nod);
@@ -14792,6 +14788,18 @@ package body Exp_Util is
 
          elsif Nkind (Original_Node (Par)) = N_If_Expression
            and then Nod /= First (Expressions (Original_Node (Par)))
+         then
+            return True;
+
+         elsif Nkind (Par) = N_Case_Statement
+           and then From_Conditional_Expression (Par)
+           and then Nod /= Expression (Par)
+         then
+            return True;
+
+         elsif Nkind (Par) = N_If_Statement
+           and then From_Conditional_Expression (Par)
+           and then Nod /= Condition (Par)
          then
             return True;
 
@@ -14816,7 +14824,7 @@ package body Exp_Util is
       end loop;
 
       return False;
-   end Within_Case_Or_If_Expression;
+   end Within_Conditional_Expression;
 
    ------------------------------
    -- Predicate_Check_In_Scope --

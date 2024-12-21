@@ -716,17 +716,11 @@ rs6000_stack_info (void)
   info->calls_p = (!crtl->is_leaf || cfun->machine->ra_needs_full_frame);
   info->rop_hash_size = 0;
 
-  if (TARGET_POWER10
-      && info->calls_p
-      && DEFAULT_ABI == ABI_ELFv2
-      && rs6000_rop_protect)
+  /* If we want ROP protection and this function makes a call, indicate
+     we need to create a stack slot to save the hashed return address in.  */
+  if (rs6000_rop_protect
+      && info->calls_p)
     info->rop_hash_size = 8;
-  else if (rs6000_rop_protect && DEFAULT_ABI != ABI_ELFv2)
-    {
-      /* We can't check this in rs6000_option_override_internal since
-	 DEFAULT_ABI isn't established yet.  */
-      error ("%qs requires the ELFv2 ABI", "-mrop-protect");
-    }
 
   /* Determine if we need to save the condition code registers.  */
   if (save_reg_p (CR2_REGNO)
@@ -924,7 +918,7 @@ rs6000_stack_info (void)
   else if (DEFAULT_ABI == ABI_V4)
     info->push_p = non_fixed_size != 0;
 
-  else if (frame_pointer_needed)
+  else if (frame_pointer_needed || cfun->machine->asm_redzone_clobber_seen)
     info->push_p = 1;
 
   else
@@ -1382,7 +1376,7 @@ rs6000_emit_eh_reg_restore (rtx source, rtx scratch)
   /* Freeze lr_save_p.  We've just emitted rtl that depends on the
      state of lr_save_p so any change from here on would be a bug.  In
      particular, stop rs6000_ra_ever_killed from considering the SET
-     of lr we may have added just above.  */ 
+     of lr we may have added just above.  */
   cfun->machine->lr_save_state = info->lr_save_p + 1;
 }
 
@@ -1468,7 +1462,7 @@ rs6000_emit_stack_tie (rtx fp, bool hard_frame_needed)
 /* Allocate SIZE_INT bytes on the stack using a store with update style insn
    and set the appropriate attributes for the generated insn.  Return the
    first insn which adjusts the stack pointer or the last insn before
-   the stack adjustment loop. 
+   the stack adjustment loop.
 
    SIZE_INT is used to create the CFI note for the allocation.
 
@@ -1493,7 +1487,7 @@ rs6000_emit_allocate_stack_1 (HOST_WIDE_INT size_int, rtx orig_sp)
       try_split (PATTERN (insn), insn, 0);
       size_rtx = tmp_reg;
     }
-  
+
   if (TARGET_32BIT)
     insn = emit_insn (gen_movsi_update_stack (stack_pointer_rtx,
 					      stack_pointer_rtx,
@@ -3018,6 +3012,11 @@ rs6000_emit_prologue (void)
                            && (lookup_attribute ("no_split_stack",
                                                  DECL_ATTRIBUTES (cfun->decl))
                                == NULL));
+  /* If we are inserting ROP-protect hash instructions, disable shrink-wrap
+     until the bug where the hashst insn is emitted in the wrong location
+     is fixed.  See PR101324 for details.  */
+  if (info->rop_hash_size)
+    flag_shrink_wrap = 0;
 
   frame_pointer_needed_indeed
     = frame_pointer_needed && df_regs_ever_live_p (HARD_FRAME_POINTER_REGNUM);
@@ -3272,9 +3271,8 @@ rs6000_emit_prologue (void)
   /* NOTE: The hashst isn't needed if we're going to do a sibcall,
      but there's no way to know that here.  Harmless except for
      performance, of course.  */
-  if (TARGET_POWER10 && rs6000_rop_protect && info->rop_hash_size != 0)
+  if (info->rop_hash_size)
     {
-      gcc_assert (DEFAULT_ABI == ABI_ELFv2);
       rtx stack_ptr = gen_rtx_REG (Pmode, STACK_POINTER_REGNUM);
       rtx addr = gen_rtx_PLUS (Pmode, stack_ptr,
 			       GEN_INT (info->rop_hash_save_offset));
@@ -4691,7 +4689,7 @@ rs6000_emit_epilogue (enum epilogue_type epilogue_type)
 
 	      if (newptr_regno != 1 && REGNO (frame_reg_rtx) != newptr_regno)
 		frame_reg_rtx = gen_rtx_REG (Pmode, newptr_regno);
-		
+
 	      if (end_save + ptr_off != 0)
 		{
 		  rtx offset = GEN_INT (end_save + ptr_off);
@@ -5051,12 +5049,9 @@ rs6000_emit_epilogue (enum epilogue_type epilogue_type)
 
   /* The ROP hash check must occur after the stack pointer is restored
      (since the hash involves r1), and is not performed for a sibcall.  */
-  if (TARGET_POWER10
-      && rs6000_rop_protect
-      && info->rop_hash_size != 0
+  if (info->rop_hash_size
       && epilogue_type != EPILOGUE_TYPE_SIBCALL)
     {
-      gcc_assert (DEFAULT_ABI == ABI_ELFv2);
       rtx stack_ptr = gen_rtx_REG (Pmode, STACK_POINTER_REGNUM);
       rtx addr = gen_rtx_PLUS (Pmode, stack_ptr,
 			       GEN_INT (info->rop_hash_save_offset));

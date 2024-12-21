@@ -984,7 +984,6 @@ procedure Gnatchop is
       Read_Ptr    : File_Offset := 1;
 
    begin
-
       loop
          This_Read := Read (FD,
            A => Buffer (Read_Ptr)'Address,
@@ -1724,7 +1723,7 @@ procedure Gnatchop is
       end;
    end Write_Unit;
 
-      procedure Check_Version_And_Help is new Check_Version_And_Help_G (Usage);
+   procedure Check_Version_And_Help is new Check_Version_And_Help_G (Usage);
 
 --  Start of processing for gnatchop
 

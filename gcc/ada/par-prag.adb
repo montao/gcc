@@ -29,6 +29,7 @@
 --  which require recognition and either partial or complete processing
 --  during parsing, and this unit performs this required processing.
 
+with Fmap;
 with Fname.UF; use Fname.UF;
 with Osint;    use Osint;
 with Rident;   use Rident;
@@ -590,6 +591,12 @@ begin
       when Pragma_Source_File_Name
          | Pragma_Source_File_Name_Project
       =>
+         if Debug_Flag_Underscore_MM then
+            --  -gnatd_M is causes the compiler to ignore source file name
+            --  pragmas. It's used for reduced reproducer generation.
+            return Pragma_Node;
+         end if;
+
          Source_File_Name : declare
             Unam  : Unit_Name_Type;
             Expr1 : Node_Id;
@@ -748,15 +755,6 @@ begin
                   and then
                  Nkind (Selector_Name (Expr1)) = N_Identifier)
             then
-               if Nkind (Expr1) = N_Identifier
-                 and then Chars (Expr1) = Name_System
-               then
-                  Error_Msg_N
-                    ("pragma Source_File_Name may not be used for System",
-                     Arg1);
-                  return Error;
-               end if;
-
                --  Process index argument if present
 
                if Arg_Count = 3 then
@@ -786,6 +784,26 @@ begin
                Unam := Get_Unit_Name (Expr1);
 
                Check_Arg_Is_String_Literal (Arg2);
+
+               if Nkind (Expr1) = N_Identifier
+                 and then Chars (Expr1) = Name_System
+               then
+                  --  We allow pragma Source_File_Name on System if it confirms
+                  --  a mapping that already exists in Fmap. The goal is to
+                  --  accommodate GPRbuild, which uses both a map file and
+                  --  a pragma, while at the same time preventing users from
+                  --  using just a pragma. Using just a pragma is a problem
+                  --  because those are not registered yet when
+                  --  Get_Target_Parameters is called.
+                  if Fmap.Mapped_File_Name (Name_To_Unit_Name (Name_System))
+                    /= Get_Fname (Arg2)
+                  then
+                     Error_Msg_N
+                       ("pragma Source_File_Name may not be used for System",
+                        Arg1);
+                     return Error;
+                  end if;
+               end if;
 
                if Chars (Arg2) = Name_Spec_File_Name then
                   Set_File_Name
@@ -1436,12 +1454,14 @@ begin
          | Pragma_Export_Procedure
          | Pragma_Export_Valued_Procedure
          | Pragma_Extend_System
+         | Pragma_Extended_Access
          | Pragma_Extensions_Visible
          | Pragma_External
          | Pragma_External_Name_Casing
          | Pragma_Fast_Math
          | Pragma_Favor_Top_Level
          | Pragma_Finalize_Storage_Only
+         | Pragma_First_Controlling_Parameter
          | Pragma_Ghost
          | Pragma_Global
          | Pragma_GNAT_Annotate
@@ -1494,6 +1514,7 @@ begin
          | Pragma_No_Elaboration_Code_All
          | Pragma_No_Heap_Finalization
          | Pragma_No_Inline
+         | Pragma_No_Raise
          | Pragma_No_Return
          | Pragma_No_Run_Time
          | Pragma_Interrupts_System_By_Default
@@ -1554,6 +1575,7 @@ begin
          | Pragma_Short_Circuit_And_Or
          | Pragma_Short_Descriptors
          | Pragma_Simple_Storage_Pool_Type
+         | Pragma_Simulate_Internal_Error
          | Pragma_Static_Elaboration_Desired
          | Pragma_Storage_Size
          | Pragma_Storage_Unit

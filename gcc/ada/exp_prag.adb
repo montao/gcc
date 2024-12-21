@@ -887,8 +887,8 @@ package body Exp_Prag is
       --  type.
 
       function Get_Nth_Arg_Type
-         (Subprogram : Entity_Id;
-          N          : Positive) return Entity_Id;
+        (Subprogram : Entity_Id;
+         N          : Positive) return Entity_Id;
       --  Returns the type of the Nth argument of Subprogram
 
       function To_Addresses (Elmts : Elist_Id) return List_Id;
@@ -955,7 +955,6 @@ package body Exp_Prag is
          Third_Component  : Entity_Id := Next_Entity (Second_Component);
 
       begin
-
          --  Sem_prag.adb ensured that Init_Val is either a Dim3, an aggregate
          --  of three Any_Integers or Any_Integer.
 
@@ -1148,8 +1147,8 @@ package body Exp_Prag is
       ----------------------
 
       function Get_Nth_Arg_Type
-         (Subprogram : Entity_Id;
-          N          : Positive) return Entity_Id
+        (Subprogram : Entity_Id;
+         N          : Positive) return Entity_Id
       is
          Argument : Entity_Id := First_Entity (Subprogram);
       begin
@@ -2520,11 +2519,11 @@ package body Exp_Prag is
    procedure Expand_Pragma_Inspection_Point (N : Node_Id) is
       Loc : constant Source_Ptr := Sloc (N);
 
-      A     : List_Id;
-      Assoc : Node_Id;
-      E     : Entity_Id;
-      Rip   : Boolean;
-      S     : Entity_Id;
+      A          : List_Id;
+      Assoc      : Node_Id;
+      Faulty_Arg : Node_Id := Empty;
+      E          : Entity_Id;
+      S          : Entity_Id;
 
    begin
       if No (Pragma_Argument_Associations (N)) then
@@ -2557,7 +2556,6 @@ package body Exp_Prag is
 
       --  Process the arguments of the pragma
 
-      Rip := False;
       Assoc := First (Pragma_Argument_Associations (N));
       while Present (Assoc) loop
          --  The back end may need to take the address of the object
@@ -2575,7 +2573,7 @@ package body Exp_Prag is
               ("??inspection point references unfrozen object &",
                Assoc,
                Entity (Expression (Assoc)));
-            Rip := True;
+            Faulty_Arg := Assoc;
          end if;
 
          Next (Assoc);
@@ -2583,8 +2581,10 @@ package body Exp_Prag is
 
       --  When the above requirement isn't met, turn the pragma into a no-op
 
-      if Rip then
-         Error_Msg_N ("\pragma will be ignored", N);
+      if Present (Faulty_Arg) then
+         Error_Msg_Sloc := Sloc (Faulty_Arg);
+         Error_Msg_N ("\pragma Inspection_Point # will be ignored",
+           Faulty_Arg);
 
          --  We can't just remove the pragma from the tree as it might be
          --  iterated over by the caller. Turn it into a null statement
@@ -3368,27 +3368,6 @@ package body Exp_Prag is
 
       if No (Init_Call) and then Present (Expression (Parent (Def_Id))) then
          Set_Expression (Parent (Def_Id), Empty);
-      end if;
-
-      --  The object may not have any initialization, but in the presence of
-      --  Initialize_Scalars code is inserted after then declaration, which
-      --  must now be removed as well. The code carries the same source
-      --  location as the declaration itself.
-
-      if Initialize_Scalars and then Is_Array_Type (Etype (Def_Id)) then
-         declare
-            Init : Node_Id;
-            Nxt  : Node_Id;
-         begin
-            Init := Next (Parent (Def_Id));
-            while not Comes_From_Source (Init)
-              and then Sloc (Init) = Sloc (Def_Id)
-            loop
-               Nxt := Next (Init);
-               Remove (Init);
-               Init := Nxt;
-            end loop;
-         end;
       end if;
    end Undo_Initialization;
 

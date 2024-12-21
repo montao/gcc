@@ -19,6 +19,7 @@
 
 #define INCLUDE_ALGORITHM
 #define INCLUDE_FUNCTIONAL
+#define INCLUDE_ARRAY
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -47,14 +48,13 @@ void
 insn_info::calculate_cost () const
 {
   basic_block cfg_bb = BLOCK_FOR_INSN (m_rtl);
-  temporarily_undo_changes (0);
+  undo_recog_changes (0);
   if (INSN_CODE (m_rtl) == NOOP_MOVE_INSN_CODE)
     // insn_cost also uses 0 to mean "don't know".  Callers that
     // want to distinguish the cases will need to check INSN_CODE.
     m_cost_or_uid = 0;
   else
     m_cost_or_uid = insn_cost (m_rtl, optimize_bb_for_speed_p (cfg_bb));
-  redo_changes (0);
 }
 
 // Add NOTE to the instruction's notes.
@@ -393,7 +393,10 @@ void
 function_info::remove_insn (insn_info *insn)
 {
   if (insn_info::order_node *order = insn->get_order_node ())
-    insn_info::order_splay_tree::remove_node (order);
+    {
+      insn_info::order_splay_tree::remove_node (order);
+      insn->remove_note (order);
+    }
 
   if (auto *note = insn->find_note<insn_call_clobbers_note> ())
     {

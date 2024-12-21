@@ -30,6 +30,7 @@
 
 #define INCLUDE_ALGORITHM
 #define INCLUDE_FUNCTIONAL
+#define INCLUDE_ARRAY
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -51,7 +52,7 @@ const pass_data pass_data_late_combine =
   RTL_PASS, // type
   "late_combine", // name
   OPTGROUP_NONE, // optinfo_flags
-  TV_NONE, // tv_id
+  TV_LATE_COMBINE, // tv_id
   0, // properties_required
   0, // properties_provided
   0, // properties_destroyed
@@ -337,7 +338,7 @@ insn_combination::substitute_note (insn_info *use_insn, rtx note,
       || REG_NOTE_KIND (note) == REG_EQUIV)
     {
       insn_propagation prop (use_insn->rtl (), m_dest, m_src);
-      return (prop.apply_to_rvalue (&XEXP (note, 0))
+      return (prop.apply_to_note (&XEXP (note, 0))
 	      && (can_propagate || prop.num_replacements == 0));
     }
   return true;
@@ -729,6 +730,10 @@ late_combine::execute (function *fn)
   // Finalization.
   if (crtl->ssa->perform_pending_updates ())
     cleanup_cfg (0);
+
+  delete crtl->ssa;
+  crtl->ssa = nullptr;
+
   // Make the recognizer allow volatile MEMs again.
   init_recog ();
   free_dominance_info (CDI_DOMINATORS);

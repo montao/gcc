@@ -22,6 +22,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "rich-location.h"
 
+class diagnostic_source_print_policy;
+
 /* A gcc_rich_location is libcpp's rich_location with additional
    helper methods for working with gcc's types.  The class is not
    copyable or assignable because rich_location isn't. */
@@ -79,7 +81,12 @@ class gcc_rich_location : public rich_location
 
      Implemented in diagnostic-show-locus.cc.  */
 
-  bool add_location_if_nearby (const diagnostic_context &ctxt,
+  bool add_location_if_nearby (const diagnostic_source_print_policy &policy,
+			       location_t loc,
+			       bool restrict_to_current_line_spans = true,
+			       const range_label *label = NULL);
+
+  bool add_location_if_nearby (const diagnostic_context &dc,
 			       location_t loc,
 			       bool restrict_to_current_line_spans = true,
 			       const range_label *label = NULL);
@@ -119,23 +126,6 @@ class gcc_rich_location : public rich_location
   void add_fixit_insert_formatted (const char *content,
 				   location_t insertion_point,
 				   location_t indent);
-};
-
-/* Concrete subclass of libcpp's range_label.
-   Simple implementation using a string literal.  */
-
-class text_range_label : public range_label
-{
- public:
-  text_range_label (const char *text) : m_text (text) {}
-
-  label_text get_text (unsigned /*range_idx*/) const final override
-  {
-    return label_text::borrow (m_text);
-  }
-
- private:
-  const char *m_text;
 };
 
 #endif /* GCC_RICH_LOCATION_H */

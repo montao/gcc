@@ -66,15 +66,20 @@ static const struct default_options aarch_option_optimization_table[] =
     { OPT_LEVELS_NONE, 0, NULL, 0 }
   };
 
-/* Set OPTS->x_aarch64_asm_isa_flags to FLAGS and update
-   OPTS->x_aarch64_isa_flags accordingly.  */
+
+/* Set OPTS->x_aarch64_asm_isa_flags_<0..n> to FLAGS and update
+   OPTS->x_aarch64_isa_flags_<0..n> accordingly.  */
 void
 aarch64_set_asm_isa_flags (gcc_options *opts, aarch64_feature_flags flags)
 {
-  opts->x_aarch64_asm_isa_flags = flags;
-  opts->x_aarch64_isa_flags = flags;
+  opts->x_aarch64_asm_isa_flags_0 = flags.val[0];
+  opts->x_aarch64_asm_isa_flags_1 = flags.val[1];
+
   if (opts->x_target_flags & MASK_GENERAL_REGS_ONLY)
-    opts->x_aarch64_isa_flags &= ~feature_deps::get_flags_off (AARCH64_FL_FP);
+    flags &= ~feature_deps::get_flags_off (AARCH64_FL_FP);
+
+  opts->x_aarch64_isa_flags_0 = flags.val[0];
+  opts->x_aarch64_isa_flags_1 = flags.val[1];
 }
 
 /* Implement TARGET_HANDLE_OPTION.
@@ -111,7 +116,7 @@ aarch64_handle_option (struct gcc_options *opts,
 
     case OPT_mgeneral_regs_only:
       opts->x_target_flags |= MASK_GENERAL_REGS_ONLY;
-      aarch64_set_asm_isa_flags (opts, opts->x_aarch64_asm_isa_flags);
+      aarch64_set_asm_isa_flags (opts, aarch64_get_asm_isa_flags (opts));
       return true;
 
     case OPT_mfix_cortex_a53_835769:
@@ -439,6 +444,33 @@ aarch64_rewrite_mcpu (int argc, const char **argv)
 {
   gcc_assert (argc);
   return aarch64_rewrite_selected_cpu (argv[argc - 1]);
+}
+
+/* Checks to see if the host CPU may not be Cortex-A53 or an unknown Armv8-a
+   baseline CPU.  */
+
+const char *
+is_host_cpu_not_armv8_base (int argc, const char **argv)
+{
+  gcc_assert (argc);
+
+  /* Default to not knowing what we are if unspecified.  The SPEC file should
+     have already mapped configure time options to here through
+     OPTION_DEFAULT_SPECS so we don't need to check the configure variants
+     manually.  */
+  if (!argv[0])
+    return NULL;
+
+  const char *res = argv[0];
+
+  /* No SVE system is baseline Armv8-A.  */
+  if (strstr (res, "+sve"))
+    return "";
+
+  if (strstr (res, "cortex-a53") || strstr (res, "armv8-a"))
+    return NULL;
+
+  return "";
 }
 
 struct gcc_targetm_common targetm_common = TARGETM_COMMON_INITIALIZER;

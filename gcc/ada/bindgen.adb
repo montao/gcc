@@ -24,7 +24,6 @@
 ------------------------------------------------------------------------------
 
 with Casing;   use Casing;
-with Fname;    use Fname;
 with Gnatvsn;  use Gnatvsn;
 with Hostparm;
 with Namet;    use Namet;
@@ -1539,7 +1538,7 @@ package body Bindgen is
 
             --  Nothing to do if predefined unit in no run time mode
 
-            if No_Run_Time_Mode and then Is_Predefined_File_Name (U.Sfile) then
+            if No_Run_Time_Mode and then U.Predefined then
                null;
 
             --  Likewise if this is an interface to a stand alone library
@@ -1724,9 +1723,7 @@ package body Bindgen is
               --  Don't generate reference for predefined file in No_Run_Time
               --  mode, since we don't include the object files in this case
 
-              and then not
-                (No_Run_Time_Mode
-                  and then Is_Predefined_File_Name (U.Sfile))
+              and then not (No_Run_Time_Mode and then U.Predefined)
             then
                Get_Name_String (U.Sfile);
                Set_String ("   ");
@@ -2113,7 +2110,7 @@ package body Bindgen is
       if Bind_Main_Program
         and then not Minimal_Binder
         and then not CodePeer_Mode
-        and then not Generate_C_Code
+        and then not CCG_Mode
       then
          WBI ("      Ensure_Reference : aliased System.Address := " &
               "Ada_Main_Program_Name'Address;");

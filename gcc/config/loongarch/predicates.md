@@ -293,10 +293,6 @@
   (and (match_code "const_int")
        (match_test "low_bitmask_len (mode, INTVAL (op)) > 12")))
 
-(define_predicate "high_bitmask_operand"
-  (and (match_code "const_int")
-       (match_test "low_bitmask_len (mode, ~INTVAL (op)) > 0")))
-
 (define_predicate "d_operand"
   (and (match_code "reg")
        (match_test "GP_REG_P (REGNO (op))")))
@@ -406,11 +402,10 @@
 
 (define_predicate "ins_zero_bitmask_operand"
   (and (match_code "const_int")
-       (match_test "INTVAL (op) != -1")
-       (match_test "INTVAL (op) & 1")
        (match_test "low_bitmask_len (mode, \
 				     ~UINTVAL (op) | (~UINTVAL(op) - 1)) \
-		    > 12")))
+		    > 0")
+       (not (match_operand 0 "const_uns_arith_operand"))))
 
 (define_predicate "const_call_insn_operand"
   (match_code "const,symbol_ref,label_ref")
@@ -640,10 +635,10 @@
   return loongarch_const_vector_same_int_p (op, mode, -31, 31);
 })
 
-(define_predicate "const_vector_same_uimm6_operand"
+(define_predicate "const_vector_same_uimm_operand"
   (match_code "const_vector")
 {
-  return loongarch_const_vector_same_int_p (op, mode, 0, 63);
+  return loongarch_const_vector_same_int_p (op, mode);
 })
 
 (define_predicate "par_const_vector_shf_set_operand"
@@ -668,6 +663,6 @@
   (ior (match_operand 0 "register_operand")
        (match_operand 0 "const_vector_same_ximm5_operand")))
 
-(define_predicate "reg_or_vector_same_uimm6_operand"
+(define_predicate "reg_or_vector_same_uimm_operand"
   (ior (match_operand 0 "register_operand")
-       (match_operand 0 "const_vector_same_uimm6_operand")))
+       (match_operand 0 "const_vector_same_uimm_operand")))

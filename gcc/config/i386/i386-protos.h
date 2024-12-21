@@ -164,7 +164,8 @@ extern bool ix86_expand_fp_vec_cmp (rtx[]);
 extern void ix86_expand_sse_movcc (rtx, rtx, rtx, rtx);
 extern void ix86_expand_sse_extend (rtx, rtx, bool);
 extern void ix86_expand_sse_unpack (rtx, rtx, bool, bool);
-extern void ix86_expand_fp_spaceship (rtx, rtx, rtx);
+extern void ix86_expand_fp_spaceship (rtx, rtx, rtx, rtx);
+extern void ix86_expand_int_spaceship (rtx, rtx, rtx, rtx);
 extern bool ix86_expand_int_addcc (rtx[]);
 extern void ix86_expand_carry (rtx arg);
 extern rtx_insn *ix86_expand_call (rtx, rtx, rtx, rtx, rtx, bool);
@@ -181,6 +182,7 @@ extern void ix86_split_rshift_ndd (enum rtx_code, rtx *, rtx);
 extern void ix86_expand_v1ti_shift (enum rtx_code, rtx[]);
 extern void ix86_expand_v1ti_rotate (enum rtx_code, rtx[]);
 extern void ix86_expand_v1ti_ashiftrt (rtx[]);
+extern void ix86_expand_v2di_ashiftrt (rtx[]);
 extern rtx ix86_replace_reg_with_reg (rtx, rtx, rtx);
 extern rtx ix86_find_base_term (rtx);
 extern bool ix86_check_movabs (rtx, int);
@@ -256,6 +258,9 @@ extern int ix86_ternlog_idx (rtx op, rtx *args);
 extern bool ix86_ternlog_operand_p (rtx op);
 extern rtx ix86_expand_ternlog (machine_mode mode, rtx op0, rtx op1, rtx op2,
 				int idx, rtx target);
+extern void ix86_expand_vector_sf2bf_with_vec_perm (rtx, rtx);
+extern void ix86_expand_vector_bf2sf_with_vec_perm (rtx, rtx);
+
 
 #ifdef TREE_CODE
 extern void init_cumulative_args (CUMULATIVE_ARGS *, tree, rtx, tree, int);
@@ -315,8 +320,6 @@ extern void i386_pe_asm_output_aligned_decl_common (FILE *, tree,
 						    const char *,
 						    HOST_WIDE_INT,
 						    HOST_WIDE_INT);
-extern void i386_pe_asm_lto_start (void);
-extern void i386_pe_asm_lto_end (void);
 extern void i386_pe_start_function (FILE *, const char *, tree);
 extern void i386_pe_end_function (FILE *, const char *, tree);
 extern void i386_pe_end_cold_function (FILE *, const char *, tree);
@@ -423,6 +426,8 @@ extern rtl_opt_pass *make_pass_insert_endbr_and_patchable_area
   (gcc::context *);
 extern rtl_opt_pass *make_pass_remove_partial_avx_dependency
   (gcc::context *);
+extern rtl_opt_pass *make_pass_apx_nf_convert (gcc::context *);
+extern rtl_opt_pass *make_pass_align_tight_loops (gcc::context *);
 
 extern bool ix86_has_no_direct_extern_access;
 extern bool ix86_rpad_gate ();

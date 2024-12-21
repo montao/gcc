@@ -119,8 +119,6 @@ ASM_MISA_SPEC
 "%{march=*:%:riscv_expand_arch(%*)} "				\
 "%{!march=*:%{mcpu=*:%:riscv_expand_arch_from_cpu(%*)}} "
 
-#define TARGET_DEFAULT_CMODEL CM_MEDLOW
-
 #define LOCAL_LABEL_PREFIX	"."
 #define USER_LABEL_PREFIX	""
 
@@ -316,7 +314,7 @@ ASM_MISA_SPEC
 
 #define FIRST_PSEUDO_REGISTER 128
 
-/* x0, sp, gp, and tp are fixed.  */
+/* x0, ra, sp, gp, and tp are fixed.  */
 
 #define FIXED_REGISTERS							\
 { /* General registers.  */						\
@@ -429,6 +427,11 @@ ASM_MISA_SPEC
 #define RISCV_PROLOGUE_TEMP2_REGNUM (GP_TEMP_FIRST + 1)
 #define RISCV_PROLOGUE_TEMP2(MODE) gen_rtx_REG (MODE, RISCV_PROLOGUE_TEMP2_REGNUM)
 
+/* Both prologue temp registers are used in the vector probe loop for when
+   stack-clash protection is enabled, so we need to copy SP to a new register
+   and set it as CFA during the loop, we are using T3 for that.  */
+#define RISCV_STACK_CLASH_VECTOR_CFA_REGNUM (GP_TEMP_FIRST + 23)
+
 #define RISCV_CALL_ADDRESS_TEMP_REGNUM (GP_TEMP_FIRST + 1)
 #define RISCV_CALL_ADDRESS_TEMP(MODE) \
   gen_rtx_REG (MODE, RISCV_CALL_ADDRESS_TEMP_REGNUM)
@@ -501,8 +504,10 @@ enum reg_class
 {
   NO_REGS,			/* no registers in set */
   SIBCALL_REGS,			/* registers used by indirect sibcalls */
+  RVC_GR_REGS,			/* RVC general registers */
   JALR_REGS,			/* registers used by indirect calls */
   GR_REGS,			/* integer registers */
+  RVC_FP_REGS,			/* RVC floating-point registers */
   FP_REGS,			/* floating-point registers */
   FRAME_REGS,			/* arg pointer and frame pointer */
   VM_REGS,			/* v0.t registers */
@@ -524,8 +529,10 @@ enum reg_class
 {									\
   "NO_REGS",								\
   "SIBCALL_REGS",							\
+  "RVC_GR_REGS",							\
   "JALR_REGS",								\
   "GR_REGS",								\
+  "RVC_FP_REGS",							\
   "FP_REGS",								\
   "FRAME_REGS",								\
   "VM_REGS",								\
@@ -549,8 +556,10 @@ enum reg_class
 {									\
   { 0x00000000, 0x00000000, 0x00000000, 0x00000000 },	/* NO_REGS */		\
   { 0xf003fcc0, 0x00000000, 0x00000000, 0x00000000 },	/* SIBCALL_REGS */	\
+  { 0x0000ff00, 0x00000000, 0x00000000, 0x00000000 },	/* RVC_GR_REGS */	\
   { 0xffffffc0, 0x00000000, 0x00000000, 0x00000000 },	/* JALR_REGS */		\
   { 0xffffffff, 0x00000000, 0x00000000, 0x00000000 },	/* GR_REGS */		\
+  { 0x00000000, 0x0000ff00, 0x00000000, 0x00000000 },	/* RVC_FP_REGS */	\
   { 0x00000000, 0xffffffff, 0x00000000, 0x00000000 },	/* FP_REGS */		\
   { 0x00000000, 0x00000000, 0x00000003, 0x00000000 },	/* FRAME_REGS */	\
   { 0x00000000, 0x00000000, 0x00000000, 0x00000001 },	/* V0_REGS */		\
@@ -661,6 +670,18 @@ enum reg_class
 
 /* True if bit BIT is set in VALUE.  */
 #define BITSET_P(VALUE, BIT) (((VALUE) & (1ULL << (BIT))) != 0)
+
+/* Returns the smaller (common) number of trailing zeros for VAL1 and VAL2.  */
+#define COMMON_TRAILING_ZEROS(VAL1, VAL2)				\
+  (ctz_hwi (VAL1) < ctz_hwi (VAL2)					\
+   ? ctz_hwi (VAL1)							\
+   : ctz_hwi (VAL2))
+
+/* Returns true if both VAL1 and VAL2 are SMALL_OPERANDs after shifting by
+   the common number of trailing zeros.  */
+#define SMALL_AFTER_COMMON_TRAILING_SHIFT(VAL1, VAL2)			\
+  (SMALL_OPERAND ((VAL1) >> COMMON_TRAILING_ZEROS (VAL1, VAL2))		\
+   && SMALL_OPERAND ((VAL2) >> COMMON_TRAILING_ZEROS (VAL1, VAL2)))
 
 /* Stack layout; function entry, exit and calling.  */
 
@@ -933,8 +954,6 @@ extern enum riscv_cc get_riscv_cc (const rtx use);
 /* True if the target supports misaligned vector loads and stores.  */
 #define TARGET_VECTOR_MISALIGN_SUPPORTED \
    riscv_vector_unaligned_access_p
-
-#define LOGICAL_OP_NON_SHORT_CIRCUIT 0
 
 /* Control the assembler format that we output.  */
 
@@ -1234,8 +1253,6 @@ extern void riscv_remove_unneeded_save_restore_calls (void);
 
 #define REGMODE_NATURAL_SIZE(MODE) riscv_regmode_natural_size (MODE)
 
-#define RISCV_DWARF_VLENB (4096 + 0xc22)
-
 #define DWARF_FRAME_REGISTERS (FIRST_PSEUDO_REGISTER + 1 /* VLENB */)
 
 #define DWARF_REG_TO_UNWIND_COLUMN(REGNO) \
@@ -1259,5 +1276,37 @@ extern void riscv_remove_unneeded_save_restore_calls (void);
 
 /* Check TLS Descriptors mechanism is selected.  */
 #define TARGET_TLSDESC (riscv_tls_dialect == TLS_DESCRIPTORS)
+
+/* This value is the amount of bytes a caller is allowed to drop the stack
+   before probing has to be done for stack clash protection.  */
+#define STACK_CLASH_CALLER_GUARD 1024
+
+/* This value controls how many pages we manually unroll the loop for when
+   generating stack clash probes.  */
+#define STACK_CLASH_MAX_UNROLL_PAGES 4
+
+/* This value represents the minimum amount of bytes we expect the function's
+   outgoing arguments to be when stack-clash is enabled.  */
+#define STACK_CLASH_MIN_BYTES_OUTGOING_ARGS 8
+
+/* Allocate a minimum of STACK_CLASH_MIN_BYTES_OUTGOING_ARGS bytes for the
+   outgoing arguments if stack clash protection is enabled.  This is essential
+   as the extra arg space allows us to skip a check in alloca.  */
+#undef STACK_DYNAMIC_OFFSET
+#define STACK_DYNAMIC_OFFSET(FUNDECL)			   \
+   ((flag_stack_clash_protection			   \
+     && cfun->calls_alloca				   \
+     && known_lt (crtl->outgoing_args_size,		   \
+		  STACK_CLASH_MIN_BYTES_OUTGOING_ARGS))    \
+    ? ROUND_UP (STACK_CLASH_MIN_BYTES_OUTGOING_ARGS,       \
+		STACK_BOUNDARY / BITS_PER_UNIT)		   \
+    : (crtl->outgoing_args_size + STACK_POINTER_OFFSET))
+
+/* According to the RISC-V C API, the arch string may contains ','. To avoid
+   the conflict with the default separator, we choose '#' as the separator for
+   the target attribute.  */
+#define TARGET_CLONES_ATTR_SEPARATOR '#'
+
+#define TARGET_HAS_FMV_TARGET_ATTRIBUTE 0
 
 #endif /* ! GCC_RISCV_H */

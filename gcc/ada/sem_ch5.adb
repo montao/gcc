@@ -437,14 +437,6 @@ package body Sem_Ch5 is
                then
                   null;
 
-               --  This may be a call to a parameterless function through an
-               --  implicit dereference, so discard interpretation as well.
-
-               elsif Is_Entity_Name (Lhs)
-                 and then Has_Implicit_Dereference (It.Typ)
-               then
-                  null;
-
                elsif Has_Compatible_Type (Rhs, It.Typ) then
                   if T1 = Any_Type then
                      T1 := It.Typ;
@@ -3253,31 +3245,9 @@ package body Sem_Ch5 is
       end if;
 
       Mutate_Ekind (Id, E_Loop_Parameter);
+      Set_Etype (Id, Etype (DS));
+
       Set_Is_Not_Self_Hidden (Id);
-
-      --  A quantified expression which appears in a pre- or post-condition may
-      --  be analyzed multiple times. The analysis of the range creates several
-      --  itypes which reside in different scopes depending on whether the pre-
-      --  or post-condition has been expanded. Update the type of the loop
-      --  variable to reflect the proper itype at each stage of analysis.
-
-      --  Loop_Nod might not be present when we are preanalyzing a class-wide
-      --  pre/postcondition since preanalysis occurs in a place unrelated to
-      --  the actual code and the quantified expression may be the outermost
-      --  expression of the class-wide condition.
-
-      if No (Etype (Id))
-        or else Etype (Id) = Any_Type
-        or else
-          (Present (Etype (Id))
-            and then Is_Itype (Etype (Id))
-            and then Present (Loop_Nod)
-            and then Nkind (Parent (Loop_Nod)) = N_Expression_With_Actions
-            and then Nkind (Original_Node (Parent (Loop_Nod))) =
-                                                   N_Quantified_Expression)
-      then
-         Set_Etype (Id, Etype (DS));
-      end if;
 
       --  Treat a range as an implicit reference to the type, to inhibit
       --  spurious warnings.
@@ -3333,7 +3303,10 @@ package body Sem_Ch5 is
                   --  set the appropriate flag to remove the loop entirely
                   --  during expansion.
 
-                  Set_Is_Null_Loop (Loop_Nod);
+                  if Nkind (Loop_Nod) = N_Loop_Statement then
+                     Set_Is_Null_Loop (Loop_Nod);
+                  end if;
+
                   Null_Range := True;
                end if;
 
@@ -3341,24 +3314,25 @@ package body Sem_Ch5 is
                --  instance, since in practice they tend to be dubious in these
                --  cases since they can result from intended parameterization.
 
-               if not Inside_A_Generic and then not In_Instance then
+               if Comes_From_Source (N)
+                 and then not Inside_A_Generic
+                 and then not In_Instance
+               then
 
                   --  Specialize msg if invalid values could make the loop
                   --  non-null after all.
 
                   if Null_Range then
-                     if Comes_From_Source (N) then
-                        Error_Msg_N
-                          ("??loop range is null, loop will not execute", DS);
-                     end if;
+                     Error_Msg_N
+                       ("??loop range is null, loop will not execute", DS);
 
                   --  Here is where the loop could execute because of
                   --  invalid values, so issue appropriate message.
 
-                  elsif Comes_From_Source (N) then
+                  else
                      Error_Msg_N
-                       ("??loop range may be null, loop may not execute",
-                        DS);
+                       ("??loop range may be null, loop may not execute", DS);
+
                      Error_Msg_N
                        ("??can only execute if invalid values are present",
                         DS);
@@ -3369,7 +3343,9 @@ package body Sem_Ch5 is
                --  since it is likely that these warnings will be inappropriate
                --  if the loop never actually executes, which is likely.
 
-               Set_Suppress_Loop_Warnings (Loop_Nod);
+               if Nkind (Loop_Nod) = N_Loop_Statement then
+                  Set_Suppress_Loop_Warnings (Loop_Nod);
+               end if;
 
                --  The other case for a warning is a reverse loop where the
                --  upper bound is the integer literal zero or one, and the
@@ -3471,12 +3447,13 @@ package body Sem_Ch5 is
                           Subtype_Mark (DS));
                      end if;
 
-                     Set_Is_Null_Loop (Loop_Nod);
-                     Null_Range := True;
+                     if Nkind (Loop_Nod) = N_Loop_Statement then
+                        Set_Is_Null_Loop (Loop_Nod);
 
-                     --  Suppress other warnings about the body of the loop, as
-                     --  it will never execute.
-                     Set_Suppress_Loop_Warnings (Loop_Nod);
+                        --  Suppress other warnings about the body of the loop,
+                        --  as it will never execute.
+                        Set_Suppress_Loop_Warnings (Loop_Nod);
+                     end if;
                   end if;
                end;
             end if;
@@ -3806,20 +3783,16 @@ package body Sem_Ch5 is
                Rng_Typ := Etype (Rng_Copy);
 
                --  Wrap the loop statement within a block in order to manage
-               --  the secondary stack when the discrete range is
+               --  the secondary stack when the discrete range:
                --
-               --    * Either a Forward_Iterator or a Reverse_Iterator
+               --    * is either a Forward_Iterator or a Reverse_Iterator
+               --  or
                --
-               --    * Function call whose return type requires finalization
-               --      actions.
-
-               --  ??? it is unclear why using Has_Sec_Stack_Call directly on
-               --  the discrete range causes the freeze node of an itype to be
-               --  in the wrong scope in complex assertion expressions.
+               --    * contains a function call that returns on the secondary
+               --      stack.
 
                if Is_Iterator (Rng_Typ)
-                 or else (Nkind (Rng_Copy) = N_Function_Call
-                           and then Needs_Finalization (Rng_Typ))
+                 or else Has_Sec_Stack_Call (Rng_Copy)
                then
                   Wrap_Loop_Statement (Manage_Sec_Stack => True);
                   Stop_Processing := True;
@@ -3834,8 +3807,9 @@ package body Sem_Ch5 is
          procedure Wrap_Loop_Statement (Manage_Sec_Stack : Boolean) is
             Loc : constant Source_Ptr := Sloc (N);
 
-            Blk    : Node_Id;
-            Blk_Id : Entity_Id;
+            Blk     : Node_Id;
+            Blk_Id  : Entity_Id;
+            Loop_Id : constant Entity_Id := Entity (Identifier (N));
 
          begin
             Blk :=
@@ -3850,6 +3824,12 @@ package body Sem_Ch5 is
 
             Rewrite (N, Blk);
             Analyze (N);
+
+            --  Transfer the loop entity from its old scope to the new block
+            --  scope.
+
+            Remove_Entity (Loop_Id);
+            Append_Entity (Loop_Id, Blk_Id);
          end Wrap_Loop_Statement;
 
          --  Local variables
@@ -3993,7 +3973,7 @@ package body Sem_Ch5 is
       Push_Scope (Ent);
       Analyze_Iteration_Scheme (Iter);
 
-      --  Check for following case which merits a warning if the type E of is
+      --  Check for following case which merits a warning if the type of E is
       --  a multi-dimensional array (and no explicit subscript ranges present).
 
       --      for J in E'Range
@@ -4018,6 +3998,10 @@ package body Sem_Ch5 is
                     and then Number_Dimensions (Typ) > 1
                     and then Nkind (Parent (N)) = N_Loop_Statement
                     and then Present (Iteration_Scheme (Parent (N)))
+                  --  The next conjunct tests that the enclosing loop is
+                  --  a for loop and not a while loop.
+                    and then Present (Loop_Parameter_Specification
+                      (Iteration_Scheme (Parent (N))))
                   then
                      declare
                         OIter : constant Node_Id :=
@@ -4278,6 +4262,8 @@ package body Sem_Ch5 is
                  ("implicit label declaration for & is hidden#",
                   Identifier (S));
             end if;
+         else
+            Inspect_Deferred_Constant_Completion (S);
          end if;
 
          Next (S);

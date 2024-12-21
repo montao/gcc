@@ -165,9 +165,6 @@
 ;; All vector modes with 256 bits.
 (define_mode_iterator LASX [V4DF V8SF V4DI V8SI V16HI V32QI])
 
-;; Same as LASX.  Used by vcond to iterate two modes.
-(define_mode_iterator LASX_2 [V4DF V8SF V4DI V8SI V16HI V32QI])
-
 ;; Only used for splitting insert_d and copy_{u,s}.d.
 (define_mode_iterator LASX_D [V4DI V4DF])
 
@@ -762,40 +759,6 @@
    DONE;
 })
 
-;; FIXME: 256??
-(define_expand "vcondu<LASX:mode><ILASX:mode>"
-  [(match_operand:LASX 0 "register_operand")
-   (match_operand:LASX 1 "reg_or_m1_operand")
-   (match_operand:LASX 2 "reg_or_0_operand")
-   (match_operator 3 ""
-    [(match_operand:ILASX 4 "register_operand")
-     (match_operand:ILASX 5 "register_operand")])]
-  "ISA_HAS_LASX
-   && (GET_MODE_NUNITS (<LASX:MODE>mode)
-       == GET_MODE_NUNITS (<ILASX:MODE>mode))"
-{
-  loongarch_expand_vec_cond_expr (<LASX:MODE>mode, <LASX:VIMODE256>mode,
-				  operands);
-  DONE;
-})
-
-;; FIXME: 256??
-(define_expand "vcond<LASX:mode><LASX_2:mode>"
-  [(match_operand:LASX 0 "register_operand")
-   (match_operand:LASX 1 "reg_or_m1_operand")
-   (match_operand:LASX 2 "reg_or_0_operand")
-   (match_operator 3 ""
-     [(match_operand:LASX_2 4 "register_operand")
-      (match_operand:LASX_2 5 "register_operand")])]
-  "ISA_HAS_LASX
-   && (GET_MODE_NUNITS (<LASX:MODE>mode)
-       == GET_MODE_NUNITS (<LASX_2:MODE>mode))"
-{
-  loongarch_expand_vec_cond_expr (<LASX:MODE>mode, <LASX:VIMODE256>mode,
-				  operands);
-  DONE;
-})
-
 ;; Same as vcond_
 (define_expand "vcond_mask_<mode><mode256_i>"
   [(match_operand:LASX 0 "register_operand")
@@ -1050,11 +1013,23 @@
   [(set (match_operand:ILASX 0 "register_operand" "=f,f")
 	(lshiftrt:ILASX
 	  (match_operand:ILASX 1 "register_operand" "f,f")
-	  (match_operand:ILASX 2 "reg_or_vector_same_uimm6_operand" "f,Uuv6")))]
+	  (match_operand:ILASX 2 "reg_or_vector_same_uimm_operand" "f,Uuvx")))]
   "ISA_HAS_LASX"
-  "@
-   xvsrl.<lasxfmt>\t%u0,%u1,%u2
-   xvsrli.<lasxfmt>\t%u0,%u1,%E2"
+{
+  switch (which_alternative)
+    {
+    case 0:
+      return "xvsrl.<lasxfmt>\t%u0,%u1,%u2";
+    case 1:
+      {
+	unsigned HOST_WIDE_INT val = UINTVAL (CONST_VECTOR_ELT (operands[2], 0));
+	operands[2] = GEN_INT (val & (GET_MODE_UNIT_BITSIZE (<MODE>mode) - 1));
+	return "xvsrli.<lasxfmt>\t%u0,%u1,%d2";
+      }
+    default:
+      gcc_unreachable ();
+    }
+}
   [(set_attr "type" "simd_shift")
    (set_attr "mode" "<MODE>")])
 
@@ -1063,11 +1038,23 @@
   [(set (match_operand:ILASX 0 "register_operand" "=f,f")
 	(ashiftrt:ILASX
 	  (match_operand:ILASX 1 "register_operand" "f,f")
-	  (match_operand:ILASX 2 "reg_or_vector_same_uimm6_operand" "f,Uuv6")))]
+	  (match_operand:ILASX 2 "reg_or_vector_same_uimm_operand" "f,Uuvx")))]
   "ISA_HAS_LASX"
-  "@
-   xvsra.<lasxfmt>\t%u0,%u1,%u2
-   xvsrai.<lasxfmt>\t%u0,%u1,%E2"
+{
+  switch (which_alternative)
+    {
+    case 0:
+      return "xvsra.<lasxfmt>\t%u0,%u1,%u2";
+    case 1:
+      {
+	unsigned HOST_WIDE_INT val = UINTVAL (CONST_VECTOR_ELT (operands[2], 0));
+	operands[2] = GEN_INT (val & (GET_MODE_UNIT_BITSIZE (<MODE>mode) - 1));
+	return "xvsrai.<lasxfmt>\t%u0,%u1,%d2";
+      }
+    default:
+      gcc_unreachable ();
+    }
+}
   [(set_attr "type" "simd_shift")
    (set_attr "mode" "<MODE>")])
 
@@ -1076,11 +1063,23 @@
   [(set (match_operand:ILASX 0 "register_operand" "=f,f")
 	(ashift:ILASX
 	  (match_operand:ILASX 1 "register_operand" "f,f")
-	  (match_operand:ILASX 2 "reg_or_vector_same_uimm6_operand" "f,Uuv6")))]
+	  (match_operand:ILASX 2 "reg_or_vector_same_uimm_operand" "f,Uuvx")))]
   "ISA_HAS_LASX"
-  "@
-   xvsll.<lasxfmt>\t%u0,%u1,%u2
-   xvslli.<lasxfmt>\t%u0,%u1,%E2"
+{
+  switch (which_alternative)
+    {
+    case 0:
+      return "xvsll.<lasxfmt>\t%u0,%u1,%u2";
+    case 1:
+      {
+	unsigned HOST_WIDE_INT val = UINTVAL (CONST_VECTOR_ELT (operands[2], 0));
+	operands[2] = GEN_INT (val & (GET_MODE_UNIT_BITSIZE (<MODE>mode) - 1));
+	return "xvslli.<lasxfmt>\t%u0,%u1,%d2";
+      }
+    default:
+      gcc_unreachable ();
+    }
+}
   [(set_attr "type" "simd_shift")
    (set_attr "mode" "<MODE>")])
 
@@ -1439,7 +1438,7 @@
   "ISA_HAS_LASX"
 {
   if (which_alternative == 1)
-    return "xvldi.b\t%u0,0" ;
+    return "xvrepli.b\t%u0,0";
 
   return "xvreplgr2vr.<lasxfmt>\t%u0,%z1";
 }
@@ -2716,12 +2715,12 @@
    (set_attr "mode" "V4DI")])
 
 ;; Extend loongson-sx to loongson-asx.
-(define_insn "xvandn<mode>3"
+(define_insn "andn<mode>3"
   [(set (match_operand:LASX 0 "register_operand" "=f")
-	(and:LASX (not:LASX (match_operand:LASX 1 "register_operand" "f"))
-			    (match_operand:LASX 2 "register_operand" "f")))]
+	(and:LASX (not:LASX (match_operand:LASX 2 "register_operand" "f"))
+			    (match_operand:LASX 1 "register_operand" "f")))]
   "ISA_HAS_LASX"
-  "xvandn.v\t%u0,%u1,%u2"
+  "xvandn.v\t%u0,%u2,%u1"
   [(set_attr "type" "simd_logic")
    (set_attr "mode" "<MODE>")])
 
@@ -4637,7 +4636,7 @@
   [(set_attr "type" "simd_int_arith")
    (set_attr "mode" "<MODE>")])
 
-(define_insn "xvorn<mode>3"
+(define_insn "iorn<mode>3"
   [(set (match_operand:ILASX 0 "register_operand" "=f")
 	(ior:ILASX (not:ILASX (match_operand:ILASX 2 "register_operand" "f"))
 		   (match_operand:ILASX 1 "register_operand" "f")))]

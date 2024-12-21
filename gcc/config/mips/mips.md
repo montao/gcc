@@ -993,6 +993,10 @@
 ;; from the same template.
 (define_code_iterator any_shift [ashift ashiftrt lshiftrt])
 
+;; This code iterator allows the three bitwise instructions to be generated
+;; from the same template.
+(define_code_iterator any_bitwise [and ior xor])
+
 ;; This code iterator allows unsigned and signed division to be generated
 ;; from the same template.
 (define_code_iterator any_div [div udiv])
@@ -7391,6 +7395,8 @@
       else
 	return "lw\t$0,%a0";
     }
+  if (operands[1] == const2_rtx)
+    operands[1] = const0_rtx;
   /* Loongson ext2 implementation pref instructions.  */
   if (TARGET_LOONGSON_EXT2)
     {

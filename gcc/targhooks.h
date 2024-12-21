@@ -123,6 +123,7 @@ extern opt_machine_mode default_vectorize_related_mode (machine_mode,
 							poly_uint64);
 extern opt_machine_mode default_get_mask_mode (machine_mode);
 extern bool default_empty_mask_is_expensive (unsigned);
+extern bool default_conditional_operation_is_expensive (unsigned);
 extern vector_costs *default_vectorize_create_costs (vec_info *, bool);
 
 /* OpenACC hooks.  */
@@ -252,6 +253,9 @@ extern reg_class_t default_preferred_output_reload_class (rtx, reg_class_t);
 extern reg_class_t default_preferred_rename_class (reg_class_t rclass);
 extern bool default_class_likely_spilled_p (reg_class_t);
 extern unsigned char default_class_max_nregs (reg_class_t, machine_mode);
+
+extern bool default_avoid_store_forwarding_p (vec<store_fwd_info>, rtx, int,
+					      bool);
 
 extern enum unwind_info_type default_debug_unwind_info (void);
 

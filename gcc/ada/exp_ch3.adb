@@ -32,7 +32,6 @@ with Einfo;          use Einfo;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
 with Errout;         use Errout;
-with Expander;       use Expander;
 with Exp_Aggr;       use Exp_Aggr;
 with Exp_Atag;       use Exp_Atag;
 with Exp_Ch4;        use Exp_Ch4;
@@ -2692,18 +2691,32 @@ package body Exp_Ch3 is
            and then Tagged_Type_Expansion
            and then Nkind (Exp_Q) /= N_Raise_Expression
          then
-            Append_To (Res,
-              Make_Tag_Assignment_From_Type
-                (Default_Loc,
-                 New_Copy_Tree (Lhs, New_Scope => Proc_Id),
-                 Underlying_Type (Typ)));
+            --  Get the relevant type for the call to
+            --  Make_Tag_Assignment_From_Type, which, for concurrent types is
+            --  their corresponding record.
+
+            declare
+               T : Entity_Id := Underlying_Type (Typ);
+            begin
+               if Ekind (T) in E_Protected_Type | E_Task_Type then
+                  T := Corresponding_Record_Type (T);
+               end if;
+
+               Append_To (Res,
+                 Make_Tag_Assignment_From_Type
+                   (Default_Loc,
+                    New_Copy_Tree (Lhs, New_Scope => Proc_Id),
+                    T));
+            end;
          end if;
 
          --  Adjust the component if controlled except if it is an aggregate
-         --  that will be expanded inline.
+         --  that will be expanded inline (but note that the case of container
+         --  aggregates does require component adjustment).
 
          if Needs_Finalization (Typ)
-           and then Nkind (Exp_Q) not in N_Aggregate | N_Extension_Aggregate
+           and then (Nkind (Exp_Q) not in N_Aggregate | N_Extension_Aggregate
+                      or else Is_Container_Aggregate (Exp_Q))
            and then not Is_Build_In_Place_Function_Call (Exp)
          then
             Adj_Call :=
@@ -3530,6 +3543,7 @@ package body Exp_Ch3 is
                DF_Id :=
                  Make_Defining_Identifier (Loc,
                    Chars => New_External_Name (Name_uFinalizer));
+               Set_Is_Finalizer (DF_Id);
 
                Append_To (Decls, Make_Local_Deep_Finalize (Rec_Type, DF_Id));
 
@@ -4650,14 +4664,6 @@ package body Exp_Ch3 is
 
          Set_Is_Inlined (Proc_Id, Inline_Init_Proc (Rec_Type));
 
-         --  Do not build an aggregate if Modify_Tree_For_C, this isn't
-         --  needed and may generate early references to non frozen types
-         --  since we expand aggregate much more systematically.
-
-         if Modify_Tree_For_C then
-            return;
-         end if;
-
          declare
             Agg : constant Node_Id :=
                     Build_Equivalent_Record_Aggregate (Rec_Type);
@@ -5434,17 +5440,22 @@ package body Exp_Ch3 is
       if not Is_Bit_Packed_Array (Typ) then
          if No (Init_Proc (Base)) then
 
-            --  If this is an anonymous array created for a declaration with
-            --  an initial value, its init_proc will never be called. The
+            --  If this is an anonymous array built for an object declaration
+            --  with an initial value, its Init_Proc will never be called. The
             --  initial value itself may have been expanded into assignments,
-            --  in which case the object declaration is carries the
-            --  No_Initialization flag.
+            --  in which case the declaration has the No_Initialization flag.
+            --  The exception is when the initial value is a 2-pass aggregate,
+            --  because the special expansion used for it creates a temporary
+            --  that needs a fully-fledged initialization.
 
             if Is_Itype (Base)
               and then Nkind (Associated_Node_For_Itype (Base)) =
                                                     N_Object_Declaration
               and then
-                (Present (Expression (Associated_Node_For_Itype (Base)))
+                ((Present (Expression (Associated_Node_For_Itype (Base)))
+                    and then not
+                      Is_Two_Pass_Aggregate
+                        (Expression (Associated_Node_For_Itype (Base))))
                   or else No_Initialization (Associated_Node_For_Itype (Base)))
             then
                null;
@@ -6428,10 +6439,10 @@ package body Exp_Ch3 is
          Build_Record_Init_Proc (Typ_Decl, Typ);
       end if;
 
-     --  Create the body of TSS primitive Finalize_Address. This must be done
-     --  before the bodies of all predefined primitives are created. If Typ
-     --  is limited, Stream_Input and Stream_Read may produce build-in-place
-     --  allocations and for those the expander needs Finalize_Address.
+      --  Create the body of TSS primitive Finalize_Address. This must be done
+      --  before the bodies of all predefined primitives are created. If Typ
+      --  is limited, Stream_Input and Stream_Read may produce build-in-place
+      --  allocations and for those the expander needs Finalize_Address.
 
       if Is_Controlled (Typ) then
          Make_Finalize_Address_Body (Typ);
@@ -7351,8 +7362,9 @@ package body Exp_Ch3 is
 
          --  However, there are exceptions in the latter case for interfaces
          --  (see Analyze_Object_Declaration), as well as class-wide types and
-         --  types with unknown discriminants if they are additionally limited
-         --  (see Expand_Subtype_From_Expr), so we must cope with them.
+         --  types with unknown discriminants if they have no underlying record
+         --  view or are inherently limited (see Expand_Subtype_From_Expr), so
+         --  we must cope with them.
 
          elsif Is_Interface (Typ) then
             pragma Assert (Is_Class_Wide_Type (Typ));
@@ -7384,7 +7396,8 @@ package body Exp_Ch3 is
 
          else pragma Assert (Is_Definite_Subtype (Typ)
            or else (Has_Unknown_Discriminants (Typ)
-                     and then Is_Inherently_Limited_Type (Typ)));
+                     and then (No (Underlying_Record_View (Typ))
+                                or else Is_Inherently_Limited_Type (Typ))));
 
             Alloc_Typ := Typ;
          end if;
@@ -7626,8 +7639,6 @@ package body Exp_Ch3 is
               or else Has_Aspect (Def_Id, Aspect_Address)
             then
                Ensure_Freeze_Node (Def_Id);
-               Set_Has_Delayed_Freeze (Def_Id);
-               Set_Is_Frozen (Def_Id, False);
 
                if not Partial_View_Has_Unknown_Discr (Typ) then
                   Append_Freeze_Action (Def_Id,
@@ -7640,16 +7651,25 @@ package body Exp_Ch3 is
             end if;
          end if;
 
+         --  For a special return object, the initialization must wait until
+         --  after the object is turned into an allocator.
+
          if not Special_Ret_Obj then
             Default_Initialize_Object (Init_After);
 
-            --  Check whether an access object has been initialized above
+            --  Check whether the object has been initialized above
 
-            if Is_Access_Type (Typ) and then Present (Expression (N)) then
-               if Known_Non_Null (Expression (N)) then
-                  Set_Is_Known_Non_Null (Def_Id);
-               elsif Known_Null (Expression (N)) then
-                  Set_Is_Known_Null (Def_Id);
+            if Present (Expression (N)) then
+               if Is_Access_Type (Typ) then
+                  if Known_Non_Null (Expression (N)) then
+                     Set_Is_Known_Non_Null (Def_Id);
+                  elsif Known_Null (Expression (N)) then
+                     Set_Is_Known_Null (Def_Id);
+                  end if;
+               end if;
+
+               if Is_Delayed_Aggregate (Expression (N)) then
+                  Convert_Aggr_In_Object_Decl (N);
                end if;
             end if;
          end if;
@@ -7663,11 +7683,9 @@ package body Exp_Ch3 is
            and then Is_Library_Level_Entity (Def_Id)
          then
             declare
-               Prag : Node_Id;
+               Prag : constant Node_Id :=
+                 Make_Linker_Section_Pragma (Def_Id, Loc, ".persistent.bss");
             begin
-               Prag :=
-                 Make_Linker_Section_Pragma
-                   (Def_Id, Sloc (N), ".persistent.bss");
                Insert_After (N, Prag);
                Analyze (Prag);
             end;
@@ -7680,29 +7698,12 @@ package body Exp_Ch3 is
 
          Expr_Q := Unqualify (Expr);
 
-         --  When we have the appropriate type of aggregate in the expression
-         --  (it has been determined during analysis of the aggregate by
-         --  setting the delay flag), let's perform in place assignment and
-         --  thus avoid creating a temporary.
+         --  When we have the appropriate kind of aggregate in the expression
+         --  (this has been determined during analysis of the aggregate by
+         --  setting the Expansion_Delayed flag), let's perform in place
+         --  assignment and thus avoid creating a temporary.
 
          if Is_Delayed_Aggregate (Expr_Q) then
-
-            --  An aggregate that must be built in place is not resolved and
-            --  expanded until the enclosing construct is expanded. This will
-            --  happen when the aggregate is limited and the declared object
-            --  has a following address clause; it happens also when generating
-            --  C code for an aggregate that has an alignment or address clause
-            --  (see Analyze_Object_Declaration). Resolution is done without
-            --  expansion because it will take place when the declaration
-            --  itself is expanded.
-
-            if (Is_Limited_Type (Typ) or else Modify_Tree_For_C)
-              and then not Analyzed (Expr)
-            then
-               Expander_Mode_Save_And_Set (False);
-               Resolve (Expr, Typ);
-               Expander_Mode_Restore;
-            end if;
 
             --  For a special return object, the transformation must wait until
             --  after the object is turned into an allocator.
@@ -7722,14 +7723,15 @@ package body Exp_Ch3 is
 
             if not Special_Ret_Obj then
                declare
+                  Rhs    : constant Node_Id := Relocate_Node (Expr);
                   Assign : constant Node_Id :=
                     Make_Assignment_Statement (Loc,
                       Name       => New_Occurrence_Of (Def_Id, Loc),
-                      Expression => Relocate_Node (Expr));
+                      Expression => Rhs);
 
                begin
                   Set_Assignment_OK (Name (Assign));
-                  Set_Analyzed (Expression (Assign), False);
+                  Unanalyze_Delayed_Conditional_Expression (Rhs);
                   Set_No_Finalize_Actions (Assign);
                   Insert_Action_After (Init_After, Assign);
 
@@ -8152,7 +8154,9 @@ package body Exp_Ch3 is
             Tag_Assign := Make_Tag_Assignment (N);
 
             if Present (Tag_Assign) then
-               if Present (Following_Address_Clause (N)) then
+               if Present (Following_Address_Clause (N))
+                 or else Has_Aspect (Def_Id, Aspect_Address)
+               then
                   Ensure_Freeze_Node (Def_Id);
                elsif not Special_Ret_Obj then
                   Insert_Action_After (Init_After, Tag_Assign);
@@ -8356,10 +8360,8 @@ package body Exp_Ch3 is
          --  An Ada 2012 stand-alone object of an anonymous access type
 
          declare
-            Loc : constant Source_Ptr := Sloc (N);
-
             Level : constant Entity_Id :=
-                      Make_Defining_Identifier (Sloc (N),
+                      Make_Defining_Identifier (Loc,
                         Chars =>
                           New_External_Name (Chars (Def_Id), Suffix => "L"));
 
@@ -8808,23 +8810,23 @@ package body Exp_Ch3 is
 
                       Else_Statements => New_List (Guard_Except));
 
-                     --  If a separate initialization assignment was created
-                     --  earlier, append that following the assignment of the
-                     --  implicit access formal to the access object, to ensure
-                     --  that the return object is initialized in that case. In
-                     --  this situation, the target of the assignment must be
-                     --  rewritten to denote a dereference of the access to the
-                     --  return object passed in by the caller.
+                  --  If a separate initialization assignment was created
+                  --  earlier, append that following the assignment of the
+                  --  implicit access formal to the access object, to ensure
+                  --  that the return object is initialized in that case. In
+                  --  this situation, the target of the assignment must be
+                  --  rewritten to denote a dereference of the access to the
+                  --  return object passed in by the caller.
 
-                     if Present (Init_Stmt) then
-                        Set_Name (Init_Stmt,
-                          Make_Explicit_Dereference (Loc,
-                            Prefix => New_Occurrence_Of (Alloc_Obj_Id, Loc)));
-                        Set_Assignment_OK (Name (Init_Stmt));
+                  if Present (Init_Stmt) then
+                     Set_Name (Init_Stmt,
+                       Make_Explicit_Dereference (Loc,
+                         Prefix => New_Occurrence_Of (Alloc_Obj_Id, Loc)));
+                     Set_Assignment_OK (Name (Init_Stmt));
 
-                        Append_To (Then_Statements (Alloc_Stmt), Init_Stmt);
-                        Init_Stmt := Empty;
-                     end if;
+                     Append_To (Then_Statements (Alloc_Stmt), Init_Stmt);
+                     Init_Stmt := Empty;
+                  end if;
 
                   Insert_Action (N, Alloc_Stmt, Suppress => All_Checks);
 
@@ -10255,7 +10257,8 @@ package body Exp_Ch3 is
          if Nkind (Expr) = N_Unchecked_Type_Conversion
            and then Is_Scalar_Type (Under_Typ)
          then
-            Set_No_Truncation (Expr);
+            Set_Kill_Range_Check (Expr);
+            Set_No_Truncation    (Expr);
          end if;
 
          return Expr;

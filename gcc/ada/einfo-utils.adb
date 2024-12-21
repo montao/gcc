@@ -954,7 +954,7 @@ package body Einfo.Utils is
    function Get_Class_Wide_Pragma
      (E  : Entity_Id;
       Id : Pragma_Id) return Node_Id
-    is
+   is
       Item  : Node_Id;
       Items : Node_Id;
 
@@ -1566,15 +1566,6 @@ package body Einfo.Utils is
                       or else
                     Has_Option (Id, Name_Synchronous));
    end Is_External_State;
-
-   ------------------
-   -- Is_Finalizer --
-   ------------------
-
-   function Is_Finalizer (Id : E) return B is
-   begin
-      return Ekind (Id) = E_Procedure and then Chars (Id) = Name_uFinalizer;
-   end Is_Finalizer;
 
    ----------------------
    -- Is_Full_Access --
@@ -3182,10 +3173,10 @@ package body Einfo.Utils is
             end;
 
          when Access_Kind =>
-               Write_Attribute
-                 ("   Directly Designated Type ",
-                  Directly_Designated_Type (Id));
-               Write_Eol;
+            Write_Attribute
+              ("   Directly Designated Type ",
+               Directly_Designated_Type (Id));
+            Write_Eol;
 
          when Overloadable_Kind =>
             if Present (Homonym (Id)) then

@@ -1858,12 +1858,22 @@ pru_print_operand (FILE *file, rtx op, int letter)
 	  fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (op) & 0xff);
 	  return;
 	}
+      else if (letter == 'c')
+	{
+	  fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (op));
+	  return;
+	}
+      else if (letter == 'n')
+	{
+	  fprintf (file, HOST_WIDE_INT_PRINT_DEC, -INTVAL (op));
+	  return;
+	}
       /* Else, fall through.  */
 
     case CONST:
     case LABEL_REF:
     case SYMBOL_REF:
-      if (letter == 0)
+      if (letter == 0 || letter == 'c')
 	{
 	  output_addr_const (file, op);
 	  return;
@@ -2217,7 +2227,7 @@ pru_insert_attributes (tree node, tree *)
 	error ("only 32-bit access is supported "
 	       "for %<__regio_symbol%> address space");
       if (strcmp (name, "__R30") != 0 && strcmp (name, "__R31") != 0)
-	error ("register name %<%s%> not recognized "
+	error ("register name %qs not recognized "
 	       "in %<__regio_symbol%> address space", name);
     }
 
@@ -3248,6 +3258,12 @@ pru_unwind_word_mode (void)
 
 #undef TARGET_PRINT_OPERAND_ADDRESS
 #define TARGET_PRINT_OPERAND_ADDRESS pru_print_operand_address
+
+#undef  TARGET_MIN_ANCHOR_OFFSET
+#define TARGET_MIN_ANCHOR_OFFSET  0
+
+#undef  TARGET_MAX_ANCHOR_OFFSET
+#define TARGET_MAX_ANCHOR_OFFSET  255
 
 #undef TARGET_OPTION_OVERRIDE
 #define TARGET_OPTION_OVERRIDE pru_option_override
