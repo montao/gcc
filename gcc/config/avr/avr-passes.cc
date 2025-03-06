@@ -1,5 +1,5 @@
 /* Support for avr-passes.def for AVR 8-bit microcontrollers.
-   Copyright (C) 2024 Free Software Foundation, Inc.
+   Copyright (C) 2024-2025 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -4951,7 +4951,9 @@ avr_emit_shift (rtx_code code, rtx dest, rtx src, int off, rtx scratch)
   const bool b8_is_3op = off == 6;
 
   const bool b16_is_3op = select<bool>()
-    : code == ASHIFT ? satisfies_constraint_C7c (xoff) // 7...12
+    : code == ASHIFT ? (satisfies_constraint_C7c (xoff) // 7...12
+			// The "C05 C06" alternative of *ashlhi3_const.
+			|| (AVR_HAVE_MUL && scratch && (off == 5 || off == 6)))
     : code == LSHIFTRT ? satisfies_constraint_C7c (xoff)
     : code == ASHIFTRT ? off == 7
     : bad_case<bool> ();

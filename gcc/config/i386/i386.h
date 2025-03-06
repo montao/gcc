@@ -1,5 +1,5 @@
 /* Definitions of target machine for GCC for IA-32.
-   Copyright (C) 1988-2024 Free Software Foundation, Inc.
+   Copyright (C) 1988-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -232,6 +232,8 @@ struct processor_costs {
 					   to be unrolled.  */
   const unsigned small_unroll_factor;   /* Unroll factor for small loop to
 					   be unrolled.  */
+  const int br_mispredict_scale;	/* Branch mispredict scale for ifcvt
+					   threshold.  */
 };
 
 extern const struct processor_costs *ix86_cost;
@@ -430,6 +432,12 @@ extern unsigned char ix86_tune_features[X86_TUNE_LAST];
 	ix86_tune_features[X86_TUNE_FUSE_CMP_AND_BRANCH_SOFLAGS]
 #define TARGET_FUSE_ALU_AND_BRANCH \
 	ix86_tune_features[X86_TUNE_FUSE_ALU_AND_BRANCH]
+#define TARGET_FUSE_ALU_AND_BRANCH_MEM \
+	ix86_tune_features[X86_TUNE_FUSE_ALU_AND_BRANCH_MEM]
+#define TARGET_FUSE_ALU_AND_BRANCH_MEM_IMM \
+	ix86_tune_features[X86_TUNE_FUSE_ALU_AND_BRANCH_MEM_IMM]
+#define TARGET_FUSE_ALU_AND_BRANCH_RIP_RELATIVE\
+	ix86_tune_features[X86_TUNE_FUSE_ALU_AND_BRANCH_RIP_RELATIVE]
 #define TARGET_FUSE_MOV_AND_ALU \
 	ix86_tune_features[X86_TUNE_FUSE_MOV_AND_ALU]
 #define TARGET_OPT_AGU ix86_tune_features[X86_TUNE_OPT_AGU]
@@ -453,6 +461,10 @@ extern unsigned char ix86_tune_features[X86_TUNE_LAST];
     ix86_tune_features[X86_TUNE_ADJUST_UNROLL]
 #define TARGET_AVOID_FALSE_DEP_FOR_BMI \
 	ix86_tune_features[X86_TUNE_AVOID_FALSE_DEP_FOR_BMI]
+#define TARGET_AVOID_FALSE_DEP_FOR_TZCNT \
+	ix86_tune_features[X86_TUNE_AVOID_FALSE_DEP_FOR_TZCNT]
+#define TARGET_AVOID_FALSE_DEP_FOR_BLS \
+	ix86_tune_features[X86_TUNE_AVOID_FALSE_DEP_FOR_BLS]
 #define TARGET_ONE_IF_CONV_INSN \
 	ix86_tune_features[X86_TUNE_ONE_IF_CONV_INSN]
 #define TARGET_AVOID_MFENCE ix86_tune_features[X86_TUNE_AVOID_MFENCE]
@@ -1465,12 +1477,6 @@ enum reg_class
 
 #define REGNO_REG_CLASS(REGNO) (regclass_map[(REGNO)])
 
-/* When this hook returns true for MODE, the compiler allows
-   registers explicitly used in the rtl to be used as spill registers
-   but prevents the compiler from extending the lifetime of these
-   registers.  */
-#define TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P hook_bool_mode_true
-
 #define QI_REG_P(X) (REG_P (X) && QI_REGNO_P (REGNO (X)))
 #define QI_REGNO_P(N) IN_RANGE ((N), FIRST_QI_REG, LAST_QI_REG)
 
@@ -2233,7 +2239,7 @@ extern unsigned int const svr4_debugger_register_map[FIRST_PSEUDO_REGISTER];
 #define ASM_OUTPUT_SYMBOL_REF(FILE, SYM) \
   do {							\
     const char *name					\
-      = assemble_name_resolve (XSTR (x, 0));		\
+      = assemble_name_resolve (XSTR (SYM, 0));		\
     /* In -masm=att wrap identifiers that start with $	\
        into parens.  */					\
     if (ASSEMBLER_DIALECT == ASM_ATT			\

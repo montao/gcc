@@ -1,6 +1,6 @@
 ; Options for the language- and target-independent parts of the compiler.
 
-; Copyright (C) 2003-2024 Free Software Foundation, Inc.
+; Copyright (C) 2003-2025 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -1034,9 +1034,12 @@ Driver Undocumented
 ;     Default in G++ 13.
 ;
 ; 19: Emits ABI tags if needed in structured binding mangled names.
-;     Ignores cv-quals on [[no_unique_object]] members.
+;     Ignores cv-quals on [[no_unique_address]] members.
 ;     Mangles constraints on function templates.
 ;     Default in G++ 14.
+;
+; 20: Fix mangling of lambdas in static data member initializers.
+;     Default in G++ 15.
 ;
 ; Additional positive integers will be assigned as new versions of
 ; the ABI become the default version of the ABI.

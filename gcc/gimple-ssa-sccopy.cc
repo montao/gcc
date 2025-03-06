@@ -1,5 +1,5 @@
 /* Strongly-connected copy propagation pass for the GNU compiler.
-   Copyright (C) 2023-2024 Free Software Foundation, Inc.
+   Copyright (C) 2023-2025 Free Software Foundation, Inc.
    Contributed by Filip Kastl <fkastl@suse.cz>
 
 This file is part of GCC.
@@ -567,6 +567,19 @@ scc_copy_prop::propagate ()
   while (!worklist.is_empty ())
     {
       vec<gimple *> scc = worklist.pop ();
+
+      /* When we do 'replace_scc_by_value' it may happen that some EH edges
+	 get removed.  That means parts of CFG get removed.  Those may
+	 contain copy statements.  For that reason we prune SCCs here.  */
+      unsigned i;
+      for (i = 0; i < scc.length (); i++)
+	if (gimple_bb (scc[i]) == NULL)
+	  scc.unordered_remove (i);
+      if (scc.is_empty ())
+	{
+	  scc.release ();
+	  continue;
+	}
 
       auto_vec<gimple *> inner;
       hash_set<tree> outer_ops;

@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE
-   Copyright (C) 2018-2024 Free Software Foundation, Inc.
+   Copyright (C) 2018-2025 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -42,7 +42,6 @@
 #include "emit-rtl.h"
 #include "tree-vector-builder.h"
 #include "stor-layout.h"
-#include "regs.h"
 #include "alias.h"
 #include "gimple-fold.h"
 #include "langhooks.h"
@@ -283,7 +282,11 @@ CONSTEXPR const group_suffix_info group_suffixes[] = {
 #define TYPES_bhs_integer(S, D) \
   TYPES_bhs_signed (S, D), TYPES_bhs_unsigned (S, D)
 
-#define TYPES_bhs_data(S, D) \
+#define TYPES_bh_data(S, D)			\
+  TYPES_b_data (S, D), \
+  TYPES_h_data (S, D)
+
+#define TYPES_bhs_data(S, D)			\
   TYPES_b_data (S, D), \
   TYPES_h_data (S, D), \
   TYPES_s_data (S, D)
@@ -782,6 +785,7 @@ DEF_SVE_TYPES_ARRAY (bs_unsigned);
 DEF_SVE_TYPES_ARRAY (bhs_signed);
 DEF_SVE_TYPES_ARRAY (bhs_unsigned);
 DEF_SVE_TYPES_ARRAY (bhs_integer);
+DEF_SVE_TYPES_ARRAY (bh_data);
 DEF_SVE_TYPES_ARRAY (bhs_data);
 DEF_SVE_TYPES_ARRAY (bhs_widen);
 DEF_SVE_TYPES_ARRAY (c);
@@ -789,6 +793,7 @@ DEF_SVE_TYPES_ARRAY (h_bfloat);
 DEF_SVE_TYPES_ARRAY (h_float);
 DEF_SVE_TYPES_ARRAY (h_float_mf8);
 DEF_SVE_TYPES_ARRAY (h_integer);
+DEF_SVE_TYPES_ARRAY (h_data);
 DEF_SVE_TYPES_ARRAY (hs_signed);
 DEF_SVE_TYPES_ARRAY (hs_integer);
 DEF_SVE_TYPES_ARRAY (hs_float);
@@ -1130,14 +1135,6 @@ num_vectors_to_group (unsigned int nvectors)
   gcc_unreachable ();
 }
 
-/* Return the vector type associated with TYPE.  */
-static tree
-get_vector_type (sve_type type)
-{
-  auto vector_type = type_suffixes[type.type].vector_type;
-  return acle_vector_types[type.num_vectors - 1][vector_type];
-}
-
 /* If FNDECL is an SVE builtin, return its function instance, otherwise
    return null.  */
 const function_instance *
@@ -1298,26 +1295,14 @@ registered_function_hasher::equal (value_type value, const compare_type &key)
   return value->instance == key;
 }
 
-sve_switcher::sve_switcher (aarch64_feature_flags flags)
-  : aarch64_simd_switcher (AARCH64_FL_F16 | AARCH64_FL_SVE | flags)
+sve_alignment_switcher::sve_alignment_switcher ()
 {
-  /* Changing the ISA flags and have_regs_of_mode should be enough here.
-     We shouldn't need to pay the compile-time cost of a full target
-     switch.  */
   m_old_maximum_field_alignment = maximum_field_alignment;
   maximum_field_alignment = 0;
-
-  memcpy (m_old_have_regs_of_mode, have_regs_of_mode,
-	  sizeof (have_regs_of_mode));
-  for (int i = 0; i < NUM_MACHINE_MODES; ++i)
-    if (aarch64_sve_mode_p ((machine_mode) i))
-      have_regs_of_mode[i] = true;
 }
 
-sve_switcher::~sve_switcher ()
+sve_alignment_switcher::~sve_alignment_switcher ()
 {
-  memcpy (have_regs_of_mode, m_old_have_regs_of_mode,
-	  sizeof (have_regs_of_mode));
   maximum_field_alignment = m_old_maximum_field_alignment;
 }
 
@@ -3601,6 +3586,7 @@ gimple_folder::redirect_call (const function_instance &instance)
     return NULL;
 
   gimple_call_set_fndecl (call, rfn->decl);
+  gimple_call_set_fntype (call, TREE_TYPE (rfn->decl));
   return call;
 }
 
@@ -3673,6 +3659,46 @@ gimple_folder::fold_pfalse ()
 	return fold_to_stmt_vops (gimple_build_nop ());
     }
   return nullptr;
+}
+
+/* Convert the lhs and all non-boolean vector-type operands to TYPE.
+   Pass the converted variables to the callback FP, and finally convert the
+   result back to the original type. Add the necessary conversion statements.
+   Return the new call.  */
+gimple *
+gimple_folder::convert_and_fold (tree type,
+				 gimple *(*fp) (gimple_folder &,
+						tree, vec<tree> &))
+{
+  gcc_assert (VECTOR_TYPE_P (type)
+	      && TYPE_MODE (type) != VNx16BImode);
+  tree old_ty = TREE_TYPE (lhs);
+  gimple_seq stmts = NULL;
+  bool convert_lhs_p = !useless_type_conversion_p (type, old_ty);
+  tree lhs_conv = convert_lhs_p ? create_tmp_var (type) : lhs;
+  unsigned int num_args = gimple_call_num_args (call);
+  auto_vec<tree, 16> args_conv;
+  args_conv.safe_grow (num_args);
+  for (unsigned int i = 0; i < num_args; ++i)
+    {
+      tree op = gimple_call_arg (call, i);
+      tree op_ty = TREE_TYPE (op);
+      args_conv[i] =
+	(VECTOR_TYPE_P (op_ty)
+	 && TYPE_MODE (op_ty) != VNx16BImode
+	 && !useless_type_conversion_p (op_ty, type))
+	? gimple_build (&stmts, VIEW_CONVERT_EXPR, type, op) : op;
+    }
+
+  gimple *new_stmt = fp (*this, lhs_conv, args_conv);
+  gsi_insert_seq_before (gsi, stmts, GSI_SAME_STMT);
+  if (convert_lhs_p)
+    {
+      tree t = build1 (VIEW_CONVERT_EXPR, old_ty, lhs_conv);
+      gimple *g = gimple_build_assign (lhs, VIEW_CONVERT_EXPR, t);
+      gsi_insert_after (gsi, g, GSI_SAME_STMT);
+    }
+  return new_stmt;
 }
 
 /* Fold the call to constant VAL.  */
@@ -4613,6 +4639,8 @@ register_type_decl (tree type, const char *name)
 static void
 register_builtin_types ()
 {
+  sve_alignment_switcher switcher;
+
 #define DEF_SVE_TYPE(ACLE_NAME, NCHARS, ABI_NAME, SCALAR_TYPE) \
   scalar_types[VECTOR_TYPE_ ## ACLE_NAME] = SCALAR_TYPE;
 #include "aarch64-sve-builtins.def"
@@ -4687,7 +4715,7 @@ register_builtin_types ()
 void
 init_builtins ()
 {
-  sve_switcher sve;
+  aarch64_target_switcher switcher (AARCH64_FL_SVE);
   register_builtin_types ();
   if (in_lto_p)
     {
@@ -4803,7 +4831,8 @@ handle_arm_sve_h (bool function_nulls_p)
       return;
     }
 
-  sve_switcher sve;
+  aarch64_target_switcher switcher (AARCH64_FL_SVE);
+  sve_alignment_switcher alignment_switcher;
 
   /* Define the vector and tuple types.  */
   for (unsigned int type_i = 0; type_i < NUM_VECTOR_TYPES; ++type_i)
@@ -4834,6 +4863,8 @@ handle_arm_neon_sve_bridge_h (bool function_nulls_p)
   if (initial_indexes[arm_sme_handle] == 0)
     handle_arm_sme_h (true);
 
+  aarch64_target_switcher switcher;
+
   /* Define the functions.  */
   function_builder builder (arm_neon_sve_handle, function_nulls_p);
   for (unsigned int i = 0; i < ARRAY_SIZE (neon_sve_function_groups); ++i)
@@ -4861,7 +4892,7 @@ handle_arm_sme_h (bool function_nulls_p)
       return;
     }
 
-  sme_switcher sme;
+  aarch64_target_switcher switcher (AARCH64_FL_SME);
 
   function_builder builder (arm_sme_handle, function_nulls_p);
   for (unsigned int i = 0; i < ARRAY_SIZE (sme_function_groups); ++i)

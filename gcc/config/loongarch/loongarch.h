@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler.  LoongArch version.
-   Copyright (C) 2021-2024 Free Software Foundation, Inc.
+   Copyright (C) 2021-2025 Free Software Foundation, Inc.
    Contributed by Loongson Ltd.
    Based on MIPS and RISC-V target for GNU compiler.
 
@@ -25,6 +25,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "config/loongarch/loongarch-evolution.h"
 
 #define SWITCHABLE_TARGET 1
+
+#define REGISTER_TARGET_PRAGMAS() loongarch_register_pragmas ()
 
 #define TARGET_SUPPORTS_WIDE_INT 1
 

@@ -1,6 +1,6 @@
 /* OMP constructs' SIMD clone supporting code.
 
-Copyright (C) 2005-2024 Free Software Foundation, Inc.
+Copyright (C) 2005-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -691,8 +691,8 @@ simd_clone_create (struct cgraph_node *old_node, bool force_local)
 	 the old node.  */
       new_node->local = old_node->local;
       new_node->externally_visible = old_node->externally_visible;
-      new_node->calls_declare_variant_alt
-	= old_node->calls_declare_variant_alt;
+      new_node->has_omp_variant_constructs
+	= old_node->has_omp_variant_constructs;
     }
 
   /* Mark clones with internal linkage as gc'able, so they will not be
@@ -1426,7 +1426,7 @@ simd_clone_adjust (struct cgraph_node *node)
 	case SIMD_CLONE_ARG_TYPE_VECTOR:
 	  if (sc->args[i].arg_type == SIMD_CLONE_ARG_TYPE_MASK
 	      && sc->mask_mode != VOIDmode)
-	    elem_type = boolean_type_node;
+	    elem_type = simd_clone_compute_base_data_type (sc->origin, sc);
 	  else
 	    elem_type = TREE_TYPE (sc->args[i].vector_type);
 	  if (INTEGRAL_TYPE_P (elem_type) || POINTER_TYPE_P (elem_type))

@@ -1,5 +1,5 @@
 /* Build expressions with type checking for C++ compiler.
-   Copyright (C) 1987-2024 Free Software Foundation, Inc.
+   Copyright (C) 1987-2025 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -2980,7 +2980,7 @@ build_class_member_access_expr (cp_expr object, tree member,
 				    /*nonnull=*/1, complain);
 	  /* If we found the base successfully then we should be able
 	     to convert to it successfully.  */
-	  gcc_assert (object != error_mark_node);
+	  gcc_assert (object != error_mark_node || seen_error ());
 	}
 
       /* If MEMBER is from an anonymous aggregate, we have converted
@@ -4219,16 +4219,14 @@ get_member_function_from_ptrfunc (tree *instance_ptrptr, tree function,
 	      && !DECL_P (instance_ptr)
 	      && !TREE_CONSTANT (instance_ptr)))
 	instance_ptr = instance_save_expr
-	  = force_target_expr (TREE_TYPE (instance_ptr), instance_ptr,
-			       complain);
+	  = get_internal_target_expr (instance_ptr);
 
       /* See above comment.  */
       if (TREE_SIDE_EFFECTS (function)
 	  || (!nonvirtual
 	      && !DECL_P (function)
 	      && !TREE_CONSTANT (function)))
-	function
-	  = force_target_expr (TREE_TYPE (function), function, complain);
+	function = get_internal_target_expr (function);
 
       /* Start by extracting all the information from the PMF itself.  */
       e3 = pfn_from_ptrmemfunc (function);
@@ -4513,9 +4511,11 @@ cp_build_function_call_vec (tree function, vec<tree, va_gc> **params,
 
   /* Check for errors in format strings and inappropriately
      null parameters.  */
-  bool warned_p = check_function_arguments (input_location, fndecl, fntype,
-					    nargs, argarray, NULL,
-					    cp_comp_parm_types);
+  bool warned_p
+    = ((complain & tf_warning)
+       && check_function_arguments (input_location, fndecl, fntype,
+				    nargs, argarray, NULL,
+				    cp_comp_parm_types));
 
   ret = build_cxx_call (function, nargs, argarray, complain, orig_fndecl);
 
@@ -4865,6 +4865,11 @@ tree
 build_omp_array_section (location_t loc, tree array_expr, tree index,
 			 tree length)
 {
+  if (TREE_CODE (array_expr) == TYPE_DECL
+      || type_dependent_expression_p (array_expr))
+    return build3_loc (loc, OMP_ARRAY_SECTION, NULL_TREE, array_expr, index,
+		       length);
+
   tree type = TREE_TYPE (array_expr);
   gcc_assert (type);
   type = non_reference (type);
@@ -7149,11 +7154,11 @@ build_address (tree t)
 /* Return a NOP_EXPR converting EXPR to TYPE.  */
 
 tree
-build_nop (tree type, tree expr)
+build_nop (tree type, tree expr MEM_STAT_DECL)
 {
   if (type == error_mark_node || error_operand_p (expr))
     return expr;
-  return build1_loc (EXPR_LOCATION (expr), NOP_EXPR, type, expr);
+  return build1_loc (EXPR_LOCATION (expr), NOP_EXPR, type, expr PASS_MEM_STAT);
 }
 
 /* Take the address of ARG, whatever that means under C++ semantics.
@@ -11445,7 +11450,7 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
       bool converted = false;
       tree moved;
       /* Until C++23, this was only interesting for class type, but in C++23,
-	 we should do the below when we're converting rom/to a class/reference
+	 we should do the below when we're converting from/to a class/reference
 	 (a non-scalar type).  */
 	if ((cxx_dialect < cxx23
 	     ? CLASS_TYPE_P (functype)

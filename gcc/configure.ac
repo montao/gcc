@@ -1,7 +1,7 @@
 # configure.ac for GCC
 # Process this file with autoconf to generate a configuration script.
 
-# Copyright (C) 1997-2024 Free Software Foundation, Inc.
+# Copyright (C) 1997-2025 Free Software Foundation, Inc.
 
 #This file is part of GCC.
 
@@ -1574,7 +1574,7 @@ AC_CHECK_FUNCS(times clock kill getrlimit setrlimit atoq \
 	popen sysconf strsignal getrusage nl_langinfo \
 	gettimeofday mbstowcs wcswidth mmap posix_fallocate setlocale \
 	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat getauxval \
-	clock_gettime)
+	clock_gettime munmap msync)
 
 # At least for glibc, clock_gettime is in librt.  But don't pull that
 # in if it still doesn't give us the function we want.
@@ -1652,7 +1652,7 @@ AC_CHECK_DECLS([basename(const char*), strstr(const char*,const char*)], , ,[
 #include "system.h"])
 
 gcc_AC_CHECK_DECLS(getenv atol atoll asprintf sbrk abort atof getcwd getwd \
-	madvise stpcpy strnlen strsignal strverscmp \
+	madvise mkstemps stpcpy strnlen strsignal strverscmp \
 	strtol strtoul strtoll strtoull setenv unsetenv \
 	errno snprintf vsnprintf vasprintf malloc realloc calloc \
 	free getopt clock getpagesize ffs fmemopen gcc_UNLOCKED_FUNCS, , ,[
@@ -3296,6 +3296,8 @@ AC_MSG_RESULT($gcc_cv_ld_ro_rw_mix)
 
 gcc_AC_INITFINI_ARRAY
 
+gcc_CHECK_ATTRIBUTE_ALIAS
+
 # Some assemblers (GNU as for LoongArch) generates relocations for
 # leb128 symbol arithmetic for relaxation, we need to disable relaxation
 # probing leb128 support then.
@@ -3612,12 +3614,14 @@ gcc_GAS_CHECK_FEATURE(section merging support, gcc_cv_as_shf_merge,
  [--fatal-warnings],
  [.section .rodata.str, "aMS", @progbits, 1])
 if test $gcc_cv_as_shf_merge = no; then
-  gcc_GAS_CHECK_FEATURE(section merging support, gcc_cv_as_shf_merge,
+  gcc_GAS_CHECK_FEATURE(section merging support (%progbits),
+    gcc_cv_as_shf_merge_percent,
     [--fatal-warnings],
     [.section .rodata.str, "aMS", %progbits, 1])
 fi
 AC_DEFINE_UNQUOTED(HAVE_GAS_SHF_MERGE,
-  [`if test $gcc_cv_as_shf_merge = yes; then echo 1; else echo 0; fi`],
+  [`if test $gcc_cv_as_shf_merge = yes \
+    || test $gcc_cv_as_shf_merge_percent = yes; then echo 1; else echo 0; fi`],
 [Define 0/1 if your assembler supports marking sections with SHF_MERGE flag.])
 
 gcc_GAS_CHECK_FEATURE([COMDAT group support (GNU as)],
@@ -6098,42 +6102,6 @@ if test x"$gcc_cv_ld_eh_frame_hdr" = xyes; then
 [Define if your linker supports .eh_frame_hdr.])
 fi
 AC_MSG_RESULT($gcc_cv_ld_eh_frame_hdr)
-
-AC_MSG_CHECKING(linker CIEv3 in .eh_frame support)
-gcc_cv_ld_eh_frame_ciev3=no
-if test $in_tree_ld = yes ; then
-  if test "$gcc_cv_gld_major_version" -eq 2 -a "$gcc_cv_gld_minor_version" -ge 16 -o "$gcc_cv_gld_major_version" -gt 2 \
-     && test $in_tree_ld_is_elf = yes; then
-    gcc_cv_ld_eh_frame_ciev3=yes
-  fi
-elif test x$gcc_cv_ld != x; then
-  if echo "$ld_ver" | grep GNU > /dev/null; then
-    gcc_cv_ld_eh_frame_ciev3=yes
-    if test 0"$ld_date" -lt 20040513; then
-      if test -n "$ld_date"; then
-	# If there was date string, but was earlier than 2004-05-13, fail
-	gcc_cv_ld_eh_frame_ciev3=no
-      elif test "$ld_vers_major" -lt 2; then
-	gcc_cv_ld_eh_frame_ciev3=no
-      elif test "$ld_vers_major" -eq 2 -a "$ld_vers_minor" -lt 16; then
-	gcc_cv_ld_eh_frame_ciev3=no
-      fi
-    fi
-  else
-    case "$target" in
-      *-*-solaris2*)
-        # Sun ld added support for CIE v3 in .eh_frame in Solaris 11.1.
-        if test "$ld_vers_major" -gt 1 || test "$ld_vers_minor" -ge 2324; then
-          gcc_cv_ld_eh_frame_ciev3=yes
-        fi
-        ;;
-    esac
-  fi
-fi
-AC_DEFINE_UNQUOTED(HAVE_LD_EH_FRAME_CIEV3,
-  [`if test x"$gcc_cv_ld_eh_frame_ciev3" = xyes; then echo 1; else echo 0; fi`],
-  [Define 0/1 if your linker supports CIE v3 in .eh_frame.])
-AC_MSG_RESULT($gcc_cv_ld_eh_frame_ciev3)
 
 AC_MSG_CHECKING(linker position independent executable support)
 gcc_cv_ld_pie=no

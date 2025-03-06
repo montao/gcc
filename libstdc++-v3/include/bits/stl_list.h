@@ -1,6 +1,6 @@
 // List implementation -*- C++ -*-
 
-// Copyright (C) 2001-2024 Free Software Foundation, Inc.
+// Copyright (C) 2001-2025 Free Software Foundation, Inc.
 // Copyright The GNU Toolchain Authors.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
@@ -2384,12 +2384,18 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	_M_initialize_dispatch(_InputIterator __first, _InputIterator __last,
 			       __false_type)
 	{
+	  bool __notempty = __first != __last;
 	  for (; __first != __last; ++__first)
 #if __cplusplus >= 201103L
 	    emplace_back(*__first);
 #else
 	    push_back(*__first);
 #endif
+	 if (__notempty)
+	   {
+	     if (begin() == end())
+	       __builtin_unreachable();
+	   }
 	}
 
       // Called by list(n,v,a), and the range constructor when it turns out

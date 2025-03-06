@@ -1,5 +1,5 @@
 ; Options for the C, ObjC, C++ and ObjC++ front ends.
-; Copyright (C) 2003-2024 Free Software Foundation, Inc.
+; Copyright (C) 2003-2025 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -513,7 +513,7 @@ C++ ObjC++ Var(warn_cxx23_extensions) Warning Init(1) CppReason(CPP_W_CXX23_EXTE
 Warn about C++23 constructs in code compiled with an older standard.
 
 Wc++26-extensions
-C++ ObjC++ Var(warn_cxx26_extensions) Warning Init(1)
+C++ ObjC++ Var(warn_cxx26_extensions) Warning Init(1) CppReason(CPP_W_CXX26_EXTENSIONS)
 Warn about C++26 constructs in code compiled with an older standard.
 
 Wcalloc-transposed-args

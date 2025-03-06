@@ -1,5 +1,5 @@
 /* Some code common to C++ and ObjC++ front ends.
-   Copyright (C) 2004-2024 Free Software Foundation, Inc.
+   Copyright (C) 2004-2025 Free Software Foundation, Inc.
    Contributed by Ziemowit Laski  <zlaski@apple.com>
 
 This file is part of GCC.
@@ -587,6 +587,7 @@ names_builtin_p (const char *name)
     case RID_BUILTIN_ASSOC_BARRIER:
     case RID_BUILTIN_BIT_CAST:
     case RID_OFFSETOF:
+    case RID_VA_ARG:
       return 1;
     case RID_BUILTIN_OPERATOR_NEW:
     case RID_BUILTIN_OPERATOR_DELETE:

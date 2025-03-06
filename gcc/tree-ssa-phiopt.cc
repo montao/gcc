@@ -1,5 +1,5 @@
 /* Optimization of PHI nodes by converting them into straightline code.
-   Copyright (C) 2004-2024 Free Software Foundation, Inc.
+   Copyright (C) 2004-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -3646,7 +3646,9 @@ cond_if_else_store_replacement_1 (basic_block then_bb, basic_block else_bb,
       || else_assign == NULL
       || !gimple_assign_single_p (else_assign)
       || gimple_clobber_p (else_assign)
-      || gimple_has_volatile_ops (else_assign))
+      || gimple_has_volatile_ops (else_assign)
+      || stmt_references_abnormal_ssa_name (then_assign)
+      || stmt_references_abnormal_ssa_name (else_assign))
     return false;
 
   lhs = gimple_assign_lhs (then_assign);
