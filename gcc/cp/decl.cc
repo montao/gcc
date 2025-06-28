@@ -846,11 +846,9 @@ poplevel (int keep, int reverse, int functionbody)
       DECL_INITIAL (current_function_decl) = block ? block : subblocks;
       if (subblocks)
 	{
-	  if (FUNCTION_NEEDS_BODY_BLOCK (current_function_decl))
-	    {
-	      if (BLOCK_SUBBLOCKS (subblocks))
-		BLOCK_OUTER_CURLY_BRACE_P (BLOCK_SUBBLOCKS (subblocks)) = 1;
-	    }
+	  if (FUNCTION_NEEDS_BODY_BLOCK (current_function_decl)
+	      && BLOCK_SUBBLOCKS (subblocks))
+	    BLOCK_OUTER_CURLY_BRACE_P (BLOCK_SUBBLOCKS (subblocks)) = 1;
 	  else
 	    BLOCK_OUTER_CURLY_BRACE_P (subblocks) = 1;
 	}
@@ -1313,7 +1311,15 @@ maybe_version_functions (tree newdecl, tree olddecl, bool record)
     }
 
   if (record)
-    cgraph_node::record_function_versions (olddecl, newdecl);
+    {
+      /* Add the new version to the function version structure.  */
+      cgraph_node *fn_node = cgraph_node::get_create (olddecl);
+      cgraph_function_version_info *fn_v = fn_node->function_version ();
+      if (!fn_v)
+	fn_v = fn_node->insert_new_function_version ();
+
+      cgraph_node::add_function_version (fn_v, newdecl);
+    }
 
   return true;
 }
@@ -2539,8 +2545,10 @@ duplicate_decls (tree newdecl, tree olddecl, bool hiding, bool was_hidden)
 	}
 
       /* Propagate purviewness and importingness as with
-	 set_instantiating_module.  */
-      if (modules_p () && DECL_LANG_SPECIFIC (new_result))
+	 set_instantiating_module, unless newdecl is a friend injection.  */
+      if (modules_p () && DECL_LANG_SPECIFIC (new_result)
+	  && !(TREE_CODE (new_result) == FUNCTION_DECL
+	       && DECL_UNIQUE_FRIEND_P (new_result)))
 	{
 	  if (DECL_MODULE_PURVIEW_P (new_result))
 	    DECL_MODULE_PURVIEW_P (old_result) = true;
@@ -5337,6 +5345,8 @@ cp_make_fname_decl (location_t loc, tree id, int type_dep)
       decl = pushdecl_outermost_localscope (decl);
       if (decl != error_mark_node)
 	add_decl_expr (decl);
+      else
+	gcc_assert (seen_error ());
     }
   else
     {
@@ -6196,22 +6206,28 @@ start_decl (const cp_declarator *declarator,
     }
 
   if (current_function_decl && VAR_P (decl)
-      && DECL_DECLARED_CONSTEXPR_P (current_function_decl)
+      && maybe_constexpr_fn (current_function_decl)
       && cxx_dialect < cxx23)
     {
       bool ok = false;
       if (CP_DECL_THREAD_LOCAL_P (decl) && !DECL_REALLY_EXTERN (decl))
-	error_at (DECL_SOURCE_LOCATION (decl),
-		  "%qD defined %<thread_local%> in %qs function only "
-		  "available with %<-std=c++23%> or %<-std=gnu++23%>", decl,
-		  DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
-		  ? "consteval" : "constexpr");
+	{
+	  if (DECL_DECLARED_CONSTEXPR_P (current_function_decl))
+	    error_at (DECL_SOURCE_LOCATION (decl),
+		      "%qD defined %<thread_local%> in %qs function only "
+		      "available with %<-std=c++23%> or %<-std=gnu++23%>", decl,
+		      DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
+		      ? "consteval" : "constexpr");
+	}
       else if (TREE_STATIC (decl))
-	error_at (DECL_SOURCE_LOCATION (decl),
-		  "%qD defined %<static%> in %qs function only available "
-		  "with %<-std=c++23%> or %<-std=gnu++23%>", decl,
-		  DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
-		  ? "consteval" : "constexpr");
+	{
+	  if (DECL_DECLARED_CONSTEXPR_P (current_function_decl))
+	    error_at (DECL_SOURCE_LOCATION (decl),
+		      "%qD defined %<static%> in %qs function only available "
+		      "with %<-std=c++23%> or %<-std=gnu++23%>", decl,
+		      DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
+		      ? "consteval" : "constexpr");
+	}
       else
 	ok = true;
       if (!ok)
@@ -7869,6 +7885,12 @@ check_initializer (tree decl, tree init, int flags, vec<tree, va_gc> **cleanups)
     }
   else if (!init && DECL_REALLY_EXTERN (decl))
     ;
+  else if (flag_openmp
+	   && VAR_P (decl)
+	   && DECL_LANG_SPECIFIC (decl)
+	   && DECL_OMP_DECLARE_MAPPER_P (decl)
+	   && TREE_CODE (init) == OMP_DECLARE_MAPPER)
+    return NULL_TREE;
   else if (init || type_build_ctor_call (type)
 	   || TYPE_REF_P (type))
     {
@@ -8652,6 +8674,9 @@ omp_declare_variant_finalize_one (tree decl, tree attr)
 		    = build_int_cst (TREE_TYPE (nargs),
 				     tree_to_uhwi (TREE_PURPOSE (nargs)) + 1);
 		}
+	      for (tree t = append_args_list; t; t = TREE_CHAIN (t))
+		TREE_VALUE (t)
+		  = cp_finish_omp_init_prefer_type (TREE_VALUE (t));
 	      DECL_ATTRIBUTES (variant) = tree_cons (
 		get_identifier ("omp declare variant variant args"),
 		TREE_VALUE (adjust_args_list), DECL_ATTRIBUTES (variant));
@@ -8892,6 +8917,9 @@ cp_finish_decl (tree decl, tree init, bool init_const_expr_p,
 	  TREE_TYPE (decl) = error_mark_node;
 	  return;
 	}
+
+      /* Now that we have a type, try these again.  */
+      layout_decl (decl, 0);
       cp_apply_type_quals_to_decl (cp_type_quals (type), decl);
 
       /* Update the type of the corresponding TEMPLATE_DECL to match.  */
@@ -9183,14 +9211,23 @@ cp_finish_decl (tree decl, tree init, bool init_const_expr_p,
 	  varpool_node::get_create (decl);
 	}
 
+      if (flag_openmp
+	  && VAR_P (decl)
+	  && DECL_LANG_SPECIFIC (decl)
+	  && DECL_OMP_DECLARE_MAPPER_P (decl)
+	  && init)
+	{
+	  gcc_assert (TREE_CODE (init) == OMP_DECLARE_MAPPER);
+	  DECL_INITIAL (decl) = init;
+	}
       /* Convert the initializer to the type of DECL, if we have not
 	 already initialized DECL.  */
-      if (!DECL_INITIALIZED_P (decl)
-	  /* If !DECL_EXTERNAL then DECL is being defined.  In the
-	     case of a static data member initialized inside the
-	     class-specifier, there can be an initializer even if DECL
-	     is *not* defined.  */
-	  && (!DECL_EXTERNAL (decl) || init))
+      else if (!DECL_INITIALIZED_P (decl)
+	       /* If !DECL_EXTERNAL then DECL is being defined.  In the
+		  case of a static data member initialized inside the
+		  class-specifier, there can be an initializer even if DECL
+		  is *not* defined.  */
+	       && (!DECL_EXTERNAL (decl) || init))
 	{
 	  cleanups = make_tree_vector ();
 	  init = check_initializer (decl, init, flags, &cleanups);
@@ -11289,11 +11326,16 @@ grokfndecl (tree ctype,
 		  "cannot declare %<::main%> to be %qs", "consteval");
       if (!publicp)
 	error_at (location, "cannot declare %<::main%> to be static");
-      if (current_lang_depth () != 0)
+      if (current_lang_name != lang_name_cplusplus)
 	pedwarn (location, OPT_Wpedantic, "cannot declare %<::main%> with a"
-		 " linkage specification");
+		 " linkage specification other than %<extern \"C++\"%>");
       if (module_attach_p ())
-	error_at (location, "cannot attach %<::main%> to a named module");
+	{
+	  auto_diagnostic_group adg;
+	  error_at (location, "cannot attach %<::main%> to a named module");
+	  inform (location, "use %<extern \"C++\"%> to attach it to the "
+		  "global module instead");
+	}
       inlinep = 0;
       publicp = 1;
     }
@@ -19299,6 +19341,19 @@ finish_function (bool inline_p)
 	}
     }
 
+  if (FNDECL_USED_AUTO (fndecl)
+      && TREE_TYPE (fntype) != DECL_SAVED_AUTO_RETURN_TYPE (fndecl))
+    if (location_t fcloc = failed_completion_location (fndecl))
+      {
+	auto_diagnostic_group adg;
+	if (warning (OPT_Wsfinae_incomplete_,
+		     "defining %qD, which previously failed to be deduced "
+		     "in a SFINAE context", fndecl)
+	    && warn_sfinae_incomplete == 1)
+	  inform (fcloc, "here.  Use %qs for a diagnostic at that point",
+		  "-Wsfinae-incomplete=2");
+      }
+
   /* Remember that we were in class scope.  */
   if (current_class_name)
     ctype = current_class_type;
@@ -19449,7 +19504,8 @@ finish_function (bool inline_p)
       && !cp_function_chain->can_throw
       && !flag_non_call_exceptions
       && !decl_replaceable_p (fndecl,
-			      opt_for_fn (fndecl, flag_semantic_interposition)))
+			      opt_for_fn (fndecl, flag_semantic_interposition))
+      && !lookup_attribute ("noipa", DECL_ATTRIBUTES (fndecl)))
     TREE_NOTHROW (fndecl) = 1;
 
  cleanup:
@@ -19828,14 +19884,14 @@ cp_tree_node_structure (union lang_tree_node * t)
 {
   switch (TREE_CODE (&t->generic))
     {
-    case ARGUMENT_PACK_SELECT:  return TS_CP_ARGUMENT_PACK_SELECT;
+    case ARGUMENT_PACK_SELECT:	return TS_CP_ARGUMENT_PACK_SELECT;
     case BASELINK:		return TS_CP_BASELINK;
-    case CONSTRAINT_INFO:       return TS_CP_CONSTRAINT_INFO;
+    case CONSTRAINT_INFO:	return TS_CP_CONSTRAINT_INFO;
     case DEFERRED_NOEXCEPT:	return TS_CP_DEFERRED_NOEXCEPT;
     case DEFERRED_PARSE:	return TS_CP_DEFERRED_PARSE;
     case IDENTIFIER_NODE:	return TS_CP_IDENTIFIER;
     case LAMBDA_EXPR:		return TS_CP_LAMBDA_EXPR;
-    case BINDING_VECTOR:		return TS_CP_BINDING_VECTOR;
+    case BINDING_VECTOR:	return TS_CP_BINDING_VECTOR;
     case OVERLOAD:		return TS_CP_OVERLOAD;
     case PTRMEM_CST:		return TS_CP_PTRMEM;
     case STATIC_ASSERT:		return TS_CP_STATIC_ASSERT;
@@ -19843,6 +19899,7 @@ cp_tree_node_structure (union lang_tree_node * t)
     case TEMPLATE_INFO:		return TS_CP_TEMPLATE_INFO;
     case TEMPLATE_PARM_INDEX:	return TS_CP_TPI;
     case TRAIT_EXPR:		return TS_CP_TRAIT_EXPR;
+    case TU_LOCAL_ENTITY:	return TS_CP_TU_LOCAL_ENTITY;
     case USERDEF_LITERAL:	return TS_CP_USERDEF_LITERAL;
     default:			return TS_CP_GENERIC;
     }
@@ -19950,7 +20007,7 @@ require_deduced_type (tree decl, tsubst_flags_t complain)
 	/* We probably already complained about deduction failure.  */;
       else if (complain & tf_error)
 	error ("use of %qD before deduction of %<auto%>", decl);
-      note_failed_type_completion_for_satisfaction (decl);
+      note_failed_type_completion (decl, complain);
       return false;
     }
   return true;

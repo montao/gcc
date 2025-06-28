@@ -585,9 +585,8 @@ gcn_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
     case XNACK_MASK_HI_REG:
     case TBA_HI_REG:
     case TMA_HI_REG:
-      return mode == SImode;
     case VCC_HI_REG:
-      return false;
+      return mode == SImode;
     case EXEC_HI_REG:
       return mode == SImode /*|| mode == V32BImode */ ;
     case SCC_REG:
@@ -3096,8 +3095,7 @@ move_callee_saved_registers (rtx sp, machine_function *offsets,
 	saved_scalars++;
       }
 
-  rtx move_scalars = get_insns ();
-  end_sequence ();
+  rtx move_scalars = end_sequence ();
   start_sequence ();
 
   /* Ensure that all vector lanes are moved.  */
@@ -3232,8 +3230,7 @@ move_callee_saved_registers (rtx sp, machine_function *offsets,
 	offset += size;
       }
 
-  rtx move_vectors = get_insns ();
-  end_sequence ();
+  rtx move_vectors = end_sequence ();
 
   if (prologue)
     {
@@ -3360,8 +3357,7 @@ gcn_expand_prologue ()
 						 + offsets->callee_saves))));
 	}
 
-      rtx_insn *seq = get_insns ();
-      end_sequence ();
+      rtx_insn *seq = end_sequence ();
 
       emit_insn (seq);
     }
@@ -5860,8 +5856,7 @@ gcn_restore_exec (rtx_insn *insn, rtx_insn *last_exec_def, int64_t curr_exec,
 	{
 	  start_sequence ();
 	  emit_move_insn (exec_save_reg, exec_reg);
-	  rtx_insn *seq = get_insns ();
-	  end_sequence ();
+	  rtx_insn *seq = end_sequence ();
 
 	  emit_insn_after (seq, last_exec_def);
 	  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -5877,8 +5872,7 @@ gcn_restore_exec (rtx_insn *insn, rtx_insn *last_exec_def, int64_t curr_exec,
   /* Restore EXEC register before the usage.  */
   start_sequence ();
   emit_move_insn (exec_reg, exec);
-  rtx_insn *seq = get_insns ();
-  end_sequence ();
+  rtx_insn *seq = end_sequence ();
   emit_insn_before (seq, insn);
 
   if (dump_file && (dump_flags & TDF_DETAILS))
@@ -6039,8 +6033,7 @@ gcn_md_reorg (void)
 	    {
 	      start_sequence ();
 	      emit_move_insn (exec_reg, GEN_INT (new_exec));
-	      rtx_insn *seq = get_insns ();
-	      end_sequence ();
+	      rtx_insn *seq = end_sequence ();
 	      emit_insn_before (seq, insn);
 
 	      if (dump_file && (dump_flags & TDF_DETAILS))
@@ -6587,8 +6580,8 @@ gcn_hsa_declare_function_name (FILE *file, const char *name,
   if (avgpr % vgpr_block_size)
     avgpr += vgpr_block_size - (avgpr % vgpr_block_size);
 
-  fputs ("\t.rodata\n"
-	 "\t.p2align\t6\n"
+  switch_to_section (readonly_data_section);
+  fputs ("\t.p2align\t6\n"
 	 "\t.amdhsa_kernel\t", file);
   assemble_name (file, name);
   fputs ("\n", file);
@@ -6707,7 +6700,7 @@ gcn_hsa_declare_function_name (FILE *file, const char *name,
   fputs ("        .end_amdgpu_metadata\n", file);
 #endif
 
-  fputs ("\t.text\n", file);
+  switch_to_section (current_function_section ());
   fputs ("\t.align\t256\n", file);
   fputs ("\t.type\t", file);
   assemble_name (file, name);
@@ -6927,6 +6920,20 @@ gcn_asm_output_symbol_ref (FILE *file, rtx x)
     }
 }
 
+void
+gcn_asm_weaken_decl (FILE *stream, tree decl, const char *name,
+		     const char *value)
+{
+  if (!value
+      && DECL_EXTERNAL (decl))
+    /* Don't emit weak undefined symbols; see PR119369.  */
+    return;
+  if (value)
+    ASM_OUTPUT_WEAK_ALIAS (stream, name, value);
+  else
+    ASM_WEAKEN_LABEL (stream, name);
+}
+
 /* Implement TARGET_CONSTANT_ALIGNMENT.
 
    Returns the alignment in bits of a constant that is being placed in memory.
@@ -7094,7 +7101,10 @@ print_operand_address (FILE *file, rtx mem)
    E - print conditional code for v_cmp (eq_u64/ne_u64...)
    A - print address in formatting suitable for given address space.
    O - print offset:n for data share operations.
-   g - print "glc", if appropriate for given MEM
+   G - print "glc" (or for gfx94x: sc0) unconditionally [+ indep. of regnum]
+   g - print "glc" (or for gfx94x: sc0), if appropriate for given MEM
+       NOTE: Do not use 'G' or 'g with scalar memory access ('s_...') as those
+       require "glc" also with gfx94x.
    L - print low-part of a multi-reg value
    H - print second part of a multi-reg value (high-part of 2-reg value)
    J - print third part of a multi-reg value
@@ -7710,10 +7720,13 @@ print_operand (FILE *file, rtx x, int code)
       else
 	output_addr_const (file, x);
       return;
+    case 'G':
+      fputs (TARGET_GLC_NAME, file);
+      return;
     case 'g':
       gcc_assert (xcode == MEM);
       if (MEM_VOLATILE_P (x))
-	fputs (" glc", file);
+	fputs (TARGET_GLC_NAME, file);
       return;
     default:
       output_operand_lossage ("invalid %%xn code");
@@ -7894,8 +7907,6 @@ gcn_dwarf_register_span (rtx rtl)
 #define TARGET_LEGITIMATE_CONSTANT_P gcn_legitimate_constant_p
 #undef  TARGET_LIBC_HAS_FUNCTION
 #define TARGET_LIBC_HAS_FUNCTION gcn_libc_has_function
-#undef  TARGET_LRA_P
-#define TARGET_LRA_P hook_bool_void_true
 #undef  TARGET_MACHINE_DEPENDENT_REORG
 #define TARGET_MACHINE_DEPENDENT_REORG gcn_md_reorg
 #undef  TARGET_MEMORY_MOVE_COST

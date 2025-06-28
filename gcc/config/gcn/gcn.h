@@ -43,6 +43,8 @@ extern const struct gcn_device_def {
 	builtin_define ("__CDNA1__");                                          \
       else if (TARGET_CDNA2)                                                   \
 	builtin_define ("__CDNA2__");                                          \
+      else if (TARGET_CDNA3)                                                   \
+	builtin_define ("__CDNA3__");                                          \
       else if (TARGET_RDNA2)                                                   \
 	builtin_define ("__RDNA2__");                                          \
       else if (TARGET_RDNA3)                                                   \
@@ -867,7 +869,3 @@ enum gcn_builtin_codes
       || M == V2SFmode || M == V2DImode || M == V2DFmode) \
    ? 2 \
    : 1)
-
-/* The C++ front end insists to link against libstdc++ -- which we don't build.
-   Tell it to instead link against the innocuous libgcc.  */
-#define LIBSTDCXX "gcc"

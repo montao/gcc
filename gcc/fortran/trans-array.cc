@@ -1991,14 +1991,17 @@ static void
 gfc_trans_array_ctor_element (stmtblock_t * pblock, tree desc,
 			      tree offset, gfc_se * se, gfc_expr * expr)
 {
-  tree tmp;
+  tree tmp, offset_eval;
 
   gfc_conv_expr (se, expr);
 
   /* Store the value.  */
   tmp = build_fold_indirect_ref_loc (input_location,
 				 gfc_conv_descriptor_data_get (desc));
-  tmp = gfc_build_array_ref (tmp, offset, NULL);
+  /* The offset may change, so get its value now and use that to free memory.
+   */
+  offset_eval = gfc_evaluate_now (offset, &se->pre);
+  tmp = gfc_build_array_ref (tmp, offset_eval, NULL);
 
   if (expr->expr_type == EXPR_FUNCTION && expr->ts.type == BT_DERIVED
       && expr->ts.u.derived->attr.alloc_comp)
@@ -3150,8 +3153,7 @@ finish:
      the reference.  */
   if ((expr->ts.type == BT_DERIVED || expr->ts.type == BT_CLASS)
        && finalblock.head != NULL_TREE)
-    gfc_add_block_to_block (&loop->post, &finalblock);
-
+    gfc_prepend_expr_to_block (&loop->post, finalblock.head);
 }
 
 
@@ -4198,6 +4200,15 @@ gfc_conv_array_ref (gfc_se * se, gfc_array_ref * ar, gfc_expr *expr,
   gfc_symbol * sym = expr->symtree->n.sym;
   char *var_name = NULL;
 
+  if (ar->stat)
+    {
+      gfc_se statse;
+
+      gfc_init_se (&statse, NULL);
+      gfc_conv_expr_lhs (&statse, ar->stat);
+      gfc_add_block_to_block (&se->pre, &statse.pre);
+      gfc_add_modify (&se->pre, statse.expr, integer_zero_node);
+    }
   if (ar->dimen == 0)
     {
       gcc_assert (ar->codimen || sym->attr.select_rank_temporary
@@ -10100,7 +10111,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	  else
 	    {
 	      attr = &c->attr;
-	      if (attr->pointer)
+	      if (attr->pointer || attr->proc_pointer)
 		continue;
 	    }
 
@@ -11227,9 +11238,7 @@ gfc_is_reallocatable_lhs (gfc_expr *expr)
     return true;
 
   /* All that can be left are allocatable components.  */
-  if ((sym->ts.type != BT_DERIVED
-       && sym->ts.type != BT_CLASS)
-	|| !sym->ts.u.derived->attr.alloc_comp)
+  if (sym->ts.type != BT_DERIVED && sym->ts.type != BT_CLASS)
     return false;
 
   /* Find a component ref followed by an array reference.  */
@@ -12060,8 +12069,16 @@ gfc_trans_deferred_array (gfc_symbol * sym, gfc_wrapped_block * block)
       && !INTEGER_CST_P (sym->ts.u.cl->backend_decl))
     {
       if (sym->ts.deferred && !sym->ts.u.cl->length && !sym->attr.dummy)
-	gfc_add_modify (&init, sym->ts.u.cl->backend_decl,
-			build_zero_cst (TREE_TYPE (sym->ts.u.cl->backend_decl)));
+	{
+	  tree len_expr = sym->ts.u.cl->backend_decl;
+	  tree init_val = build_zero_cst (TREE_TYPE (len_expr));
+	  if (VAR_P (len_expr)
+	      && sym->attr.save
+	      && !DECL_INITIAL (len_expr))
+	    DECL_INITIAL (len_expr) = init_val;
+	  else
+	    gfc_add_modify (&init, len_expr, init_val);
+	}
       gfc_conv_string_length (sym->ts.u.cl, NULL, &init);
       gfc_trans_vla_type_sizes (sym, &init);
 

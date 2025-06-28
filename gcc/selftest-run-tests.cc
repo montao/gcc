@@ -80,6 +80,8 @@ selftest::run_tests ()
   optinfo_emit_json_cc_tests ();
   ordered_hash_map_tests_cc_tests ();
   splay_tree_cc_tests ();
+  xml_cc_tests ();
+  graphviz_cc_tests ();
 
   /* Mid-level data structures.  */
   input_cc_tests ();
@@ -92,23 +94,26 @@ selftest::run_tests ()
   digraph_cc_tests ();
   tristate_cc_tests ();
   ipa_modref_tree_cc_tests ();
+  selftest_logical_location_cc_tests ();
 
   /* Higher-level tests, or for components that other selftests don't
      rely on.  */
   diagnostic_color_cc_tests ();
   diagnostic_show_locus_cc_tests ();
+  diagnostic_format_html_cc_tests ();
   diagnostic_format_json_cc_tests ();
   diagnostic_format_sarif_cc_tests ();
+  diagnostic_output_spec_cc_tests ();
   edit_context_cc_tests ();
   fold_const_cc_tests ();
   spellcheck_cc_tests ();
   spellcheck_tree_cc_tests ();
   tree_cfg_cc_tests ();
-  diagnostic_path_cc_tests ();
+  diagnostic_path_output_cc_tests ();
   simple_diagnostic_path_cc_tests ();
   lazy_diagnostic_path_cc_tests ();
   attribs_cc_tests ();
-  opts_diagnostic_cc_tests ();
+  path_coverage_cc_tests ();
 
   /* This one relies on most of the above.  */
   function_tests_cc_tests ();

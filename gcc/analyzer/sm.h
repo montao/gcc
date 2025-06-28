@@ -28,6 +28,7 @@ namespace ana {
 class state_machine;
 class sm_context;
 class pending_diagnostic;
+class xml_state;
 
 extern bool any_pointer_p (tree expr);
 extern bool any_pointer_p (const svalue *sval);
@@ -136,7 +137,9 @@ public:
 
   /* Called when VAR leaks (and !can_purge_p).  */
   virtual std::unique_ptr<pending_diagnostic>
-  on_leak (tree var ATTRIBUTE_UNUSED) const;
+  on_leak (tree var ATTRIBUTE_UNUSED,
+	   const program_state *old_state,
+	   const program_state *new_state) const;
 
   /* Return true if S should be reset to "start" for values passed (or reachable
      from) calls to unknown functions.  IS_MUTABLE is true for pointers as
@@ -183,6 +186,15 @@ public:
   std::unique_ptr<json::object> to_json () const;
 
   state_t get_start_state () const { return m_start; }
+
+  virtual void
+  add_state_to_xml (xml_state &out_xml,
+		    const svalue &sval,
+		    state_machine::state_t state) const;
+
+  virtual void
+  add_global_state_to_xml (xml_state &out_xml,
+			   state_machine::state_t state) const;
 
 protected:
   state_t add_state (const char *name);
@@ -235,7 +247,7 @@ public:
      Use in preference to gimple_call_fndecl (and gimple_call_addr_fndecl),
      since it can look through function pointer assignments and
      other callback handling.  */
-  virtual tree get_fndecl_for_call (const gcall *call) = 0;
+  virtual tree get_fndecl_for_call (const gcall &call) = 0;
 
   /* Get the old state of VAR at STMT.  */
   virtual state_machine::state_t get_state (const gimple *stmt,
@@ -341,17 +353,17 @@ protected:
 /* The various state_machine subclasses are hidden in their respective
    implementation files.  */
 
-extern void make_checkers (auto_delete_vec <state_machine> &out,
-			   logger *logger);
+extern std::vector<std::unique_ptr<state_machine>>
+make_checkers (logger *logger);
 
-extern state_machine *make_malloc_state_machine (logger *logger);
-extern state_machine *make_fileptr_state_machine (logger *logger);
-extern state_machine *make_taint_state_machine (logger *logger);
-extern state_machine *make_sensitive_state_machine (logger *logger);
-extern state_machine *make_signal_state_machine (logger *logger);
-extern state_machine *make_pattern_test_state_machine (logger *logger);
-extern state_machine *make_va_list_state_machine (logger *logger);
-extern state_machine *make_fd_state_machine (logger *logger);
+extern std::unique_ptr<state_machine> make_malloc_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_fileptr_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_taint_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_sensitive_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_signal_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_pattern_test_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_va_list_state_machine (logger *);
+extern std::unique_ptr<state_machine> make_fd_state_machine (logger *);
 
 } // namespace ana
 

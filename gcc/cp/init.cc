@@ -2810,8 +2810,7 @@ diagnose_uninitialized_cst_or_ref_member (tree type, bool using_new, bool compla
 }
 
 /* Call __cxa_bad_array_new_length to indicate that the size calculation
-   overflowed.  Pretend it returns sizetype so that it plays nicely in the
-   COND_EXPR.  */
+   overflowed.  */
 
 tree
 throw_bad_array_new_length (void)
@@ -2823,7 +2822,7 @@ throw_bad_array_new_length (void)
       fn = get_global_binding (name);
       if (!fn)
 	fn = push_throw_library_fn
-	  (name, build_function_type_list (sizetype, NULL_TREE));
+	  (name, build_function_type_list (void_type_node, NULL_TREE));
     }
 
   return build_cxx_call (fn, 0, NULL, tf_warning_or_error);
@@ -3011,7 +3010,6 @@ build_new_constexpr_heap_type (tree elt_type, tree cookie_size, tree itype2)
   tree atype1 = build_cplus_array_type (sizetype, itype1);
   tree atype2 = build_cplus_array_type (elt_type, itype2);
   tree rtype = cxx_make_type (RECORD_TYPE);
-  TYPE_NAME (rtype) = heap_identifier;
   tree fld1 = build_decl (UNKNOWN_LOCATION, FIELD_DECL, NULL_TREE, atype1);
   tree fld2 = build_decl (UNKNOWN_LOCATION, FIELD_DECL, NULL_TREE, atype2);
   DECL_FIELD_CONTEXT (fld1) = rtype;
@@ -3020,7 +3018,16 @@ build_new_constexpr_heap_type (tree elt_type, tree cookie_size, tree itype2)
   DECL_ARTIFICIAL (fld2) = true;
   TYPE_FIELDS (rtype) = fld1;
   DECL_CHAIN (fld1) = fld2;
+  TYPE_ARTIFICIAL (rtype) = true;
   layout_type (rtype);
+
+  tree decl = build_decl (UNKNOWN_LOCATION, TYPE_DECL, heap_identifier, rtype);
+  TYPE_NAME (rtype) = decl;
+  TYPE_STUB_DECL (rtype) = decl;
+  DECL_CONTEXT (decl) = NULL_TREE;
+  DECL_ARTIFICIAL (decl) = true;
+  layout_decl (decl, 0);
+
   return rtype;
 }
 
@@ -3406,7 +3413,7 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
 	errval = throw_bad_array_new_length ();
       if (outer_nelts_check != NULL_TREE)
 	size = build3 (COND_EXPR, sizetype, outer_nelts_check, size, errval);
-      size = cp_fully_fold (size);
+      size = fold_to_constant (size);
       /* Create the argument list.  */
       vec_safe_insert (*placement, 0, size);
       /* Do name-lookup to find the appropriate operator.  */
@@ -3463,7 +3470,7 @@ build_new_1 (vec<tree, va_gc> **placement, tree type, tree nelts,
 	    outer_nelts_check = NULL_TREE;
 	}
 
-      size = cp_fully_fold (size);
+      size = fold_to_constant (size);
       /* If size is zero e.g. due to type having zero size, try to
 	 preserve outer_nelts for constant expression evaluation
 	 purposes.  */
@@ -4748,7 +4755,8 @@ build_vec_init (tree base, tree maxindex, tree init,
 	 itself.  But that breaks when gimplify_target_expr adds a clobber
 	 cleanup that runs before the build_vec_init cleanup.  */
       if (cleanup_flags)
-	vec_safe_push (*cleanup_flags, build_tree_list (iterator, maxindex));
+	vec_safe_push (*cleanup_flags,
+		       build_tree_list (rval, build_zero_cst (ptype)));
     }
 
   /* Should we try to create a constant initializer?  */

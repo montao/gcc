@@ -18,18 +18,10 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-#include "config.h"
-#define INCLUDE_VECTOR
-#include "system.h"
-#include "coretypes.h"
-#include "tree.h"
-#include "function.h"
-#include "basic-block.h"
-#include "gimple.h"
-#include "diagnostic-core.h"
-#include "diagnostic.h"
+#include "analyzer/common.h"
+
 #include "tree-diagnostic.h"
-#include "analyzer/analyzer.h"
+
 #include "analyzer/record-layout.h"
 
 #if ENABLE_ANALYZER
@@ -38,7 +30,7 @@ namespace ana {
 
 /* class record_layout.  */
 
-record_layout::record_layout (tree record_type)
+record_layout::record_layout (const_tree record_type)
 {
   gcc_assert (TREE_CODE (record_type) == RECORD_TYPE);
 

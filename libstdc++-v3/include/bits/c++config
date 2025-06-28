@@ -261,7 +261,7 @@
 # if __cpp_exceptions
 #  define _GLIBCXX_THROW_OR_ABORT(_EXC) (throw (_EXC))
 # else
-#  define _GLIBCXX_THROW_OR_ABORT(_EXC) (__builtin_abort())
+#  define _GLIBCXX_THROW_OR_ABORT(_EXC) (__builtin_abort(), (void)(_EXC))
 # endif
 #endif
 
@@ -271,6 +271,12 @@
 #else
 #define _GLIBCXX_NOEXCEPT_PARM
 #define _GLIBCXX_NOEXCEPT_QUAL
+#endif
+
+#if __cpp_auto_cast
+# define _GLIBCXX_AUTO_CAST(X) auto(X)
+#else
+# define _GLIBCXX_AUTO_CAST(X) ::std::__decay_t<decltype((X))>(X)
 #endif
 
 // Macro for extern template, ie controlling template linkage via use

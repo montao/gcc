@@ -1,5 +1,6 @@
 /* { dg-do compile  { target { ! ia32 } } } */
-/* { dg-options "-O -favoid-store-forwarding -mavx10.1-256 -mprefer-avx128 --param=store-forwarding-max-distance=128 -Wno-psabi" } */
+/* { dg-require-effective-target dfp } */
+/* { dg-options "-O -favoid-store-forwarding -mavx10.1 -mprefer-avx128 --param=store-forwarding-max-distance=128 -Wno-psabi" } */
 typedef __attribute__((__vector_size__ (64))) _Decimal32 V;
 
 void

@@ -19,8 +19,8 @@
 ; <http://www.gnu.org/licenses/>.
 
 mlra
-Target Var(avropt_lra_p) UInteger Init(0) Optimization Undocumented
-Usa LRA for reload instead of the old reload framework.  This option is experimental, and it may be removed in future versions of the compiler.
+Target Var(avropt_lra_p) UInteger Init(1) Optimization Undocumented
+Usa LRA for reload instead of the old reload framework.  This option is experimental, on per default, and it may be removed in future versions of the compiler.
 
 mcall-prologues
 Target Mask(CALL_PROLOGUES) Optimization
@@ -64,6 +64,10 @@ Target RejectNegative Joined Undocumented Var(avropt_log_details)
 mpr118012
 Target Var(avropt_pr118012) UInteger Init(1) Undocumented
 This option is on per default in order to work around PR118012.
+
+muse-nonzero-bits
+Target Var(avropt_use_nonzero_bits) UInteger Init(0) Optimization
+Optimization. Allow to use nonzero_bits() in some insn conditions.
 
 mshort-calls
 Target RejectNegative Mask(SHORT_CALLS)

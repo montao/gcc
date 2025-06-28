@@ -156,7 +156,7 @@ complete_type_or_maybe_complain (tree type, tree value, tsubst_flags_t complain)
     {
       if (complain & tf_error)
 	cxx_incomplete_type_diagnostic (value, type, DK_ERROR);
-      note_failed_type_completion_for_satisfaction (type);
+      note_failed_type_completion (type, complain);
       return NULL_TREE;
     }
   else
@@ -1372,17 +1372,12 @@ cxx_safe_arg_type_equiv_p (tree t1, tree t2)
       && TYPE_PTR_P (t2))
     return true;
 
-  /* The signedness of the parameter matters only when an integral
-     type smaller than int is promoted to int, otherwise only the
-     precision of the parameter matters.
-     This check should make sure that the callee does not see
-     undefined values in argument registers.  */
+  /* Only the precision of the parameter matters.  This check should
+     make sure that the callee does not see undefined values in argument
+     registers.  */
   if (INTEGRAL_TYPE_P (t1)
       && INTEGRAL_TYPE_P (t2)
-      && TYPE_PRECISION (t1) == TYPE_PRECISION (t2)
-      && (TYPE_UNSIGNED (t1) == TYPE_UNSIGNED (t2)
-	  || !targetm.calls.promote_prototypes (NULL_TREE)
-	  || TYPE_PRECISION (t1) >= TYPE_PRECISION (integer_type_node)))
+      && TYPE_PRECISION (t1) == TYPE_PRECISION (t2))
     return true;
 
   return same_type_p (t1, t2);
@@ -2089,7 +2084,14 @@ cxx_sizeof_or_alignof_type (location_t loc, tree type, enum tree_code op,
 
   bool dependent_p = dependent_type_p (type);
   if (!dependent_p)
-    complete_type (type);
+    {
+      complete_type (type);
+      if (!COMPLETE_TYPE_P (type))
+	/* Call this here because the incompleteness diagnostic comes from
+	   c_sizeof_or_alignof_type instead of
+	   complete_type_or_maybe_complain.  */
+	note_failed_type_completion (type, complain);
+    }
   if (dependent_p
       /* VLA types will have a non-constant size.  In the body of an
 	 uninstantiated template, we don't need to try to compute the
@@ -2111,7 +2113,7 @@ cxx_sizeof_or_alignof_type (location_t loc, tree type, enum tree_code op,
 
   return c_sizeof_or_alignof_type (loc, complete_type (type),
 				   op == SIZEOF_EXPR, std_alignof,
-				   complain);
+				   complain & (tf_warning_or_error));
 }
 
 /* Return the size of the type, without producing any warnings for
@@ -3872,7 +3874,9 @@ cp_build_indirect_ref_1 (location_t loc, tree ptr, ref_operator errorstring,
       else if (do_fold && TREE_CODE (pointer) == ADDR_EXPR
 	       && same_type_p (t, TREE_TYPE (TREE_OPERAND (pointer, 0))))
 	/* The POINTER was something like `&x'.  We simplify `*&x' to
-	   `x'.  */
+	   `x'.  This can change the value category: '*&TARGET_EXPR'
+	   is an lvalue and folding it into 'TARGET_EXPR' turns it into
+	   a prvalue of class type.  */
 	return TREE_OPERAND (pointer, 0);
       else
 	{
@@ -5476,7 +5480,7 @@ cp_build_binary_op (const op_location_t &location,
           case stv_firstarg:
             {
               op0 = convert (TREE_TYPE (type1), op0);
-	      op0 = save_expr (op0);
+	      op0 = cp_save_expr (op0);
               op0 = build_vector_from_val (type1, op0);
 	      orig_type0 = type0 = TREE_TYPE (op0);
               code0 = TREE_CODE (type0);
@@ -5486,7 +5490,7 @@ cp_build_binary_op (const op_location_t &location,
           case stv_secondarg:
             {
               op1 = convert (TREE_TYPE (type0), op1);
-	      op1 = save_expr (op1);
+	      op1 = cp_save_expr (op1);
               op1 = build_vector_from_val (type0, op1);
 	      orig_type1 = type1 = TREE_TYPE (op1);
               code1 = TREE_CODE (type1);
@@ -6015,9 +6019,9 @@ cp_build_binary_op (const op_location_t &location,
 	    return error_mark_node;
 
 	  if (TREE_SIDE_EFFECTS (op0))
-	    op0 = save_expr (op0);
+	    op0 = cp_save_expr (op0);
 	  if (TREE_SIDE_EFFECTS (op1))
-	    op1 = save_expr (op1);
+	    op1 = cp_save_expr (op1);
 
 	  pfn0 = pfn_from_ptrmemfunc (op0);
 	  pfn0 = cp_fully_fold (pfn0);
@@ -6258,8 +6262,8 @@ cp_build_binary_op (const op_location_t &location,
 	  && !processing_template_decl
 	  && sanitize_flags_p (SANITIZE_POINTER_COMPARE))
 	{
-	  op0 = save_expr (op0);
-	  op1 = save_expr (op1);
+	  op0 = cp_save_expr (op0);
+	  op1 = cp_save_expr (op1);
 
 	  tree tt = builtin_decl_explicit (BUILT_IN_ASAN_POINTER_COMPARE);
 	  instrument_expr = build_call_expr_loc (location, tt, 2, op0, op1);
@@ -6519,14 +6523,14 @@ cp_build_binary_op (const op_location_t &location,
 	    return error_mark_node;
 	  if (first_complex)
 	    {
-	      op0 = save_expr (op0);
+	      op0 = cp_save_expr (op0);
 	      real = cp_build_unary_op (REALPART_EXPR, op0, true, complain);
 	      imag = cp_build_unary_op (IMAGPART_EXPR, op0, true, complain);
 	      switch (code)
 		{
 		case MULT_EXPR:
 		case TRUNC_DIV_EXPR:
-		  op1 = save_expr (op1);
+		  op1 = cp_save_expr (op1);
 		  imag = build2 (resultcode, real_type, imag, op1);
 		  /* Fall through.  */
 		case PLUS_EXPR:
@@ -6539,13 +6543,13 @@ cp_build_binary_op (const op_location_t &location,
 	    }
 	  else
 	    {
-	      op1 = save_expr (op1);
+	      op1 = cp_save_expr (op1);
 	      real = cp_build_unary_op (REALPART_EXPR, op1, true, complain);
 	      imag = cp_build_unary_op (IMAGPART_EXPR, op1, true, complain);
 	      switch (code)
 		{
 		case MULT_EXPR:
-		  op0 = save_expr (op0);
+		  op0 = cp_save_expr (op0);
 		  imag = build2 (resultcode, real_type, op0, imag);
 		  /* Fall through.  */
 		case PLUS_EXPR:
@@ -11464,6 +11468,12 @@ check_return_expr (tree retval, bool *no_warning, bool *dangling)
       /* The call in a (lambda) thunk needs no conversions.  */
       if (TREE_CODE (retval) == CALL_EXPR
 	  && call_from_lambda_thunk_p (retval))
+	converted = true;
+
+      /* Don't check copy-initialization for NRV in a coroutine ramp; we
+	 implement this case as NRV, but it's specified as directly
+	 initializing the return value from get_return_object().  */
+      if (DECL_RAMP_P (current_function_decl) && named_return_value_okay_p)
 	converted = true;
 
       /* First convert the value to the function's return type, then

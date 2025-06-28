@@ -49,7 +49,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "pretty-print-urlifier.h"
 #include "logical-location.h"
 #include "diagnostic-buffer.h"
-#include "make-unique.h"
 
 #ifdef HAVE_TERMIOS_H
 # include <termios.h>
@@ -223,7 +222,7 @@ diagnostic_context::initialize (int n_opts)
 {
   /* Allocate a basic pretty-printer.  Clients will replace this a
      much more elaborated pretty-printer if they wish.  */
-  m_reference_printer = ::make_unique<pretty_printer> ().release ();
+  m_reference_printer = std::make_unique<pretty_printer> ().release ();
 
   m_file_cache = new file_cache ();
   m_diagnostic_counters.clear ();
@@ -251,10 +250,13 @@ diagnostic_context::initialize (int n_opts)
   m_internal_error = nullptr;
   m_adjust_diagnostic_info = nullptr;
   m_text_callbacks.m_begin_diagnostic = default_diagnostic_text_starter;
-  m_text_callbacks.m_start_span = default_diagnostic_start_span_fn;
+  m_text_callbacks.m_text_start_span
+    = default_diagnostic_start_span_fn<to_text>;
+  m_text_callbacks.m_html_start_span
+    = default_diagnostic_start_span_fn<to_html>;
   m_text_callbacks.m_end_diagnostic = default_diagnostic_text_finalizer;
   m_option_mgr = nullptr;
-  m_urlifier = nullptr;
+  m_urlifier_stack = new auto_vec<urlifier_stack_node> ();
   m_last_location = UNKNOWN_LOCATION;
   m_client_aux_data = nullptr;
   m_lock = 0;
@@ -283,6 +285,7 @@ diagnostic_context::initialize (int n_opts)
   m_diagnostic_groups.m_group_nesting_depth = 0;
   m_diagnostic_groups.m_diagnostic_nesting_level = 0;
   m_diagnostic_groups.m_emission_count = 0;
+  m_diagnostic_groups.m_inhibiting_notes_from = 0;
   m_output_sinks.safe_push
     (new diagnostic_text_output_format (*this, nullptr, true));
   m_set_locations_cb = nullptr;
@@ -424,8 +427,13 @@ diagnostic_context::finish ()
   delete m_option_mgr;
   m_option_mgr = nullptr;
 
-  delete m_urlifier;
-  m_urlifier = nullptr;
+  if (m_urlifier_stack)
+    {
+      while (!m_urlifier_stack->is_empty ())
+	pop_urlifier ();
+      delete m_urlifier_stack;
+      m_urlifier_stack = nullptr;
+    }
 
   freeargv (m_original_argv);
   m_original_argv = nullptr;
@@ -517,6 +525,13 @@ diagnostic_context::supports_fnotice_on_stderr_p () const
 }
 
 void
+diagnostic_context::set_main_input_filename (const char *filename)
+{
+  for (auto sink : m_output_sinks)
+    sink->set_main_input_filename (filename);
+}
+
+void
 diagnostic_context::
 set_client_data_hooks (std::unique_ptr<diagnostic_client_data_hooks> hooks)
 {
@@ -549,12 +564,50 @@ set_option_manager (std::unique_ptr<diagnostic_option_manager> mgr,
 }
 
 void
-diagnostic_context::set_urlifier (std::unique_ptr<urlifier> urlifier)
+diagnostic_context::push_owned_urlifier (std::unique_ptr<urlifier> ptr)
 {
-  delete m_urlifier;
-  /* Ideally the field would be a std::unique_ptr here.  */
-  m_urlifier = urlifier.release ();
+  gcc_assert (m_urlifier_stack);
+  const urlifier_stack_node node = { ptr.release (), true };
+  m_urlifier_stack->safe_push (node);
 }
+
+void
+diagnostic_context::push_borrowed_urlifier (const urlifier &loan)
+{
+  gcc_assert (m_urlifier_stack);
+  const urlifier_stack_node node = { const_cast <urlifier *> (&loan), false };
+  m_urlifier_stack->safe_push (node);
+}
+
+void
+diagnostic_context::pop_urlifier ()
+{
+  gcc_assert (m_urlifier_stack);
+  gcc_assert (m_urlifier_stack->length () > 0);
+
+  const urlifier_stack_node node = m_urlifier_stack->pop ();
+  if (node.m_owned)
+    delete node.m_urlifier;
+}
+
+const logical_location_manager *
+diagnostic_context::get_logical_location_manager () const
+{
+  if (!m_client_data_hooks)
+    return nullptr;
+  return m_client_data_hooks->get_logical_location_manager ();
+}
+
+const urlifier *
+diagnostic_context::get_urlifier () const
+{
+  if (!m_urlifier_stack)
+    return nullptr;
+  if (m_urlifier_stack->is_empty ())
+    return nullptr;
+  return m_urlifier_stack->last ().m_urlifier;
+}
+
 
 /* Set PP as the reference printer for this context.
    Refresh all output sinks.  */
@@ -603,14 +656,6 @@ diagnostic_context::set_prefixing_rule (diagnostic_prefixing_rule_t rule)
   for (auto sink : m_output_sinks)
     if (sink->follows_reference_printer_p ())
       pp_prefixing_rule (sink->get_printer ()) = rule;
-}
-
-/* Set the urlifier without deleting the existing one.  */
-
-void
-diagnostic_context::override_urlifier (urlifier *urlifier)
-{
-  m_urlifier = urlifier;
 }
 
 void
@@ -891,6 +936,7 @@ diagnostic_context::check_max_errors (bool flush)
 
 /* Take any action which is expected to happen after the diagnostic
    is written out.  This function does not always return.  */
+
 void
 diagnostic_context::action_after_output (diagnostic_t diag_kind)
 {
@@ -965,45 +1011,74 @@ diagnostic_context::action_after_output (diagnostic_t diag_kind)
     }
 }
 
-/* class logical_location.  */
+/* State whether we should inhibit notes in the current diagnostic_group and
+   its future children if any.  */
+
+void
+diagnostic_context::inhibit_notes_in_group (bool inhibit)
+{
+  int curr_depth = (m_diagnostic_groups.m_group_nesting_depth
+		    + m_diagnostic_groups.m_diagnostic_nesting_level);
+
+  if (inhibit)
+    {
+      /* If we're already inhibiting, there's nothing to do.  */
+      if (m_diagnostic_groups.m_inhibiting_notes_from)
+	return;
+
+      /* Since we're called via warning/error/... that all have their own
+	 diagnostic_group, we must consider that we started inhibiting in their
+	 parent.  */
+      gcc_assert (m_diagnostic_groups.m_group_nesting_depth > 0);
+      m_diagnostic_groups.m_inhibiting_notes_from = curr_depth - 1;
+    }
+  else if (m_diagnostic_groups.m_inhibiting_notes_from)
+    {
+      /* Only cancel inhibition at the depth that set it up.  */
+      if (curr_depth >= m_diagnostic_groups.m_inhibiting_notes_from)
+	return;
+
+      m_diagnostic_groups.m_inhibiting_notes_from = 0;
+    }
+}
+
+/* Return whether notes must be inhibited in the current diagnostic_group.  */
+
+bool
+diagnostic_context::notes_inhibited_in_group () const
+{
+  if (m_diagnostic_groups.m_inhibiting_notes_from
+      && (m_diagnostic_groups.m_group_nesting_depth
+	  + m_diagnostic_groups.m_diagnostic_nesting_level
+	  >= m_diagnostic_groups.m_inhibiting_notes_from))
+    return true;
+  return false;
+}
+
+/* class logical_location_manager.  */
 
 /* Return true iff this is a function or method.  */
 
 bool
-logical_location::function_p () const
+logical_location_manager::function_p (key k) const
 {
-  switch (get_kind ())
+  switch (get_kind (k))
     {
     default:
       gcc_unreachable ();
-    case LOGICAL_LOCATION_KIND_UNKNOWN:
-    case LOGICAL_LOCATION_KIND_MODULE:
-    case LOGICAL_LOCATION_KIND_NAMESPACE:
-    case LOGICAL_LOCATION_KIND_TYPE:
-    case LOGICAL_LOCATION_KIND_RETURN_TYPE:
-    case LOGICAL_LOCATION_KIND_PARAMETER:
-    case LOGICAL_LOCATION_KIND_VARIABLE:
+    case logical_location_kind::unknown:
+    case logical_location_kind::module_:
+    case logical_location_kind::namespace_:
+    case logical_location_kind::type:
+    case logical_location_kind::return_type:
+    case logical_location_kind::parameter:
+    case logical_location_kind::variable:
       return false;
 
-    case LOGICAL_LOCATION_KIND_FUNCTION:
-    case LOGICAL_LOCATION_KIND_MEMBER:
+    case logical_location_kind::function:
+    case logical_location_kind::member:
       return true;
     }
-}
-
-void
-default_diagnostic_start_span_fn (const diagnostic_location_print_policy &loc_policy,
-				  pretty_printer *pp,
-				  expanded_location exploc)
-{
-  const diagnostic_column_policy &column_policy
-    = loc_policy.get_column_policy ();
-  label_text text
-    = column_policy.get_location_text (exploc,
-				       loc_policy.show_column_p (),
-				       pp_show_color (pp));
-  pp_string (pp, text.get ());
-  pp_newline (pp);
 }
 
 /* Interface to specify diagnostic kind overrides.  Returns the
@@ -1355,7 +1430,10 @@ diagnostic_context::report_diagnostic (diagnostic_info *diagnostic)
   bool was_warning = (diagnostic->kind == DK_WARNING
 		      || diagnostic->kind == DK_PEDWARN);
   if (was_warning && m_inhibit_warnings)
-    return false;
+    {
+      inhibit_notes_in_group ();
+      return false;
+    }
 
   if (m_adjust_diagnostic_info)
     m_adjust_diagnostic_info (this, diagnostic);
@@ -1371,18 +1449,6 @@ diagnostic_context::report_diagnostic (diagnostic_info *diagnostic)
   if (diagnostic->kind == DK_NOTE && m_inhibit_notes_p)
     return false;
 
-  if (m_lock > 0)
-    {
-      /* If we're reporting an ICE in the middle of some other error,
-	 try to flush out the previous error, then let this one
-	 through.  Don't do this more than once.  */
-      if ((diagnostic->kind == DK_ICE || diagnostic->kind == DK_ICE_NOBT)
-	  && m_lock == 1)
-	pp_newline_and_flush (m_reference_printer);
-      else
-	error_recursion ();
-    }
-
   /* If the user requested that warnings be treated as errors, so be
      it.  Note that we do this before the next block so that
      individual warnings can be overridden back to warnings with
@@ -1397,7 +1463,10 @@ diagnostic_context::report_diagnostic (diagnostic_info *diagnostic)
      not disabled by #pragma GCC diagnostic anywhere along the inlining
      stack.  .  */
   if (!diagnostic_enabled (diagnostic))
-    return false;
+    {
+      inhibit_notes_in_group ();
+      return false;
+    }
 
   if ((was_warning || diagnostic->kind == DK_WARNING)
       && ((!m_warn_system_headers
@@ -1407,8 +1476,27 @@ diagnostic_context::report_diagnostic (diagnostic_info *diagnostic)
        inlining stack (if there is one) are in system headers.  */
     return false;
 
+  if (diagnostic->kind == DK_NOTE && notes_inhibited_in_group ())
+    /* Bail for all the notes in the diagnostic_group that started to inhibit notes.  */
+    return false;
+
   if (diagnostic->kind != DK_NOTE && diagnostic->kind != DK_ICE)
     check_max_errors (false);
+
+  if (m_lock > 0)
+    {
+      /* If we're reporting an ICE in the middle of some other error,
+	 try to flush out the previous error, then let this one
+	 through.  Don't do this more than once.  */
+      if ((diagnostic->kind == DK_ICE || diagnostic->kind == DK_ICE_NOBT)
+	  && m_lock == 1)
+	pp_newline_and_flush (m_reference_printer);
+      else
+	error_recursion ();
+    }
+
+  /* We are accepting the diagnostic, so should stop inhibiting notes.  */
+  inhibit_notes_in_group (/*inhibit=*/false);
 
   m_lock++;
 
@@ -1743,6 +1831,8 @@ diagnostic_context::end_group ()
 	  sink->on_end_group ();
       m_diagnostic_groups.m_emission_count = 0;
     }
+  /* We're popping one level, so might need to stop inhibiting notes.  */
+  inhibit_notes_in_group (/*inhibit=*/false);
 }
 
 void
@@ -1755,6 +1845,8 @@ void
 diagnostic_context::pop_nesting_level ()
 {
   --m_diagnostic_groups.m_diagnostic_nesting_level;
+  /* We're popping one level, so might need to stop inhibiting notes.  */
+  inhibit_notes_in_group (/*inhibit=*/false);
 }
 
 void
@@ -1780,6 +1872,7 @@ diagnostic_output_format_init (diagnostic_context &context,
 			       enum diagnostics_output_format format,
 			       bool json_formatting)
 {
+  diagnostic_output_format *new_sink = nullptr;
   switch (format)
     {
     default:
@@ -1789,33 +1882,31 @@ diagnostic_output_format_init (diagnostic_context &context,
       break;
 
     case DIAGNOSTICS_OUTPUT_FORMAT_JSON_STDERR:
-      diagnostic_output_format_init_json_stderr (context,
-						 json_formatting);
+      new_sink = &diagnostic_output_format_init_json_stderr (context,
+							     json_formatting);
       break;
 
     case DIAGNOSTICS_OUTPUT_FORMAT_JSON_FILE:
-      diagnostic_output_format_init_json_file (context,
-					       json_formatting,
-					       base_file_name);
+      new_sink = &diagnostic_output_format_init_json_file (context,
+							   json_formatting,
+							   base_file_name);
       break;
 
     case DIAGNOSTICS_OUTPUT_FORMAT_SARIF_STDERR:
-      diagnostic_output_format_init_sarif_stderr (context,
-						  line_table,
-						  main_input_filename_,
-						  json_formatting,
-						  sarif_version::v2_1_0);
+      new_sink = &diagnostic_output_format_init_sarif_stderr (context,
+							      line_table,
+							      json_formatting);
       break;
 
     case DIAGNOSTICS_OUTPUT_FORMAT_SARIF_FILE:
-      diagnostic_output_format_init_sarif_file (context,
-						line_table,
-						main_input_filename_,
-						json_formatting,
-						sarif_version::v2_1_0,
-						base_file_name);
+      new_sink = &diagnostic_output_format_init_sarif_file (context,
+							line_table,
+							    json_formatting,
+							    base_file_name);
       break;
     }
+  if (new_sink)
+    new_sink->set_main_input_filename (main_input_filename_);
 }
 
 /* Initialize this context's m_diagrams based on CHARSET.

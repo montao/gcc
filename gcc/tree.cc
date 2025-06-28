@@ -326,6 +326,7 @@ unsigned const char omp_clause_num_ops[] =
   2, /* OMP_CLAUSE_MAP  */
   1, /* OMP_CLAUSE_HAS_DEVICE_ADDR  */
   1, /* OMP_CLAUSE_DOACROSS  */
+  3, /* OMP_CLAUSE__MAPPER_BINDING_  */
   2, /* OMP_CLAUSE__CACHE_  */
   1, /* OMP_CLAUSE_DESTROY  */
   2, /* OMP_CLAUSE_INIT  */
@@ -428,6 +429,7 @@ const char * const omp_clause_code_name[] =
   "map",
   "has_device_addr",
   "doacross",
+  "_mapper_binding_",
   "_cache_",
   "destroy",
   "init",
@@ -786,6 +788,57 @@ init_ttree (void)
 }
 
 
+/* Mapping from prefix to label number.  */
+
+struct identifier_hash : ggc_ptr_hash <tree_node>
+{
+  static inline hashval_t hash (tree t)
+  {
+    return IDENTIFIER_HASH_VALUE (t);
+  }
+};
+struct identifier_count_traits
+  : simple_hashmap_traits<identifier_hash, long> {};
+typedef hash_map<tree, long, identifier_count_traits> internal_label_map;
+static GTY(()) internal_label_map *internal_label_nums;
+
+/* Generates an identifier intended to be used internally with the
+   given PREFIX.  This is intended to be used by the frontend so that
+   C++ modules can regenerate appropriate (non-clashing) identifiers on
+   stream-in.  */
+
+tree
+generate_internal_label (const char *prefix)
+{
+  tree prefix_id = get_identifier (prefix);
+  if (!internal_label_nums)
+    internal_label_nums = internal_label_map::create_ggc();
+  long &num = internal_label_nums->get_or_insert (prefix_id);
+
+  char tmp[32];
+  ASM_GENERATE_INTERNAL_LABEL (tmp, prefix, num++);
+
+  tree id = get_identifier (tmp);
+  IDENTIFIER_INTERNAL_P (id) = true;
+
+  /* Cache the prefix on the identifier so we can retrieve it later.  */
+  TREE_CHAIN (id) = prefix_id;
+
+  return id;
+}
+
+/* Get the PREFIX we created the internal identifier LABEL with.  */
+
+const char *
+prefix_for_internal_label (tree label)
+{
+  gcc_assert (IDENTIFIER_INTERNAL_P (label)
+	      && !IDENTIFIER_TRANSPARENT_ALIAS (label)
+	      && TREE_CHAIN (label)
+	      && TREE_CODE (TREE_CHAIN (label)) == IDENTIFIER_NODE);
+  return IDENTIFIER_POINTER (TREE_CHAIN (label));
+}
+
 /* The name of the object as the assembler will see it (but before any
    translations made by ASM_OUTPUT_LABELREF).  Often this is the same
    as DECL_NAME.  It is an IDENTIFIER_NODE.  */
@@ -4105,7 +4158,19 @@ skip_simple_arithmetic (tree expr)
 	expr = TREE_OPERAND (expr, 0);
       else if (BINARY_CLASS_P (expr))
 	{
-	  if (tree_invariant_p (TREE_OPERAND (expr, 1)))
+	  /* Before commutative binary operands are canonicalized,
+	     it is quite common to have constants in the first operand.
+	     Check for that common case first so that we don't walk
+	     large expressions with tree_invariant_p unnecessarily.
+	     This can still have terrible compile time complexity,
+	     we should limit the depth of the tree_invariant_p and
+	     skip_simple_arithmetic recursion.  */
+	  if ((TREE_CONSTANT (TREE_OPERAND (expr, 0))
+	       || (TREE_READONLY (TREE_OPERAND (expr, 0))
+		   && !TREE_SIDE_EFFECTS (TREE_OPERAND (expr, 0))))
+	      && tree_invariant_p (TREE_OPERAND (expr, 0)))
+	    expr = TREE_OPERAND (expr, 1);
+	  else if (tree_invariant_p (TREE_OPERAND (expr, 1)))
 	    expr = TREE_OPERAND (expr, 0);
 	  else if (tree_invariant_p (TREE_OPERAND (expr, 0)))
 	    expr = TREE_OPERAND (expr, 1);
@@ -8757,20 +8822,6 @@ tree_builtin_call_types_compatible_p (const_tree call, tree fndecl)
 	      && POINTER_TYPE_P (type)
 	      && POINTER_TYPE_P (TREE_TYPE (arg))
 	      && tree_nop_conversion_p (type, TREE_TYPE (arg)))
-	    continue;
-	  /* char/short integral arguments are promoted to int
-	     by several frontends if targetm.calls.promote_prototypes
-	     is true.  Allow such promotion too.  */
-	  if (INTEGRAL_TYPE_P (type)
-	      && TYPE_PRECISION (type) < TYPE_PRECISION (integer_type_node)
-	      && INTEGRAL_TYPE_P (TREE_TYPE (arg))
-	      && !TYPE_UNSIGNED (TREE_TYPE (arg))
-	      && targetm.calls.promote_prototypes (TREE_TYPE (fndecl))
-	      && (gimple_form
-		  ? useless_type_conversion_p (integer_type_node,
-					       TREE_TYPE (arg))
-		  : tree_nop_conversion_p (integer_type_node,
-					   TREE_TYPE (arg))))
 	    continue;
 	  return false;
 	}
@@ -14613,10 +14664,11 @@ verify_type (const_tree t)
 
 /* Return 1 if ARG interpreted as signed in its precision is known to be
    always non-negative or 2 if ARG is known to be always negative, or 3 if
-   ARG may be non-negative or negative.  */
+   ARG may be non-negative or negative.  STMT if specified is the statement
+   on which it is being tested.  */
 
 int
-get_range_pos_neg (tree arg)
+get_range_pos_neg (tree arg, gimple *stmt)
 {
   if (arg == error_mark_node)
     return 3;
@@ -14649,7 +14701,7 @@ get_range_pos_neg (tree arg)
   if (TREE_CODE (arg) != SSA_NAME)
     return 3;
   int_range_max r;
-  while (!get_global_range_query ()->range_of_expr (r, arg)
+  while (!get_range_query (cfun)->range_of_expr (r, arg, stmt)
 	 || r.undefined_p () || r.varying_p ())
     {
       gimple *g = SSA_NAME_DEF_STMT (arg);
@@ -15318,15 +15370,17 @@ get_attr_nonstring_decl (tree expr, tree *ref)
      DECL.  */
   if (var)
     decl = var;
-  else if (TREE_CODE (decl) == ARRAY_REF)
-    decl = TREE_OPERAND (decl, 0);
-  else if (TREE_CODE (decl) == COMPONENT_REF)
-    decl = TREE_OPERAND (decl, 1);
-  else if (TREE_CODE (decl) == MEM_REF)
-    return get_attr_nonstring_decl (TREE_OPERAND (decl, 0), ref);
+  else
+    {
+      while (TREE_CODE (decl) == ARRAY_REF)
+	decl = TREE_OPERAND (decl, 0);
+      if (TREE_CODE (decl) == COMPONENT_REF)
+	decl = TREE_OPERAND (decl, 1);
+      else if (TREE_CODE (decl) == MEM_REF)
+	return get_attr_nonstring_decl (TREE_OPERAND (decl, 0), ref);
+    }
 
-  if (DECL_P (decl)
-      && lookup_attribute ("nonstring", DECL_ATTRIBUTES (decl)))
+  if (DECL_P (decl) && lookup_attribute ("nonstring", DECL_ATTRIBUTES (decl)))
     return decl;
 
   return NULL_TREE;

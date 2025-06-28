@@ -1,3 +1,150 @@
+2025-06-27  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/120777
+	* c-cppbuiltin.cc (c_cpp_builtins): Predefine
+	__cpp_constexpr_virtual_inheritance=202506L for C++26.
+
+2025-06-26  David Malcolm  <dmalcolm@redhat.com>
+
+	* c-opts.cc (c_common_diagnostics_set_defaults): Use
+	diagnostic_context::set_permissive_option.
+
+2025-06-23  Tobias Burnus  <tburnus@baylibre.com>
+
+	* c-omp.cc (c_finish_oacc_wait): Handle if clause.
+
+2025-06-16  Jason Merrill  <jason@redhat.com>
+
+	* c.opt: Add -Wsfinae-incomplete.
+	* c.opt.urls: Regenerate.
+
+2025-06-12  Gwenole Beauchesne  <gb.devel@gmail.com>
+	    Andrew Pinski  <quic_apinski@quicinc.com>
+
+	PR c++/41201
+	PR c++/48026
+	* c-pragma.cc (init_pragma): Use c_register_pragma_with_early_handler
+	instead of c_register_pragma for `#pragma GCC optimize`.
+
+2025-06-03  Martin Uecker  <uecker@tugraz.at>
+
+	PR c/120078
+	* c.opt (Wjump-misses-init): Fix typo.
+
+2025-05-30  Julian Brown  <julian@codesourcery.com>
+	    Tobias Burnus  <tburnus@baylibre.com>
+
+	* c-common.h (c_omp_region_type): Add C_ORT_DECLARE_MAPPER and
+	C_ORT_OMP_DECLARE_MAPPER codes.
+	(omp_mapper_list): Add forward declaration.
+	(c_omp_find_nested_mappers, c_omp_instantiate_mappers): Add prototypes.
+	* c-omp.cc (c_omp_find_nested_mappers): New function.
+	(remap_mapper_decl_info): New struct.
+	(remap_mapper_decl_1, omp_instantiate_mapper,
+	c_omp_instantiate_mappers): New functions.
+
+2025-05-27  Alejandro Colomar  <alx@kernel.org>
+	    Martin Uecker  <uecker@tugraz.at>
+
+	PR c/117025
+	* c-common.h (enum rid): Add RID_COUNTOF.
+	(c_countof_type): New function prototype.
+	* c-common.def (COUNTOF_EXPR): New tree.
+	* c-common.cc (c_common_reswords): Add RID_COUNTOF entry.
+	(c_countof_type): New function.
+
+2025-05-23  Jason Merrill  <jason@redhat.com>
+
+	* c-format.cc (flag_chars_t::validate): Control quoting warnings
+	with -Wformat-diag.
+
+2025-05-15  Jason Merrill  <jason@redhat.com>
+
+	* c-opts.cc (c_common_post_options): Set flag_coroutines.
+	(set_std_cxx20, set_std_cxx23, set_std_cxx26): Not here.
+
+2025-05-03  Jason Merrill  <jason@redhat.com>
+
+	* c-opts.cc (c_common_post_options): Let plain -Wabi warn
+	about changes in a future version.
+
+2025-04-28  David Malcolm  <dmalcolm@redhat.com>
+
+	* c-pretty-print.cc: Drop include of "make-unique.h".
+	Replace uses of ::make_unique with std::make_unique.
+
+2025-04-28  David Malcolm  <dmalcolm@redhat.com>
+
+	* name-hint.h (name_hint::name_hint): Use std::unique_ptr for
+	param.
+
+2025-04-28  Lewis Hyatt  <lhyatt@gmail.com>
+
+	PR c/118838
+	* c-lex.cc (cb_def_pragma): Call cpp_get_diagnostic_override_loc()
+	to get a valid location at which to issue -Wunknown-pragmas, in case
+	it was triggered from a _Pragma.
+
+2025-04-25  Jason Merrill  <jason@redhat.com>
+
+	* c-opts.cc (c_common_post_options): Bump default ABI to 21
+	and compat ABI to 18.
+
+2025-04-06  Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* c.opt.urls: Regenerate.
+
+2025-04-06  Sandra Loosemore  <sloosemore@baylibre.com>
+
+	PR c/81831
+	* c.opt (Wpsabi): Remove "Undocumented" modifier and add a
+	documentation string.
+
+2025-04-03  Jakub Jelinek  <jakub@redhat.com>
+
+	* c.opt.urls: Regenerate.
+
+2025-03-30  Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* c.opt.urls: Regenerate.
+
+2025-03-22  Jakub Jelinek  <jakub@redhat.com>
+
+	* c.opt (Wdeprecated-literal-operator): Use \"\" rather than ""
+	in option description.
+
+2025-03-18  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/116545
+	* c-attribs.cc (c_common_clang_attributes): Add musttail.
+
+2025-03-14  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/119120
+	* c-gimplify.cc (c_genericize_control_r): Set DECL_NOT_GIMPLE_REG_P
+	on {REAL,IMAG}PART_EXPR is_gimple_reg operand at -O0 if it is lhs
+	of a MODIFY_EXPR.
+
+2025-03-13  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/119265
+	* c-ada-spec.cc (dump_ada_node) <INTEGER_TYPE>: Deal with typedefs
+	of unsigned __int128.
+
+2025-03-07  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/117178
+	* c-attribs.cc (handle_nonstring_attribute): Allow the attribute also
+	on multi-dimensional arrays with char/signed char/unsigned char
+	element type or pointers to such single and multi-dimensional arrays.
+
+2025-03-07  Kees Cook  <kees@kernel.org>
+	    Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/117178
+	* c.opt (Wunterminated-string-initialization): Don't depend on
+	-Wc++-compat.
+
 2025-03-05  Marek Polacek  <polacek@redhat.com>
 
 	PR c++/115580

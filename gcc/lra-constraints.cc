@@ -152,6 +152,9 @@ static machine_mode curr_operand_mode[MAX_RECOG_OPERANDS];
    (e.g. constant) and whose subreg is given operand of the current
    insn.  VOIDmode in all other cases.  */
 static machine_mode original_subreg_reg_mode[MAX_RECOG_OPERANDS];
+/* The first call insn after curr_insn within the EBB during inherit_in_ebb
+   or NULL outside of that function.  */
+static rtx_insn *first_call_insn;
 
 
 
@@ -1196,8 +1199,7 @@ match_reload (signed char out, signed char *ins, signed char *outs,
      accurate.  */
   narrow_reload_pseudo_class (in_rtx, goal_class);
   lra_emit_move (copy_rtx (new_in_reg), in_rtx);
-  *before = get_insns ();
-  end_sequence ();
+  *before = end_sequence ();
   /* Add the new pseudo to consider values of subsequent input reload
      pseudos.  */
   lra_assert (curr_insn_input_reloads_num < LRA_MAX_INSN_RELOADS);
@@ -1232,8 +1234,7 @@ match_reload (signed char out, signed char *ins, signed char *outs,
 	out_rtx = gen_rtx_STRICT_LOW_PART (VOIDmode, out_rtx);
       lra_emit_move (out_rtx, copy_rtx (new_out_reg));
       emit_insn (*after);
-      *after = get_insns ();
-      end_sequence ();
+      *after = end_sequence ();
     }
   *curr_id->operand_loc[out] = new_out_reg;
   lra_update_dup (curr_id, out);
@@ -1441,8 +1442,7 @@ check_and_process_move (bool *change_p, bool *sec_mem_p ATTRIBUTE_UNUSED)
       emit_insn (GEN_FCN (sri.icode) (new_reg != NULL_RTX ? new_reg : dest,
 				      src, scratch_reg));
     }
-  before = get_insns ();
-  end_sequence ();
+  before = end_sequence ();
   lra_process_new_insns (curr_insn, before, NULL, "Inserting the move");
   if (new_reg != NULL_RTX)
     SET_SRC (curr_insn_set) = new_reg;
@@ -1609,8 +1609,7 @@ process_addr_reg (rtx *loc, bool check_only_p, rtx_insn **before, rtx_insn **aft
     {
       push_to_sequence (*before);
       lra_emit_move (new_reg, reg);
-      *before = get_insns ();
-      end_sequence ();
+      *before = end_sequence ();
     }
   *loc = new_reg;
   if (after != NULL)
@@ -1618,8 +1617,7 @@ process_addr_reg (rtx *loc, bool check_only_p, rtx_insn **before, rtx_insn **aft
       start_sequence ();
       lra_emit_move (before_p ? copy_rtx (reg) : reg, new_reg);
       emit_insn (*after);
-      *after = get_insns ();
-      end_sequence ();
+      *after = end_sequence ();
     }
   return true;
 }
@@ -1636,16 +1634,14 @@ insert_move_for_subreg (rtx_insn **before, rtx_insn **after, rtx origreg,
     {
       push_to_sequence (*before);
       lra_emit_move (newreg, origreg);
-      *before = get_insns ();
-      end_sequence ();
+      *before = end_sequence ();
     }
   if (after)
     {
       start_sequence ();
       lra_emit_move (origreg, newreg);
       emit_insn (*after);
-      *after = get_insns ();
-      end_sequence ();
+      *after = end_sequence ();
     }
 }
 
@@ -4033,8 +4029,7 @@ process_address_1 (int nop, bool check_only_p,
       lra_emit_move (new_reg, addr);
       *ad.inner = new_reg;
     }
-  *before = get_insns ();
-  end_sequence ();
+  *before = end_sequence ();
   return true;
 }
 
@@ -4443,8 +4438,7 @@ curr_insn_transform (bool check_only_p)
 	  push_to_sequence (before);
 	  before = emit_spill_move (true, new_reg, src);
 	  emit_insn (before);
-	  before = get_insns ();
-	  end_sequence ();
+	  before = end_sequence ();
 	  lra_process_new_insns (curr_insn, before, NULL, "Changing on");
 	  lra_set_insn_deleted (curr_insn);
 	}
@@ -4464,8 +4458,7 @@ curr_insn_transform (bool check_only_p)
 	  push_to_sequence (before);
 	  before = emit_spill_move (true, new_reg, src);
 	  emit_insn (before);
-	  before = get_insns ();
-	  end_sequence ();
+	  before = end_sequence ();
 	  lra_process_new_insns (curr_insn, before, NULL,
 				 "Inserting the sec. move");
 	}
@@ -4736,8 +4729,7 @@ curr_insn_transform (bool check_only_p)
 	      if (align_p)
 		emit_move_insn (new_reg, gen_rtx_AND (GET_MODE (new_reg), new_reg, XEXP (*loc, 1)));
 	    }
-	  before = get_insns ();
-	  end_sequence ();
+	  before = end_sequence ();
 	  *loc = new_reg;
 	  lra_update_dup (curr_id, i);
 	}
@@ -4810,8 +4802,7 @@ curr_insn_transform (bool check_only_p)
 	    {
 	      push_to_sequence (before);
 	      lra_emit_move (new_reg, old);
-	      before = get_insns ();
-	      end_sequence ();
+	      before = end_sequence ();
 	    }
 	  *loc = new_reg;
 	  if (type != OP_IN
@@ -4822,8 +4813,7 @@ curr_insn_transform (bool check_only_p)
 	      start_sequence ();
 	      lra_emit_move (type == OP_INOUT ? copy_rtx (old) : old, new_reg);
 	      emit_insn (after);
-	      after = get_insns ();
-	      end_sequence ();
+	      after = end_sequence ();
 	      *loc = new_reg;
 	    }
 	  for (j = 0; j < goal_alt_dont_inherit_ops_num; j++)
@@ -5965,8 +5955,7 @@ inherit_reload_reg (bool def_p, int original_regno,
     lra_emit_move (original_reg, new_reg);
   else
     lra_emit_move (new_reg, original_reg);
-  new_insns = get_insns ();
-  end_sequence ();
+  new_insns = end_sequence ();
   if (NEXT_INSN (new_insns) != NULL_RTX)
     {
       if (lra_dump_file != NULL)
@@ -6373,12 +6362,26 @@ split_reg (bool before_p, int original_regno, rtx_insn *insn,
   lra_process_new_insns (as_a <rtx_insn *> (usage_insn),
 			 after_p ? NULL : restore,
 			 after_p ? restore : NULL,
-			 call_save_p
-			 ?  "Add reg<-save" : "Add reg<-split");
-  lra_process_new_insns (insn, before_p ? save : NULL,
-			 before_p ? NULL : save,
-			 call_save_p
-			 ?  "Add save<-reg" : "Add split<-reg");
+			 call_save_p ? "Add reg<-save" : "Add reg<-split");
+  if (call_save_p
+      && first_call_insn != NULL
+      && BLOCK_FOR_INSN (first_call_insn) != BLOCK_FOR_INSN (insn))
+    /* PR116028: If original_regno is a pseudo that has been assigned a
+       callee-saved hard register, then emit the spill insn before the call
+       insn 'first_call_insn' instead of adjacent to 'insn'.  If 'insn'
+       and 'first_call_insn' belong to the same EBB but to two separate
+       BBs, and if 'insn' is present in the entry BB, then generating the
+       spill insn in the entry BB can prevent shrink wrap from happening.
+       This is because the spill insn references the stack pointer and
+       hence the prolog gets generated in the entry BB itself.  It is
+       also more efficient to generate the spill before
+       'first_call_insn' as the spill now occurs only in the path
+       containing the call.  */
+    lra_process_new_insns (first_call_insn, save, NULL, "Add save<-reg");
+  else
+    lra_process_new_insns (insn, before_p ? save : NULL,
+			   before_p ? NULL : save,
+			   call_save_p ? "Add save<-reg" : "Add split<-reg");
   if (nregs > 1 || original_regno < FIRST_PSEUDO_REGISTER)
     /* If we are trying to split multi-register.  We should check
        conflicts on the next assignment sub-pass.  IRA can allocate on
@@ -6484,7 +6487,7 @@ split_if_necessary (int regno, machine_mode mode,
 		&& (INSN_UID (XEXP (next_usage_insns, 0)) < max_uid)))
 	&& need_for_split_p (potential_reload_hard_regs, regno + i)
 	&& split_reg (before_p, regno + i, insn, next_usage_insns, NULL))
-    res = true;
+      res = true;
   return res;
 }
 
@@ -6591,14 +6594,12 @@ process_invariant_for_inheritance (rtx dst_reg, rtx invariant_rtx)
 	  lra_reg_info[REGNO (new_reg)].restore_rtx = PATTERN (insn);
 	  start_sequence ();
 	  lra_emit_move (new_reg, dst_reg);
-	  new_insns = get_insns ();
-	  end_sequence ();
+	  new_insns = end_sequence ();
 	  lra_process_new_insns (curr_insn, NULL, new_insns,
 				 "Add invariant inheritance<-original");
 	  start_sequence ();
 	  lra_emit_move (SET_DEST (insn_set), new_reg);
-	  new_insns = get_insns ();
-	  end_sequence ();
+	  new_insns = end_sequence ();
 	  lra_process_new_insns (insn, NULL, new_insns,
 				 "Changing reload<-inheritance");
 	  lra_set_insn_deleted (insn);
@@ -7074,6 +7075,7 @@ inherit_in_ebb (rtx_insn *head, rtx_insn *tail)
 	      last_call_for_abi[callee_abi.id ()] = calls_num;
 	      full_and_partial_call_clobbers
 		|= callee_abi.full_and_partial_reg_clobbers ();
+	      first_call_insn = curr_insn;
 	      if ((cheap = find_reg_note (curr_insn,
 					  REG_RETURNED, NULL_RTX)) != NULL_RTX
 		  && ((cheap = XEXP (cheap, 0)), true)
@@ -7099,8 +7101,7 @@ inherit_in_ebb (rtx_insn *head, rtx_insn *tail)
 		    {
 		      start_sequence ();
 		      emit_move_insn (cheap, copy_rtx (dest));
-		      restore = get_insns ();
-		      end_sequence ();
+		      restore = end_sequence ();
 		      lra_process_new_insns (curr_insn, NULL, restore,
 					     "Inserting call parameter restore");
 		      /* We don't need to save/restore of the pseudo from
@@ -7142,6 +7143,7 @@ inherit_in_ebb (rtx_insn *head, rtx_insn *tail)
 		    {
 		      bool before_p;
 		      rtx_insn *use_insn = curr_insn;
+		      rtx_insn *prev_insn = PREV_INSN (curr_insn);
 
 		      before_p = (JUMP_P (curr_insn)
 				  || (CALL_P (curr_insn) && reg->type == OP_IN));
@@ -7156,7 +7158,7 @@ inherit_in_ebb (rtx_insn *head, rtx_insn *tail)
 			  change_p = true;
 			  /* Invalidate. */
 			  usage_insns[src_regno].check = 0;
-			  if (before_p)
+			  if (before_p && PREV_INSN (curr_insn) != prev_insn)
 			    use_insn = PREV_INSN (curr_insn);
 			}
 		      if (NONDEBUG_INSN_P (curr_insn))
@@ -7278,6 +7280,7 @@ inherit_in_ebb (rtx_insn *head, rtx_insn *tail)
 	    }
 	}
     }
+  first_call_insn = NULL;
   return change_p;
 }
 
@@ -7478,8 +7481,7 @@ remove_inheritance_pseudos (bitmap remove_pseudos)
 		  /* We cannot just change the source.  It might be
 		     an insn different from the move.  */
 		  emit_insn (lra_reg_info[sregno].restore_rtx);
-		  rtx_insn *new_insns = get_insns ();
-		  end_sequence ();
+		  rtx_insn *new_insns = end_sequence ();
 		  lra_assert (single_set (new_insns) != NULL
 			      && SET_DEST (set) == SET_DEST (single_set (new_insns)));
 		  lra_process_new_insns (curr_insn, NULL, new_insns,

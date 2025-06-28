@@ -303,7 +303,8 @@ C++ ObjC++ Var(warn_abi_tag) Warning
 Warn if a subobject has an abi_tag attribute that the complete object type does not have.
 
 Wpsabi
-C ObjC C++ ObjC++ LTO Var(warn_psabi) Init(1) Warning Undocumented LangEnabledBy(C ObjC C++ ObjC++,Wabi)
+C ObjC C++ ObjC++ LTO Var(warn_psabi) Init(1) Warning LangEnabledBy(C ObjC C++ ObjC++,Wabi)
+Warn about code affected by incompatible psABI changes.
 
 Wabsolute-value
 C ObjC Var(warn_absolute_value) Warning EnabledBy(Wextra)
@@ -666,7 +667,7 @@ type and the other is of a floating-point type.
 
 Wdeprecated-literal-operator
 C++ ObjC++ Var(warn_deprecated_literal_operator) Warning
-Warn about deprecated space between "" and suffix in a user-defined literal operator.
+Warn about deprecated space between \"\" and suffix in a user-defined literal operator.
 
 Wdeprecated-non-prototype
 C ObjC Var(warn_deprecated_non_prototype) Init(-1) Warning
@@ -937,7 +938,7 @@ C ObjC C++ ObjC++ CPP(cpp_warn_invalid_utf8) CppReason(CPP_W_INVALID_UTF8) Var(w
 Warn about invalid UTF-8 characters.
 
 Wjump-misses-init
-C ObjC Var(warn_jump_misses_init) Warning LangEnabledby(C ObjC,Wc++-compat)
+C ObjC Var(warn_jump_misses_init) Warning LangEnabledBy(C ObjC,Wc++-compat)
 Warn when a jump misses a variable initialization.
 
 Enum
@@ -1318,6 +1319,14 @@ Wsequence-point
 C ObjC C++ ObjC++ Var(warn_sequence_point) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn about possible violations of sequence point rules.
 
+Wsfinae-incomplete=
+C++ ObjC++ Var(warn_sfinae_incomplete) Warning Init(1) Joined RejectNegative UInteger IntegerRange(0, 2)
+Warn about an incomplete type affecting semantics in a non-error context.
+
+Wsfinae-incomplete
+C++ ObjC++ Warning Alias(Wsfinae-incomplete=, 1, 0)
+Warn about an incomplete type affecting semantics in a non-error context.
+
 Wshadow-ivar
 ObjC ObjC++ Var(warn_shadow_ivar) EnabledBy(Wshadow) Init(1) Warning
 Warn if a local declaration hides an instance variable.
@@ -1550,7 +1559,7 @@ C ObjC Var(warn_unsuffixed_float_constants) Warning
 Warn about unsuffixed float constants.
 
 Wunterminated-string-initialization
-C ObjC Var(warn_unterminated_string_initialization) Warning LangEnabledBy(C ObjC,Wextra || Wc++-compat)
+C ObjC Var(warn_unterminated_string_initialization) Warning LangEnabledBy(C ObjC,Wextra)
 Warn about character arrays initialized as unterminated character sequences with a string literal.
 
 Wunused

@@ -133,12 +133,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  struct __result<_Tp>
 	  { using type = decltype(iter_move(std::declval<_Tp>())); };
 
-	// Otherwise, if *E if an lvalue, use std::move(*E).
+	// Otherwise, if *E is an lvalue, use std::move(*E).
 	template<typename _Tp>
 	  requires (!__adl_imove<_Tp>)
 	    && is_lvalue_reference_v<__iter_ref_t<_Tp>>
 	  struct __result<_Tp>
-	  { using type = remove_reference_t<__iter_ref_t<_Tp>>&&; };
+	  {
+	    // Instead of decltype(std::move(*E)) we define the type as the
+	    // return type of std::move, i.e. remove_reference_t<iter_ref>&&.
+	    // N.B. the use of decltype(declval<X>()) instead of just X&& is
+	    // needed for function reference types, see PR libstdc++/119469.
+	    using type
+	      = decltype(std::declval<remove_reference_t<__iter_ref_t<_Tp>>>());
+	  };
 
 	template<typename _Tp>
 	  static constexpr bool
@@ -822,11 +829,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  using __projected_Proj = _Proj;
 	};
       };
-
-    // Optimize the common case of the projection being std::identity.
-    template<typename _Iter>
-      struct __projected<_Iter, identity>
-      { using __type = _Iter; };
   } // namespace __detail
 
   /// [projected], projected
@@ -1020,19 +1022,10 @@ namespace ranges
   {
     using std::__detail::__class_or_enum;
 
-    struct _Decay_copy final
-    {
-      template<typename _Tp>
-	constexpr decay_t<_Tp>
-	operator()(_Tp&& __t) const
-	noexcept(is_nothrow_convertible_v<_Tp, decay_t<_Tp>>)
-	{ return std::forward<_Tp>(__t); }
-    } inline constexpr __decay_copy{};
-
     template<typename _Tp>
       concept __member_begin = requires(_Tp& __t)
 	{
-	  { __decay_copy(__t.begin()) } -> input_or_output_iterator;
+	  { _GLIBCXX_AUTO_CAST(__t.begin()) } -> input_or_output_iterator;
 	};
 
     // Poison pill so that unqualified lookup doesn't find std::begin.
@@ -1042,7 +1035,7 @@ namespace ranges
       concept __adl_begin = __class_or_enum<remove_reference_t<_Tp>>
 	&& requires(_Tp& __t)
 	{
-	  { __decay_copy(begin(__t)) } -> input_or_output_iterator;
+	  { _GLIBCXX_AUTO_CAST(begin(__t)) } -> input_or_output_iterator;
 	};
 
     // Simplified version of std::ranges::begin that only supports lvalues,

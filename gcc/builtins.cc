@@ -176,8 +176,8 @@ static tree fold_builtin_iseqsig (location_t, tree, tree);
 static tree fold_builtin_varargs (location_t, tree, tree*, int);
 
 static tree fold_builtin_strpbrk (location_t, tree, tree, tree, tree);
-static tree fold_builtin_strspn (location_t, tree, tree, tree);
-static tree fold_builtin_strcspn (location_t, tree, tree, tree);
+static tree fold_builtin_strspn (location_t, tree, tree, tree, tree);
+static tree fold_builtin_strcspn (location_t, tree, tree, tree, tree);
 
 static rtx expand_builtin_object_size (tree);
 static rtx expand_builtin_memory_chk (tree, rtx, machine_mode,
@@ -1640,8 +1640,7 @@ expand_builtin_apply_args (void)
 
     start_sequence ();
     temp = expand_builtin_apply_args_1 ();
-    rtx_insn *seq = get_insns ();
-    end_sequence ();
+    rtx_insn *seq = end_sequence ();
 
     apply_args_value = temp;
 
@@ -1863,8 +1862,7 @@ expand_builtin_return (rtx result)
 
 	push_to_sequence (call_fusage);
 	emit_use (reg);
-	call_fusage = get_insns ();
-	end_sequence ();
+	call_fusage = end_sequence ();
 	size += GET_MODE_SIZE (mode);
       }
 
@@ -2373,8 +2371,7 @@ expand_builtin_mathfn_ternary (tree exp, rtx target, rtx subtarget)
     }
 
   /* Output the entire sequence.  */
-  insns = get_insns ();
-  end_sequence ();
+  insns = end_sequence ();
   emit_insn (insns);
 
   return result;
@@ -2466,8 +2463,7 @@ expand_builtin_mathfn_3 (tree exp, rtx target, rtx subtarget)
       if (result != 0)
 	{
 	  /* Output the entire sequence.  */
-	  insns = get_insns ();
-	  end_sequence ();
+	  insns = end_sequence ();
 	  emit_insn (insns);
 	  return result;
 	}
@@ -3164,8 +3160,7 @@ expand_builtin_int_roundingfn (tree exp, rtx target)
   if (expand_sfix_optab (target, op0, builtin_optab))
     {
       /* Output the entire sequence.  */
-      insns = get_insns ();
-      end_sequence ();
+      insns = end_sequence ();
       emit_insn (insns);
       return target;
     }
@@ -3308,8 +3303,7 @@ expand_builtin_int_roundingfn_2 (tree exp, rtx target)
       if (expand_sfix_optab (result, op0, builtin_optab))
 	{
 	  /* Output the entire sequence.  */
-	  insns = get_insns ();
-	  end_sequence ();
+	  insns = end_sequence ();
 	  emit_insn (insns);
 	  return result;
 	}
@@ -3477,8 +3471,7 @@ expand_builtin_strlen (tree exp, rtx target,
 #endif
       emit_move_insn (src_reg, pat);
     }
-  pat = get_insns ();
-  end_sequence ();
+  pat = end_sequence ();
 
   if (before_strlen)
     emit_insn_after (pat, before_strlen);
@@ -3536,7 +3529,8 @@ expand_builtin_strnlen (tree exp, rtx target, machine_mode target_mode)
 
   wide_int min, max;
   int_range_max r;
-  get_global_range_query ()->range_of_expr (r, bound);
+  get_range_query (cfun)->range_of_expr (r, bound,
+					 currently_expanding_gimple_stmt);
   if (r.varying_p () || r.undefined_p ())
     return NULL_RTX;
   min = r.lower_bound ();
@@ -3611,7 +3605,8 @@ determine_block_size (tree len, rtx len_rtx,
 	{
 	  int_range_max r;
 	  tree tmin, tmax;
-	  get_global_range_query ()->range_of_expr (r, len);
+	  gimple *cg = currently_expanding_gimple_stmt;
+	  get_range_query (cfun)->range_of_expr (r, len, cg);
 	  range_type = get_legacy_range (r, tmin, tmax);
 	  if (range_type != VR_UNDEFINED)
 	    {
@@ -5183,8 +5178,7 @@ expand_builtin_saveregs (void)
   /* Do whatever the machine needs done in this case.  */
   val = targetm.calls.expand_builtin_saveregs ();
 
-  seq = get_insns ();
-  end_sequence ();
+  seq = end_sequence ();
 
   saveregs_value = val;
 
@@ -6362,7 +6356,7 @@ expand_builtin_fork_or_exec (tree fn, tree exp, rtx target, int ignore)
   tree call;
 
   /* If we are not profiling, just call the function.  */
-  if (!profile_arc_flag && !condition_coverage_flag)
+  if (!coverage_instrumentation_p ())
     return NULL_RTX;
 
   /* Otherwise call the wrapper.  This should be equivalent for the rest of
@@ -7624,8 +7618,7 @@ inline_string_cmp (rtx target, tree var_str, const char *const_str,
     }
 
   emit_label (ne_label);
-  rtx_insn *insns = get_insns ();
-  end_sequence ();
+  rtx_insn *insns = end_sequence ();
   emit_insn (insns);
 
   return result;
@@ -10800,10 +10793,10 @@ fold_builtin_2 (location_t loc, tree expr, tree fndecl, tree arg0, tree arg1)
       return fold_builtin_modf (loc, arg0, arg1, type);
 
     case BUILT_IN_STRSPN:
-      return fold_builtin_strspn (loc, expr, arg0, arg1);
+      return fold_builtin_strspn (loc, expr, arg0, arg1, type);
 
     case BUILT_IN_STRCSPN:
-      return fold_builtin_strcspn (loc, expr, arg0, arg1);
+      return fold_builtin_strcspn (loc, expr, arg0, arg1, type);
 
     case BUILT_IN_STRPBRK:
       return fold_builtin_strpbrk (loc, expr, arg0, arg1, type);
@@ -11304,7 +11297,7 @@ fold_builtin_strpbrk (location_t loc, tree, tree s1, tree s2, tree type)
    form of the builtin function call.  */
 
 static tree
-fold_builtin_strspn (location_t loc, tree expr, tree s1, tree s2)
+fold_builtin_strspn (location_t loc, tree expr, tree s1, tree s2, tree type)
 {
   if (!validate_arg (s1, POINTER_TYPE)
       || !validate_arg (s2, POINTER_TYPE))
@@ -11320,8 +11313,7 @@ fold_builtin_strspn (location_t loc, tree expr, tree s1, tree s2)
   if ((p1 && *p1 == '\0') || (p2 && *p2 == '\0'))
     /* Evaluate and ignore both arguments in case either one has
        side-effects.  */
-    return omit_two_operands_loc (loc, size_type_node, size_zero_node,
-				  s1, s2);
+    return omit_two_operands_loc (loc, type, size_zero_node, s1, s2);
   return NULL_TREE;
 }
 
@@ -11344,7 +11336,7 @@ fold_builtin_strspn (location_t loc, tree expr, tree s1, tree s2)
    form of the builtin function call.  */
 
 static tree
-fold_builtin_strcspn (location_t loc, tree expr, tree s1, tree s2)
+fold_builtin_strcspn (location_t loc, tree expr, tree s1, tree s2, tree type)
 {
   if (!validate_arg (s1, POINTER_TYPE)
       || !validate_arg (s2, POINTER_TYPE))
@@ -11360,8 +11352,7 @@ fold_builtin_strcspn (location_t loc, tree expr, tree s1, tree s2)
     {
       /* Evaluate and ignore argument s2 in case it has
 	 side-effects.  */
-      return omit_one_operand_loc (loc, size_type_node,
-				   size_zero_node, s2);
+      return omit_one_operand_loc (loc, type, size_zero_node, s2);
     }
 
   /* If the second argument is "", return __builtin_strlen(s1).  */
@@ -11375,7 +11366,8 @@ fold_builtin_strcspn (location_t loc, tree expr, tree s1, tree s2)
       if (!fn)
 	return NULL_TREE;
 
-      return build_call_expr_loc (loc, fn, 1, s1);
+      return fold_convert_loc (loc, type,
+			       build_call_expr_loc (loc, fn, 1, s1));
     }
   return NULL_TREE;
 }

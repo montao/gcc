@@ -30,6 +30,9 @@ compilation is specified by a string called a "spec".  */
 #define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
+#ifdef HOST_HAS_PERSONALITY_ADDR_NO_RANDOMIZE
+#include <sys/personality.h>
+#endif
 #include "coretypes.h"
 #include "multilib.h" /* before tm.h */
 #include "tm.h"
@@ -1169,7 +1172,7 @@ proper position among the other output files.  */
 	%:include(libgomp.spec)%(link_gomp)}\
     %{fgnu-tm:%:include(libitm.spec)%(link_itm)}\
     " STACK_SPLIT_SPEC "\
-    %{fprofile-arcs|fcondition-coverage|fprofile-generate*|coverage:-lgcov} " SANITIZER_SPEC " \
+    %{fprofile-arcs|fcondition-coverage|fpath-coverage|fprofile-generate*|coverage:-lgcov} " SANITIZER_SPEC " \
     %{!nostdlib:%{!r:%{!nodefaultlibs:%(link_ssp) %(link_gcc_c_sequence)}}}\
     %{!nostdlib:%{!r:%{!nostartfiles:%E}}} %{T*}  \n%(post_link) }}}}}}"
 #endif
@@ -1292,7 +1295,7 @@ static const char *cc1_options =
  %{!fsyntax-only:%{S:%W{o*}%{!o*:-o %w%b.s}}}\
  %{fsyntax-only:-o %j} %{-param*}\
  %{coverage:-fprofile-arcs -ftest-coverage}\
- %{fprofile-arcs|fcondition-coverage|fprofile-generate*|coverage:\
+ %{fprofile-arcs|fcondition-coverage|fpath-coverage|fprofile-generate*|coverage:\
    %{!fprofile-update=single:\
      %{pthread:-fprofile-update=prefer-atomic}}}";
 
@@ -4154,7 +4157,8 @@ forward_offload_option (size_t opt_index, const char *arg, bool validated)
 	 are injected by default in offloading compilation, and therefore not
 	 forwarded here.  */
       /* GCC libraries.  */
-      if (/* '-lgfortran' */ strcmp (arg, "gfortran") == 0 )
+      if (/* '-lgfortran' */ strcmp (arg, "gfortran") == 0
+	  || /* '-lstdc++' */ strcmp (arg, "stdc++") == 0)
 	save_switch (concat ("-foffload-options=-l_GCC_", arg, NULL),
 		     0, NULL, validated, true);
       /* Other libraries.  */
@@ -7743,55 +7747,58 @@ print_configuration (FILE *file)
 
 #define RETRY_ICE_ATTEMPTS 3
 
-/* Returns true if FILE1 and FILE2 contain equivalent data, 0 otherwise.  */
+/* Returns true if FILE1 and FILE2 contain equivalent data, 0 otherwise.
+   If lines start with 0x followed by 1-16 lowercase hexadecimal digits
+   followed by a space, ignore anything before that space.  These are
+   typically function addresses from libbacktrace and those can differ
+   due to ASLR.  */
 
 static bool
 files_equal_p (char *file1, char *file2)
 {
-  struct stat st1, st2;
-  off_t n, len;
-  int fd1, fd2;
-  const int bufsize = 8192;
-  char *buf = XNEWVEC (char, bufsize);
+  FILE *f1 = fopen (file1, "rb");
+  FILE *f2 = fopen (file2, "rb");
+  char line1[256], line2[256];
 
-  fd1 = open (file1, O_RDONLY);
-  fd2 = open (file2, O_RDONLY);
-
-  if (fd1 < 0 || fd2 < 0)
-    goto error;
-
-  if (fstat (fd1, &st1) < 0 || fstat (fd2, &st2) < 0)
-    goto error;
-
-  if (st1.st_size != st2.st_size)
-    goto error;
-
-  for (n = st1.st_size; n; n -= len)
+  bool line_start = true;
+  while (fgets (line1, sizeof (line1), f1))
     {
-      len = n;
-      if ((int) len > bufsize / 2)
-	len = bufsize / 2;
-
-      if (read (fd1, buf, len) != (int) len
-	  || read (fd2, buf + bufsize / 2, len) != (int) len)
-	{
-	  goto error;
-	}
-
-      if (memcmp (buf, buf + bufsize / 2, len) != 0)
+      if (!fgets (line2, sizeof (line2), f2))
 	goto error;
+      char *p1 = line1, *p2 = line2;
+      if (line_start
+	  && line1[0] == '0'
+	  && line1[1] == 'x'
+	  && line2[0] == '0'
+	  && line2[1] == 'x')
+	{
+	  int i, j;
+	  for (i = 0; i < 16; ++i)
+	    if (!ISXDIGIT (line1[2 + i]) || ISUPPER (line1[2 + i]))
+	      break;
+	  for (j = 0; j < 16; ++j)
+	    if (!ISXDIGIT (line2[2 + j]) || ISUPPER (line2[2 + j]))
+	      break;
+	  if (i && line1[2 + i] == ' ' && j && line2[2 + j] == ' ')
+	    {
+	      p1 = line1 + i + 3;
+	      p2 = line2 + j + 3;
+	    }
+	}
+      if (strcmp (p1, p2) != 0)
+	goto error;
+      line_start = strchr (line1, '\n') != NULL;
     }
+  if (fgets (line2, sizeof (line2), f2))
+    goto error;
 
-  free (buf);
-  close (fd1);
-  close (fd2);
-
+  fclose (f1);
+  fclose (f2);
   return 1;
 
 error:
-  free (buf);
-  close (fd1);
-  close (fd2);
+  fclose (f1);
+  fclose (f2);
   return 0;
 }
 
@@ -7998,6 +8005,10 @@ try_generate_repro (const char **argv)
     new_argv[out_arg + 1] = "-";
   else
     new_argv[out_arg] = "-o-";
+
+#ifdef HOST_HAS_PERSONALITY_ADDR_NO_RANDOMIZE
+  personality (personality (0xffffffffU) | ADDR_NO_RANDOMIZE);
+#endif
 
   int status;
   for (attempt = 0; attempt < RETRY_ICE_ATTEMPTS; ++attempt)
@@ -8356,7 +8367,7 @@ driver::global_initializations ()
   diagnostic_initialize (global_dc, 0);
   diagnostic_color_init (global_dc);
   diagnostic_urls_init (global_dc);
-  global_dc->set_urlifier (make_gcc_urlifier (0));
+  global_dc->push_owned_urlifier (make_gcc_urlifier (0));
 
 #ifdef GCC_DRIVER_HOST_INITIALIZATION
   /* Perform host dependent initialization when needed.  */
@@ -8495,11 +8506,13 @@ driver::set_up_specs () const
   spec_machine_suffix = just_machine_suffix;
 #endif
 
+  const char *exec_prefix
+    = gcc_exec_prefix ? gcc_exec_prefix : standard_exec_prefix;
   /* We need to check standard_exec_prefix/spec_machine_suffix/specs
      for any override of as, ld and libraries.  */
-  specs_file = (char *) alloca (strlen (standard_exec_prefix)
-		       + strlen (spec_machine_suffix) + sizeof ("specs"));
-  strcpy (specs_file, standard_exec_prefix);
+  specs_file = (char *) alloca (
+    strlen (exec_prefix) + strlen (spec_machine_suffix) + sizeof ("specs"));
+  strcpy (specs_file, exec_prefix);
   strcat (specs_file, spec_machine_suffix);
   strcat (specs_file, "specs");
   if (access (specs_file, R_OK) == 0)
@@ -9736,6 +9749,103 @@ default_arg (const char *p, int len)
   return 0;
 }
 
+/* Use multilib_dir as key to find corresponding multilib_os_dir and
+   multiarch_dir.  */
+
+static void
+find_multilib_os_dir_by_multilib_dir (const char *multilib_dir,
+				      const char **p_multilib_os_dir,
+				      const char **p_multiarch_dir)
+{
+  const char *p = multilib_select;
+  unsigned int this_path_len;
+  const char *this_path;
+  int ok = 0;
+
+  while (*p != '\0')
+    {
+      /* Ignore newlines.  */
+      if (*p == '\n')
+	{
+	  ++p;
+	  continue;
+	}
+
+      /* Get the initial path.  */
+      this_path = p;
+      while (*p != ' ')
+	{
+	  if (*p == '\0')
+	    {
+	      fatal_error (input_location, "multilib select %qs %qs is invalid",
+			   multilib_select, multilib_reuse);
+	    }
+	  ++p;
+	}
+      this_path_len = p - this_path;
+
+      ok = 0;
+
+      /* Skip any arguments, we don't care at this stage.  */
+      while (*++p != ';');
+
+      if (this_path_len != 1
+	  || this_path[0] != '.')
+	{
+	  char *new_multilib_dir = XNEWVEC (char, this_path_len + 1);
+	  char *q;
+
+	  strncpy (new_multilib_dir, this_path, this_path_len);
+	  new_multilib_dir[this_path_len] = '\0';
+	  q = strchr (new_multilib_dir, ':');
+	  if (q != NULL)
+	    *q = '\0';
+
+	  if (strcmp (new_multilib_dir, multilib_dir) == 0)
+	    ok = 1;
+	}
+
+      /* Found matched multilib_dir, update multilib_os_dir and
+	 multiarch_dir.  */
+      if (ok)
+	{
+	  const char *q = this_path, *end = this_path + this_path_len;
+
+	  while (q < end && *q != ':')
+	    q++;
+	  if (q < end)
+	    {
+	      const char *q2 = q + 1, *ml_end = end;
+	      char *new_multilib_os_dir;
+
+	      while (q2 < end && *q2 != ':')
+		q2++;
+	      if (*q2 == ':')
+		ml_end = q2;
+	      if (ml_end - q == 1)
+		*p_multilib_os_dir = xstrdup (".");
+	      else
+		{
+		  new_multilib_os_dir = XNEWVEC (char, ml_end - q);
+		  memcpy (new_multilib_os_dir, q + 1, ml_end - q - 1);
+		  new_multilib_os_dir[ml_end - q - 1] = '\0';
+		  *p_multilib_os_dir = new_multilib_os_dir;
+		}
+
+	      if (q2 < end && *q2 == ':')
+		{
+		  char *new_multiarch_dir = XNEWVEC (char, end - q2);
+		  memcpy (new_multiarch_dir, q2 + 1, end - q2 - 1);
+		  new_multiarch_dir[end - q2 - 1] = '\0';
+		  *p_multiarch_dir = new_multiarch_dir;
+		}
+	      break;
+	    }
+	}
+      ++p;
+    }
+}
+
 /* Work out the subdirectory to use based on the options. The format of
    multilib_select is a list of elements. Each element is a subdirectory
    name followed by a list of options followed by a semicolon. The format
@@ -10014,7 +10124,16 @@ set_multilib_dir (void)
       multilib_os_dir = NULL;
     }
   else if (multilib_dir != NULL && multilib_os_dir == NULL)
-    multilib_os_dir = multilib_dir;
+    {
+      /* Give second chance to search matched multilib_os_dir again by matching
+	 the multilib_dir since some target may use TARGET_COMPUTE_MULTILIB
+	 hook rather than the builtin way.  */
+      find_multilib_os_dir_by_multilib_dir (multilib_dir, &multilib_os_dir,
+					    &multiarch_dir);
+
+      if (multilib_os_dir == NULL)
+	multilib_os_dir = multilib_dir;
+    }
 }
 
 /* Print out the multiple library subdirectory selection

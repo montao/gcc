@@ -161,6 +161,7 @@ typedef struct diagnostic_logical_location diagnostic_logical_location;
 
 enum diagnostic_logical_location_kind_t
 {
+ /* Kinds within executable code.  */
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_FUNCTION,
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_MEMBER,
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_MODULE,
@@ -168,7 +169,22 @@ enum diagnostic_logical_location_kind_t
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_TYPE,
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_RETURN_TYPE,
   DIAGNOSTIC_LOGICAL_LOCATION_KIND_PARAMETER,
-  DIAGNOSTIC_LOGICAL_LOCATION_KIND_VARIABLE
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_VARIABLE,
+
+  /* Kinds within XML or HTML documents.  */
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_ELEMENT,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_ATTRIBUTE,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_TEXT,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_COMMENT,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_PROCESSING_INSTRUCTION,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_DTD,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_DECLARATION,
+
+  /* Kinds within JSON documents.  */
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_OBJECT,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_ARRAY,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_PROPERTY,
+  DIAGNOSTIC_LOGICAL_LOCATION_KIND_VALUE
 };
 
 /* A "diagnostic" is an opaque bundle of state for a particular
@@ -487,6 +503,32 @@ diagnostic_manager_debug_dump_logical_location (const diagnostic_manager *diag_m
   LIBGDIAGNOSTICS_PARAM_CAN_BE_NULL (2)
   LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (3);
 
+/* Accessors for logical locations (added in LIBGDIAGNOSTICS_ABI_1;
+   you can test for their presence using
+   #ifdef LIBDIAGNOSTICS_HAVE_LOGICAL_LOCATION_ACCESSORS
+*/
+#define LIBDIAGNOSTICS_HAVE_LOGICAL_LOCATION_ACCESSORS
+
+extern enum diagnostic_logical_location_kind_t
+diagnostic_logical_location_get_kind (const diagnostic_logical_location *loc)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1);
+
+extern const diagnostic_logical_location *
+diagnostic_logical_location_get_parent (const diagnostic_logical_location *loc)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1);
+
+extern const char *
+diagnostic_logical_location_get_short_name (const diagnostic_logical_location *loc)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1);
+
+extern const char *
+diagnostic_logical_location_get_fully_qualified_name (const diagnostic_logical_location *loc)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1);
+
+extern const char *
+diagnostic_logical_location_get_decorated_name (const diagnostic_logical_location *loc)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1);
+
 /* Diagnostic groups.  */
 
 /* Begin a diagnostic group.  All diagnostics emitted within
@@ -691,6 +733,37 @@ diagnostic_finish_va (diagnostic *diag, const char *fmt, va_list *args)
 extern diagnostic_file *
 diagnostic_physical_location_get_file (const diagnostic_physical_location *physical_loc)
   LIBGDIAGNOSTICS_PARAM_CAN_BE_NULL(0);
+
+/* Attempt to parse SPEC as if an argument to GCC's
+   -fdiagnostics-add-output=OUTPUT-SPEC.
+   If successful, add an output sink to AFFECTED_MGR and return zero.
+   Otherwise, emit a diagnostic to CONTROL_MGR and return non-zero.
+   Added in LIBGDIAGNOSTICS_ABI_2.  */
+#define LIBDIAGNOSTICS_HAVE_diagnostic_manager_add_sink_from_spec
+
+extern int
+diagnostic_manager_add_sink_from_spec (diagnostic_manager *affected_mgr,
+				       const char *option_name,
+				       const char *spec,
+				       diagnostic_manager *control_mgr)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (2)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (3)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (4);
+
+
+/* Set the main input file of MGR to be FILE.
+   This affects the <title> of generated HTML and
+   the "role" of the artifact in SARIF output (SARIF v2.1.0
+   section 3.24.6).
+   Added in LIBGDIAGNOSTICS_ABI_2.  */
+#define LIBDIAGNOSTICS_HAVE_diagnostic_manager_set_analysis_target
+
+extern void
+diagnostic_manager_set_analysis_target (diagnostic_manager *mgr,
+					const diagnostic_file *file)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (1)
+  LIBGDIAGNOSTICS_PARAM_MUST_BE_NON_NULL (2);
 
 /* DEFERRED:
    - thread-safety

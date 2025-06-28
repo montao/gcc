@@ -507,11 +507,14 @@ export namespace std
     using ranges::find_last_if;
     using ranges::find_last_if_not;
 #endif
+#if __cpp_lib_ranges_starts_ends_with
+    using ranges::starts_with;
+    using ranges::ends_with;
+#endif
   }
 }
 
 // 22.7.2 <any>
-#if __cpp_lib_any
 export namespace std
 {
   using std::any;
@@ -520,7 +523,6 @@ export namespace std
   using std::make_any;
   using std::swap;
 }
-#endif
 
 // 24.3.2 <array>
 export namespace std
@@ -599,7 +601,9 @@ export namespace std
   using std::atomic_schar;
   using std::atomic_short;
   using std::atomic_signal_fence;
+#ifdef __cpp_lib_atomic_lock_free_type_aliases
   using std::atomic_signed_lock_free;
+#endif
   using std::atomic_size_t;
   using std::atomic_store;
   using std::atomic_store_explicit;
@@ -622,7 +626,9 @@ export namespace std
   using std::atomic_uintptr_t;
   using std::atomic_ullong;
   using std::atomic_ulong;
+#ifdef __cpp_lib_atomic_lock_free_type_aliases
   using std::atomic_unsigned_lock_free;
+#endif
   using std::atomic_ushort;
   using std::atomic_wait;
   using std::atomic_wait_explicit;
@@ -694,7 +700,6 @@ export namespace std
 }
 
 // 29.2 <chrono>
-#if __cpp_lib_chrono
 export namespace std
 {
   namespace chrono
@@ -848,7 +853,6 @@ export namespace std::inline literals::inline chrono_literals
 export namespace std::chrono {
   using namespace literals::chrono_literals;
 }
-#endif // __cpp_lib_chrono
 
 // <codecvt>: deprecated C++17, removed C++26
 export namespace std
@@ -860,7 +864,6 @@ export namespace std
 }
 
 // 17.11.1 <compare>
-#if __cpp_lib_three_way_comparison
 export namespace std
 {
   using std::common_comparison_category;
@@ -885,8 +888,11 @@ export namespace std
   using std::partial_order;
   using std::strong_order;
   using std::weak_order;
+#if __glibcxx_type_order >= 202506L
+  using std::type_order;
+  using std::type_order_v;
+#endif
 }
-#endif // __cpp_lib_three_way_comparison
 
 // 28.4 <complex>
 export namespace std
@@ -924,6 +930,13 @@ export namespace std
   using std::sqrt;
   using std::tan;
   using std::tanh;
+#if __cpp_lib_tuple_like >= 202311L
+  using std::tuple_element;
+  using std::tuple_element_t;
+  using std::tuple_size;
+  using std::tuple_size_v;
+  using std::get;
+#endif
 }
 export namespace std::inline literals::inline complex_literals
 {
@@ -933,7 +946,6 @@ export namespace std::inline literals::inline complex_literals
 }
 
 // 18 <concepts>
-#if __cpp_lib_concepts
 export namespace std
 {
   using std::assignable_from;
@@ -972,7 +984,6 @@ export namespace std
   using std::totally_ordered;
   using std::totally_ordered_with;
 }
-#endif
 
 // 33.7 <condition_variable>
 export namespace std
@@ -1043,6 +1054,9 @@ export namespace std
   using std::throw_with_nested;
   using std::uncaught_exception;
   using std::uncaught_exceptions;
+#if __cpp_lib_exception_ptr_cast >= 202506L
+  using std::exception_ptr_cast;
+#endif
 }
 
 // 34.4 <execution>
@@ -1308,8 +1322,7 @@ export namespace std
   using std::format_to_n;
   using std::format_to_n_result;
   using std::formatted_size;
-// FIXME __cpp_lib_format_ranges
-#if __cplusplus > 202002L
+#if __cpp_lib_format_ranges
   using std::formattable;
 #endif
   using std::formatter;
@@ -1325,6 +1338,11 @@ export namespace std
   using std::wformat_context;
   using std::wformat_parse_context;
   using std::wformat_string;
+#ifdef __cpp_lib_format_ranges
+  using std::format_kind;
+  using std::range_format;
+  using std::range_formatter;
+#endif
 }
 
 // <forward_list>
@@ -1396,6 +1414,12 @@ export namespace std
   using std::modulus;
 #if __cpp_lib_move_only_function
   using std::move_only_function;
+#endif
+#if __cpp_lib_copyable_function
+  using std::copyable_function;
+#endif
+#if __cpp_lib_function_ref
+  using std::function_ref;
 #endif
   using std::multiplies;
   using std::negate;
@@ -1818,7 +1842,17 @@ export namespace std
   }
 }
 
-// FIXME <mdspan>
+// <mdspan>
+#if __glibcxx_mdspan
+export namespace std
+{
+  using std::extents;
+  using std::layout_left;
+  using std::layout_right;
+  using std::layout_stride;
+  // FIXME layout_left_padded, layout_right_padded, default_accessor and mdspan
+}
+#endif
 
 // 20.2 <memory>
 export namespace std
@@ -1931,6 +1965,14 @@ export namespace std
 #if __cpp_lib_out_ptr
   using std::out_ptr;
   using std::inout_ptr;
+#endif
+#if __cpp_lib_indirect
+  using std::indirect;
+  namespace pmr { using std::pmr::indirect; }
+#endif
+#if __cpp_lib_polymorphic
+  using std::polymorphic;
+  namespace pmr { using std::pmr::polymorphic; }
 #endif
 }
 
@@ -2383,14 +2425,24 @@ export namespace std
     using ranges::enumerate_view;
     namespace views { using views::enumerate; }
 #endif
-#if __cpp_lib_ranges_to_container // C++ >= 23
-    using ranges::to;
-#endif // __cpp_lib_ranges_to_container
 #if __cpp_lib_ranges_concat // C++ >= C++26
     using ranges::concat_view;
     namespace views { using views::concat; }
 #endif
+#if __cpp_lib_ranges_cache_latest // C++ >= C++26
+    using ranges::cache_latest_view;
+    namespace views { using views::cache_latest; }
+#endif
+#if __glibcxx_ranges_to_input // C++ >= 26
+    using ranges::to_input_view;
+    namespace views { using views::to_input; }
+#endif
   }
+#if __glibcxx_ranges_to_container // C++ >= 23
+  namespace ranges { using ranges::to; }
+  using std::from_range_t;
+  using std::from_range;
+#endif
 }
 
 // <ratio>
@@ -3082,6 +3134,7 @@ export namespace std
 #if __cpp_lib_is_layout_compatible
   using std::is_corresponding_member;
   using std::is_layout_compatible;
+  using std::is_layout_compatible_v;
 #endif
 #if __cpp_lib_is_pointer_interconvertible
   using std::is_pointer_interconvertible_base_of;
@@ -3159,6 +3212,10 @@ export namespace std
   using std::make_integer_sequence;
   using std::move;
   using std::move_if_noexcept;
+#if __cpp_lib_function_ref
+  using std::nontype_t;
+  using std::nontype;
+#endif
   using std::pair;
   using std::swap;
   using std::operator==;

@@ -5,9 +5,8 @@
 
 #ifndef DO_TEST
 #define DO_TEST do_test
-#if defined(AVX10_512BIT) || defined(AVX10_SCALAR)
 static void test_512 (void);
-#else
+#ifndef AVX10_SCALAR
 static void test_256 (void);
 static void test_128 (void);
 #endif
@@ -16,9 +15,8 @@ __attribute__ ((noinline))
 static void
 do_test (void)
 {
-#if defined(AVX10_512BIT) || defined(AVX10_SCALAR)
   test_512 ();
-#else
+#ifndef AVX10_SCALAR
   test_256 ();
   test_128 ();
 #endif
@@ -38,12 +36,9 @@ int
 main ()
 {
   /* Run AVX10 test only if host has ISA support.  */
-  if (__builtin_cpu_supports ("avx10.1-256")
+  if (__builtin_cpu_supports ("avx10.1")
 #ifdef AVX10_2
-      && __builtin_cpu_supports ("avx10.2-256")
-#endif
-#ifdef AVX10_2_512
-      && __builtin_cpu_supports ("avx10.2-512")
+      && __builtin_cpu_supports ("avx10.2")
 #endif
       && avx10_os_support ())
     {

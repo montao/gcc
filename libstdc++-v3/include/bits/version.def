@@ -30,6 +30,7 @@ AutoGen Definitions version.tpl;
 // ftms = {
 //   name = FTM NAME;
 //   [stdname = FTM STANDARD MACRO NAME;]
+//   [no_stdname = true;]
 //   values = {
 //     v = VALUE FOR FTM IF MATCHING;
 //     [extra_cond = STRING;]
@@ -56,7 +57,8 @@ AutoGen Definitions version.tpl;
 
 // stdname configures the name of the *standard* macro emitted, i.e. it
 // replaces only the __cpp_lib_ macro in the emitted definition.  Defaults to
-// __cpp_lib_${name}
+// __cpp_lib_${name}.  If no_stdname exists (with any value), the stdname
+// define is not emitted.
 
 // N.B This list needs to be in topological sort order, as later entries in
 // this list can and do use the earlier entries.
@@ -647,7 +649,7 @@ ftms = {
   };
   values = {
     v = 1;
-    /* For when there's no gthread.  */
+    // For when there is no gthread.
     cxxmin = 17;
     hosted = yes;
     gthread = no;
@@ -677,8 +679,6 @@ ftms = {
   values = {
     v = 201703;
     cxxmin = 17;
-    hosted = yes;
-    gthread = yes;
   };
 };
 
@@ -770,6 +770,7 @@ ftms = {
   values = {
     v = 201911;
     cxxmin = 20;
+    extra_cond = "__cpp_concepts >= 201907L";
   };
 };
 
@@ -847,6 +848,14 @@ ftms = {
   values = {
     v = 201606;
     cxxmin = 17;
+  };
+};
+
+ftms = {
+  name = optional_range_support;
+  values = {
+    v = 202406;
+    cxxmin = 26;
   };
 };
 
@@ -956,6 +965,7 @@ ftms = {
 
 ftms = {
   name = make_obj_using_allocator;
+  no_stdname = true;
   values = {
     // Not specified by C++20, used internally
     v = 201811;
@@ -992,6 +1002,15 @@ ftms = {
     v = 202002;
     cxxmin = 20;
     extra_cond = "__glibcxx_concepts";
+  };
+};
+
+ftms = {
+  name = mdspan;
+  no_stdname = true; // FIXME: remove
+  values = {
+    v = 1; // FIXME: 202207
+    cxxmin = 23;
   };
 };
 
@@ -1270,7 +1289,12 @@ ftms = {
 ftms = {
   name = constrained_equality;
   values = {
-    v = 202411; // FIXME: 202403 for P2944R3, ??? for P3379R0
+    v = 202411;
+    cxxmin = 23;
+    extra_cond = "__glibcxx_three_way_comparison";
+  };
+  values = {
+    v = 202403;
     cxxmin = 20;
     extra_cond = "__glibcxx_three_way_comparison";
   };
@@ -1347,7 +1371,7 @@ ftms = {
     v = 201907;
     cxxmin = 20;
     hosted = yes;
-    extra_cond = "__glibcxx_atomic_wait || _GLIBCXX_HAVE_POSIX_SEMAPHORE";
+    extra_cond = "__glibcxx_atomic_wait";
   };
 };
 
@@ -1403,18 +1427,17 @@ ftms = {
   };
 };
 
-// ftms = {
-  // name = format_ranges;
+ftms = {
+  name = format_ranges;
   // 202207 P2286R8 Formatting Ranges
   // 202207 P2585R1 Improving default container formatting
   // LWG3750 Too many papers bump __cpp_lib_format
-  // TODO: #define __cpp_lib_format_ranges 202207L
-  // values = {
-    // v = 202207;
-    // cxxmin = 23;
-    // hosted = yes;
-  // };
-// };
+  values = {
+    v = 202207;
+    cxxmin = 23;
+    hosted = yes;
+  };
+};
 
 ftms = {
   name = freestanding_algorithm;
@@ -1507,14 +1530,14 @@ ftms = {
   };
 };
 
-//ftms = {
-//  name = containers_ranges;
-//  values = {
-//    v = 202202;
-//    cxxmin = 23;
-//    hosted = yes;
-//  };
-//};
+ftms = {
+  name = containers_ranges;
+  values = {
+    v = 202202;
+    cxxmin = 23;
+    hosted = yes;
+  };
+};
 
 ftms = {
   name = ranges_to_container;
@@ -1646,6 +1669,14 @@ ftms = {
 };
 
 ftms = {
+  name = ranges_starts_ends_with;
+  values = {
+    v = 202106;
+    cxxmin = 23;
+  };
+};
+
+ftms = {
   name = constexpr_bitset;
   values = {
     v = 202202;
@@ -1729,6 +1760,23 @@ ftms = {
     v = 202110;
     cxxmin = 23;
     hosted = yes;
+  };
+};
+
+ftms = {
+  name = copyable_function;
+  values = {
+    v = 202306;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = function_ref;
+  values = {
+    v = 202306;
+    cxxmin = 26;
   };
 };
 
@@ -1911,6 +1959,14 @@ ftms = {
 };
 
 ftms = {
+  name = ranges_to_input;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+  };
+};
+
+ftms = {
   name = to_string;
   values = {
     v = 202306;
@@ -1926,6 +1982,51 @@ ftms = {
     v = 202207;
     cxxmin = 20;
     extra_cond = "__cpp_modules";
+  };
+};
+
+ftms = {
+  name = indirect;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = polymorphic;
+  values = {
+    v = 202502;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = sstream_from_string_view;
+  values = {
+    v = 202306;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
+  name = type_order;
+  values = {
+    v = 202506;
+    cxxmin = 26;
+    extra_cond = "__has_builtin(__builtin_type_order) "
+    "&& __cpp_lib_three_way_comparison >= 201907L";
+  };
+};
+
+ftms = {
+  name = exception_ptr_cast;
+  values = {
+    v = 202506;
+    cxxmin = 26;
   };
 };
 

@@ -918,62 +918,45 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			   __gnu_cxx::__ops::__iter_comp_iter(__binary_pred));
     }
 
-  /**
-   *  This is an uglified
-   *  unique_copy(_InputIterator, _InputIterator, _OutputIterator,
-   *              _BinaryPredicate)
-   *  overloaded for forward iterators and output iterator as result.
-  */
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 4269. unique_copy passes arguments to its predicate backwards
+
+  // Implementation of std::unique_copy for forward iterators.
+  // This case is easy, just compare *i with *(i-1).
   template<typename _ForwardIterator, typename _OutputIterator,
 	   typename _BinaryPredicate>
     _GLIBCXX20_CONSTEXPR
     _OutputIterator
     __unique_copy(_ForwardIterator __first, _ForwardIterator __last,
 		  _OutputIterator __result, _BinaryPredicate __binary_pred,
-		  forward_iterator_tag, output_iterator_tag)
+		  forward_iterator_tag)
     {
-      // concept requirements -- iterators already checked
-      __glibcxx_function_requires(_BinaryPredicateConcept<_BinaryPredicate,
-	  typename iterator_traits<_ForwardIterator>::value_type,
-	  typename iterator_traits<_ForwardIterator>::value_type>)
-
-      _ForwardIterator __next = __first;
+      _ForwardIterator __prev = __first;
       *__result = *__first;
-      while (++__next != __last)
-	if (!__binary_pred(__first, __next))
+      while (++__first != __last)
+	if (!__binary_pred(__prev, __first))
 	  {
-	    __first = __next;
 	    *++__result = *__first;
+	    __prev = __first;
 	  }
       return ++__result;
     }
 
-  /**
-   *  This is an uglified
-   *  unique_copy(_InputIterator, _InputIterator, _OutputIterator,
-   *              _BinaryPredicate)
-   *  overloaded for input iterators and output iterator as result.
-  */
+  // Implementation of std::unique_copy for non-forward iterators,
+  // where we cannot compare with elements written to the output.
   template<typename _InputIterator, typename _OutputIterator,
 	   typename _BinaryPredicate>
     _GLIBCXX20_CONSTEXPR
     _OutputIterator
-    __unique_copy(_InputIterator __first, _InputIterator __last,
-		  _OutputIterator __result, _BinaryPredicate __binary_pred,
-		  input_iterator_tag, output_iterator_tag)
+    __unique_copy_1(_InputIterator __first, _InputIterator __last,
+		    _OutputIterator __result, _BinaryPredicate __binary_pred,
+		    __false_type)
     {
-      // concept requirements -- iterators already checked
-      __glibcxx_function_requires(_BinaryPredicateConcept<_BinaryPredicate,
-	  typename iterator_traits<_InputIterator>::value_type,
-	  typename iterator_traits<_InputIterator>::value_type>)
-
-      typename iterator_traits<_InputIterator>::value_type __value = *__first;
-      __decltype(__gnu_cxx::__ops::__iter_comp_val(__binary_pred))
-	__rebound_pred
-	= __gnu_cxx::__ops::__iter_comp_val(__binary_pred);
+      typedef typename iterator_traits<_InputIterator>::value_type _Val;
+      _Val __value = *__first;
       *__result = __value;
       while (++__first != __last)
-	if (!__rebound_pred(__first, __value))
+	if (!__binary_pred(std::__addressof(__value), __first))
 	  {
 	    __value = *__first;
 	    *++__result = __value;
@@ -981,30 +964,46 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return ++__result;
     }
 
-  /**
-   *  This is an uglified
-   *  unique_copy(_InputIterator, _InputIterator, _OutputIterator,
-   *              _BinaryPredicate)
-   *  overloaded for input iterators and forward iterator as result.
-  */
+  // Implementation of std::unique_copy for non-forward iterators,
+  // where we can compare with the last element written to the output.
   template<typename _InputIterator, typename _ForwardIterator,
 	   typename _BinaryPredicate>
-    _GLIBCXX20_CONSTEXPR
     _ForwardIterator
-    __unique_copy(_InputIterator __first, _InputIterator __last,
-		  _ForwardIterator __result, _BinaryPredicate __binary_pred,
-		  input_iterator_tag, forward_iterator_tag)
+    __unique_copy_1(_InputIterator __first, _InputIterator __last,
+		    _ForwardIterator __result, _BinaryPredicate __binary_pred,
+		    __true_type)
     {
-      // concept requirements -- iterators already checked
-      __glibcxx_function_requires(_BinaryPredicateConcept<_BinaryPredicate,
-	  typename iterator_traits<_ForwardIterator>::value_type,
-	  typename iterator_traits<_InputIterator>::value_type>)
       *__result = *__first;
       while (++__first != __last)
 	if (!__binary_pred(__result, __first))
 	  *++__result = *__first;
       return ++__result;
     }
+
+  // Implementation of std::unique_copy for non-forward iterators.
+  // We cannot compare *i to *(i-1) so we need to either make a copy
+  // or compare with the last element written to the output range.
+  template<typename _InputIterator, typename _OutputIterator,
+	   typename _BinaryPredicate>
+    _GLIBCXX20_CONSTEXPR
+    _OutputIterator
+    __unique_copy(_InputIterator __first, _InputIterator __last,
+		  _OutputIterator __result, _BinaryPredicate __binary_pred,
+		  input_iterator_tag)
+    {
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2439. unique_copy() sometimes can't fall back to reading its output
+      typedef iterator_traits<_InputIterator> _InItTraits;
+      typedef iterator_traits<_OutputIterator> _OutItTraits;
+      typedef typename _OutItTraits::iterator_category _Cat;
+      const bool __output_is_fwd = __is_base_of(forward_iterator_tag, _Cat);
+      const bool __same_type = __is_same(typename _OutItTraits::value_type,
+					 typename _InItTraits::value_type);
+      typedef __truth_type<__output_is_fwd && __same_type> __cmp_with_output;
+      return std::__unique_copy_1(__first, __last, __result, __binary_pred,
+				  typename __cmp_with_output::__type());
+    }
+
 
   /**
    *  This is an uglified reverse(_BidirectionalIterator,
@@ -1447,6 +1446,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
   /// move-assign an element onto itself.
   template<typename _ForwardIterator, typename _Pointer, typename _Predicate,
 	   typename _Distance>
+    _GLIBCXX26_CONSTEXPR
     _ForwardIterator
     __stable_partition_adaptive(_ForwardIterator __first,
 				_ForwardIterator __last,
@@ -1507,6 +1507,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
     }
 
   template<typename _ForwardIterator, typename _Predicate>
+    _GLIBCXX26_CONSTEXPR
     _ForwardIterator
     __stable_partition(_ForwardIterator __first, _ForwardIterator __last,
 		       _Predicate __pred)
@@ -1521,11 +1522,25 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       typedef typename iterator_traits<_ForwardIterator>::difference_type
 	_DistanceType;
 
+      const _DistanceType __len = std::distance(__first, __last);
+
+#if __glibcxx_constexpr_algorithms >= 202306L // >= C++26
+      if consteval {
+	// Simulate a _Temporary_buffer of length 1:
+	_ValueType __buf = std::move(*__first);
+	*__first = std::move(__buf);
+	return std::__stable_partition_adaptive(__first, __last, __pred,
+						__len,
+						&__buf,
+						_DistanceType(1));
+      }
+#endif
+
       _Temporary_buffer<_ForwardIterator, _ValueType>
-	__buf(__first, std::distance(__first, __last));
+	__buf(__first, __len);
       return
 	std::__stable_partition_adaptive(__first, __last, __pred,
-					 _DistanceType(__buf.requested_size()),
+					 __len,
 					 __buf.begin(),
 					 _DistanceType(__buf.size()));
     }
@@ -1548,6 +1563,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
    *  relative ordering after calling @p stable_partition().
   */
   template<typename _ForwardIterator, typename _Predicate>
+    _GLIBCXX26_CONSTEXPR
     inline _ForwardIterator
     stable_partition(_ForwardIterator __first, _ForwardIterator __last,
 		     _Predicate __pred)
@@ -2465,6 +2481,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
     }
 
   template<typename _BidirectionalIterator, typename _Compare>
+    _GLIBCXX26_CONSTEXPR
     void
     __inplace_merge(_BidirectionalIterator __first,
 		    _BidirectionalIterator __middle,
@@ -2483,12 +2500,18 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       const _DistanceType __len2 = std::distance(__middle, __last);
 
 #if _GLIBCXX_HOSTED
+# if __glibcxx_constexpr_algorithms >= 202306L // >= C++26
+      if consteval {
+	return std::__merge_without_buffer
+	  (__first, __middle, __last, __len1, __len2, __comp);
+      }
+# endif
       typedef _Temporary_buffer<_BidirectionalIterator, _ValueType> _TmpBuf;
       // __merge_adaptive will use a buffer for the smaller of
       // [first,middle) and [middle,last).
       _TmpBuf __buf(__first, std::min(__len1, __len2));
 
-      if (__builtin_expect(__buf.size() == __buf.requested_size(), true))
+      if (__builtin_expect(__buf.size() == __buf._M_requested_size(), true))
 	std::__merge_adaptive
 	  (__first, __middle, __last, __len1, __len2, __buf.begin(), __comp);
       else if (__builtin_expect(__buf.begin() == 0, false))
@@ -2523,6 +2546,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
    *  distance(__first,__last).
   */
   template<typename _BidirectionalIterator>
+    _GLIBCXX26_CONSTEXPR
     inline void
     inplace_merge(_BidirectionalIterator __first,
 		  _BidirectionalIterator __middle,
@@ -2564,6 +2588,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
    *  the function used for the initial sort.
   */
   template<typename _BidirectionalIterator, typename _Compare>
+    _GLIBCXX26_CONSTEXPR
     inline void
     inplace_merge(_BidirectionalIterator __first,
 		  _BidirectionalIterator __middle,
@@ -4444,8 +4469,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	return __result;
       return std::__unique_copy(__first, __last, __result,
 				__gnu_cxx::__ops::__iter_equal_to_iter(),
-				std::__iterator_category(__first),
-				std::__iterator_category(__result));
+				std::__iterator_category(__first));
     }
 
   /**
@@ -4479,13 +4503,15 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
       __glibcxx_function_requires(_OutputIteratorConcept<_OutputIterator,
 	    typename iterator_traits<_InputIterator>::value_type>)
       __glibcxx_requires_valid_range(__first, __last);
+      __glibcxx_function_requires(_BinaryPredicateConcept<_BinaryPredicate,
+	  typename iterator_traits<_InputIterator>::value_type,
+	  typename iterator_traits<_InputIterator>::value_type>)
 
       if (__first == __last)
 	return __result;
       return std::__unique_copy(__first, __last, __result,
 			__gnu_cxx::__ops::__iter_comp_iter(__binary_pred),
-				std::__iterator_category(__first),
-				std::__iterator_category(__result));
+				std::__iterator_category(__first));
     }
 
 #if __cplusplus <= 201103L || _GLIBCXX_USE_DEPRECATED
@@ -4998,7 +5024,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
       // so the buffer only needs to fit half the range at once.
       _TmpBuf __buf(__first, (__last - __first + 1) / 2);
 
-      if (__builtin_expect(__buf.requested_size() == __buf.size(), true))
+      if (__builtin_expect(__buf._M_requested_size() == __buf.size(), true))
 	std::__stable_sort_adaptive(__first,
 				    __first + _DistanceType(__buf.size()),
 				    __last, __buf.begin(), __comp);

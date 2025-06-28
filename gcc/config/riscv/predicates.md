@@ -27,6 +27,18 @@
   (ior (match_operand 0 "const_arith_operand")
        (match_operand 0 "register_operand")))
 
+;; REG or REG+D where D fits in a simm12 and has the low 5 bits
+;; off.  The REG+D form can be reloaded into a temporary if needed
+;; after FP elimination if that exposes an invalid offset.
+(define_predicate "prefetch_operand"
+  (ior (match_operand 0 "register_operand")
+       (and (match_test "const_arith_operand (op, VOIDmode)")
+	    (match_test "(INTVAL (op) & 0xf) == 0"))
+       (and (match_code "plus")
+	    (match_test "register_operand (XEXP (op, 0), word_mode)")
+	    (match_test "const_arith_operand (XEXP (op, 1), VOIDmode)")
+	    (match_test "(INTVAL (XEXP (op, 1)) & 0xf) == 0"))))
+
 (define_predicate "lui_operand"
   (and (match_code "const_int")
        (match_test "LUI_OPERAND (INTVAL (op))")))
@@ -380,14 +392,6 @@
   (and (match_code "const_int")
        (match_test "SINGLE_BIT_MASK_OPERAND (UINTVAL (op))")))
 
-;; Register, small constant or single bit constant for use in
-;; bseti/binvi.
-(define_predicate "arith_or_zbs_operand"
-  (ior (match_operand 0 "const_arith_operand")
-       (match_operand 0 "register_operand")
-       (and (match_test "TARGET_ZBS")
-	    (match_operand 0 "single_bit_mask_operand"))))
-
 (define_predicate "not_single_bit_mask_operand"
   (and (match_code "const_int")
        (match_test "SINGLE_BIT_MASK_OPERAND (~UINTVAL (op))")))
@@ -685,3 +689,11 @@
   (and (match_operand 0 "register_operand")
        (match_test "REGNO (op) == RETURN_ADDR_REGNUM
 		    || REGNO (op) == T0_REGNUM")))
+
+(define_predicate "bitpos_mask_operand"
+  (and (match_code "const_int")
+       (match_test "TARGET_64BIT ? INTVAL (op) == 63 : INTVAL (op) == 31")))
+
+(define_predicate "reg_or_const_int_operand"
+  (ior (match_operand 0 "const_int_operand")
+       (match_operand 0 "register_operand")))

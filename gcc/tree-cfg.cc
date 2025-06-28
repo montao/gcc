@@ -168,7 +168,7 @@ static edge gimple_try_redirect_by_replacing_jump (edge, basic_block);
 static inline bool stmt_starts_bb_p (gimple *, gimple *);
 static bool gimple_verify_flow_info (void);
 static void gimple_make_forwarder_block (edge);
-static gimple *first_non_label_stmt (basic_block);
+static gimple *first_non_label_nondebug_stmt (basic_block);
 static bool verify_gimple_transaction (gtransaction *);
 static bool call_can_make_abnormal_goto (gimple *);
 
@@ -1263,7 +1263,7 @@ assign_discriminators (void)
 
       FOR_EACH_EDGE (e, ei, bb->succs)
 	{
-	  gimple *first = first_non_label_stmt (e->dest);
+	  gimple *first = first_non_label_nondebug_stmt (e->dest);
 	  gimple *last = last_nondebug_stmt (e->dest);
 
 	  gimple *stmt_on_same_line = NULL;
@@ -2948,14 +2948,13 @@ first_stmt (basic_block bb)
   return stmt;
 }
 
-/* Return the first non-label statement in basic block BB.  */
+/* Return the first non-label/non-debug statement in basic block BB.  */
 
 static gimple *
-first_non_label_stmt (basic_block bb)
+first_non_label_nondebug_stmt (basic_block bb)
 {
-  gimple_stmt_iterator i = gsi_start_bb (bb);
-  while (!gsi_end_p (i) && gimple_code (gsi_stmt (i)) == GIMPLE_LABEL)
-    gsi_next (&i);
+  gimple_stmt_iterator i;
+  i = gsi_start_nondebug_after_labels_bb (bb);
   return !gsi_end_p (i) ? gsi_stmt (i) : NULL;
 }
 
@@ -3868,22 +3867,6 @@ verify_gimple_assign_unary (gassign *stmt)
 
       return false;
 
-    case NEGATE_EXPR:
-    case ABS_EXPR:
-    case BIT_NOT_EXPR:
-    case PAREN_EXPR:
-    case CONJ_EXPR:
-      /* Disallow pointer and offset types for many of the unary gimple. */
-      if (POINTER_TYPE_P (lhs_type)
-	  || TREE_CODE (lhs_type) == OFFSET_TYPE)
-	{
-	  error ("invalid types for %qs", code_name);
-	  debug_generic_expr (lhs_type);
-	  debug_generic_expr (rhs1_type);
-	  return true;
-	}
-      break;
-
     case ABSU_EXPR:
       if (!ANY_INTEGRAL_TYPE_P (lhs_type)
 	  || !TYPE_UNSIGNED (lhs_type)
@@ -3908,6 +3891,27 @@ verify_gimple_assign_unary (gassign *stmt)
 	  return true;
 	}
       return false;
+
+    case CONJ_EXPR:
+      if (TREE_CODE (lhs_type) != COMPLEX_TYPE)
+	{
+diagnose_unary_lhs:
+	  error ("invalid type for %qs", code_name);
+	  debug_generic_expr (lhs_type);
+	  return true;
+	}
+      break;
+
+    case NEGATE_EXPR:
+    case ABS_EXPR:
+    case BIT_NOT_EXPR:
+      if (POINTER_TYPE_P (lhs_type) || TREE_CODE (lhs_type) == OFFSET_TYPE)
+	goto diagnose_unary_lhs;
+      /* FALLTHRU */
+    case PAREN_EXPR:
+      if (AGGREGATE_TYPE_P (lhs_type))
+	goto diagnose_unary_lhs;
+      break;
 
     default:
       gcc_unreachable ();
@@ -5105,6 +5109,19 @@ verify_gimple_cond (gcond *stmt)
       return true;
     }
 
+  tree lhs = gimple_cond_lhs (stmt);
+
+  /* GIMPLE_CONDs condition may not throw.  */
+  if (flag_exceptions
+      && cfun->can_throw_non_call_exceptions
+      && operation_could_trap_p (gimple_cond_code (stmt),
+				 FLOAT_TYPE_P (TREE_TYPE (lhs)),
+				 false, NULL_TREE))
+    {
+      error ("gimple cond condition cannot throw");
+      return true;
+    }
+
   return verify_gimple_comparison (boolean_type_node,
 				   gimple_cond_lhs (stmt),
 				   gimple_cond_rhs (stmt),
@@ -5740,6 +5757,12 @@ gimple_verify_flow_info (void)
       error ("probability of edge from entry block not initialized");
       err = true;
     }
+  if (!EXIT_BLOCK_PTR_FOR_FN (cfun)
+	->count.compatible_p (ENTRY_BLOCK_PTR_FOR_FN (cfun)->count))
+    {
+      error ("exit block count is not compatible with entry block count");
+      err = true;
+    }
 
 
   FOR_EACH_BB_FN (bb, cfun)
@@ -5763,6 +5786,12 @@ gimple_verify_flow_info (void)
 		err = true;
 	      }
         }
+      if (!bb->count.compatible_p (ENTRY_BLOCK_PTR_FOR_FN (cfun)->count))
+	{
+	  error ("count of bb %d is not compatible with entry block count",
+		 bb->index);
+	  err = true;
+	}
 
       /* Skip labels on the start of basic block.  */
       for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
@@ -8310,7 +8339,7 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
 	    fprintf (file, ", ");
 
 	  tree name = get_attribute_name (chain);
-	  print_generic_expr (file, name, dump_flags);
+	  print_generic_expr (file, name, flags);
 	  if (TREE_VALUE (chain) != NULL_TREE)
 	    {
 	      fprintf (file, " (");
@@ -8321,13 +8350,13 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
 				"omp declare variant base"))
 		{
 		  tree a = TREE_VALUE (chain);
-		  print_generic_expr (file, TREE_PURPOSE (a), dump_flags);
+		  print_generic_expr (file, TREE_PURPOSE (a), flags);
 		  fprintf (file, " match ");
 		  print_omp_context_selector (file, TREE_VALUE (a),
-					      dump_flags);
+					      flags);
 		}
 	      else
-		print_generic_expr (file, TREE_VALUE (chain), dump_flags);
+		print_generic_expr (file, TREE_VALUE (chain), flags);
 	      fprintf (file, ")");
 	    }
 	}
@@ -8349,7 +8378,7 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
 	}
 
       print_generic_expr (file, TREE_TYPE (TREE_TYPE (fndecl)),
-			  dump_flags | TDF_SLIM);
+			  flags | TDF_SLIM);
       fprintf (file, " __GIMPLE (%s",
 	       (fun->curr_properties & PROP_ssa) ? "ssa"
 	       : (fun->curr_properties & PROP_cfg) ? "cfg"
@@ -8362,7 +8391,7 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
 	    fprintf (file, ",%s(%" PRIu64 ")",
 		     profile_quality_as_string (bb->count.quality ()),
 		     bb->count.value ());
-	  if (dump_flags & TDF_UID)
+	  if (flags & TDF_UID)
 	    fprintf (file, ")\n%sD_%u (", function_name (fun),
 		     DECL_UID (fndecl));
 	  else
@@ -8371,8 +8400,8 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
     }
   else
     {
-      print_generic_expr (file, TREE_TYPE (fntype), dump_flags);
-      if (dump_flags & TDF_UID)
+      print_generic_expr (file, TREE_TYPE (fntype), flags);
+      if (flags & TDF_UID)
 	fprintf (file, " %sD.%u %s(", function_name (fun), DECL_UID (fndecl),
 		 tmclone ? "[tm-clone] " : "");
       else
@@ -8383,9 +8412,9 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
   arg = DECL_ARGUMENTS (fndecl);
   while (arg)
     {
-      print_generic_expr (file, TREE_TYPE (arg), dump_flags);
+      print_generic_expr (file, TREE_TYPE (arg), flags);
       fprintf (file, " ");
-      print_generic_expr (file, arg, dump_flags);
+      print_generic_expr (file, arg, flags);
       if (DECL_CHAIN (arg))
 	fprintf (file, ", ");
       arg = DECL_CHAIN (arg);
@@ -9800,18 +9829,20 @@ pass_warn_function_return::execute (function *fun)
 	   (e = ei_safe_edge (ei)); )
 	{
 	  last = *gsi_last_bb (e->src);
-	  if ((gimple_code (last) == GIMPLE_RETURN
-	       || gimple_call_builtin_p (last, BUILT_IN_RETURN))
-	      && location == UNKNOWN_LOCATION
-	      && ((location = LOCATION_LOCUS (gimple_location (last)))
-		  != UNKNOWN_LOCATION)
-	      && !optimize)
-	    break;
-	  /* When optimizing, replace return stmts in noreturn functions
+	  /* Warn about __builtin_return .*/
+	  if (gimple_call_builtin_p (last, BUILT_IN_RETURN)
+	      && location == UNKNOWN_LOCATION)
+	    {
+	      location = LOCATION_LOCUS (gimple_location (last));
+	      ei_next (&ei);
+	    }
+	  /* Replace return stmts in noreturn functions
 	     with __builtin_unreachable () call.  */
-	  if (optimize && gimple_code (last) == GIMPLE_RETURN)
+	  else if (gimple_code (last) == GIMPLE_RETURN)
 	    {
 	      location_t loc = gimple_location (last);
+	      if (location == UNKNOWN_LOCATION)
+	        location = LOCATION_LOCUS (loc);
 	      gimple *new_stmt = gimple_build_builtin_unreachable (loc);
 	      gimple_stmt_iterator gsi = gsi_for_stmt (last);
 	      gsi_replace (&gsi, new_stmt, true);

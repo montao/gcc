@@ -2841,16 +2841,28 @@ min_vis_expr_r (tree *tp, int */*walk_subtrees*/, void *data)
       tpvis = type_visibility (TREE_TYPE (t));
       break;
 
+    case ADDR_EXPR:
+      t = TREE_OPERAND (t, 0);
+      if (VAR_P (t))
+	/* If a variable has its address taken, the lvalue-rvalue conversion is
+	   not applied, so skip that case.  */
+	goto addressable;
+      break;
+
     case VAR_DECL:
     case FUNCTION_DECL:
       if (decl_constant_var_p (t))
 	/* The ODR allows definitions in different TUs to refer to distinct
 	   constant variables with internal or no linkage, so such a reference
-	   shouldn't affect visibility (PR110323).  FIXME but only if the
-	   lvalue-rvalue conversion is applied.  We still want to restrict
-	   visibility according to the type of the declaration however.  */
-	tpvis = type_visibility (TREE_TYPE (t));
-      else if (! TREE_PUBLIC (t))
+	   shouldn't affect visibility if the lvalue-rvalue conversion is
+	   applied (PR110323).  We still want to restrict visibility according
+	   to the type of the declaration however.  */
+	{
+	  tpvis = type_visibility (TREE_TYPE (t));
+	  break;
+	}
+    addressable:
+      if (! TREE_PUBLIC (t))
 	tpvis = VISIBILITY_ANON;
       else
 	tpvis = DECL_VISIBILITY (t);
@@ -3148,7 +3160,9 @@ determine_visibility (tree decl)
 	      && !attr)
 	    {
 	      int depth = TMPL_ARGS_DEPTH (args);
-	      if (DECL_VISIBILITY_SPECIFIED (decl))
+	      if (DECL_UNINSTANTIATED_TEMPLATE_FRIEND_P (TI_TEMPLATE (tinfo)))
+		/* Class template args don't affect template friends.  */;
+	      else if (DECL_VISIBILITY_SPECIFIED (decl))
 		{
 		  /* A class template member with explicit visibility
 		     overrides the class visibility, so we need to apply
@@ -4014,6 +4028,7 @@ get_tls_init_fn (tree var)
       SET_DECL_LANGUAGE (fn, lang_c);
       TREE_PUBLIC (fn) = TREE_PUBLIC (var);
       DECL_ARTIFICIAL (fn) = true;
+      DECL_CONTEXT (fn) = FROB_CONTEXT (global_namespace);
       DECL_COMDAT (fn) = DECL_COMDAT (var);
       DECL_EXTERNAL (fn) = DECL_EXTERNAL (var);
       if (DECL_ONE_ONLY (var))
@@ -4073,7 +4088,7 @@ get_tls_wrapper_fn (tree var)
       TREE_PUBLIC (fn) = TREE_PUBLIC (var);
       DECL_ARTIFICIAL (fn) = true;
       DECL_IGNORED_P (fn) = 1;
-      DECL_CONTEXT (fn) = DECL_CONTEXT (var);
+      DECL_CONTEXT (fn) = FROB_CONTEXT (global_namespace);
       /* The wrapper is inline and emitted everywhere var is used.  */
       DECL_DECLARED_INLINE_P (fn) = true;
       if (TREE_PUBLIC (var))
@@ -4172,7 +4187,11 @@ start_objects (bool initp, unsigned priority, bool has_body,
 	       bool omp_target = false)
 {
   bool default_init = initp && priority == DEFAULT_INIT_PRIORITY;
-  bool is_module_init = default_init && module_global_init_needed ();
+  /* FIXME: We may eventually want to treat OpenMP offload initializers
+     in modules specially as well.  */
+  bool is_module_init = (default_init
+			 && !omp_target
+			 && module_global_init_needed ());
   tree name = NULL_TREE;
 
   if (is_module_init)
@@ -4589,6 +4608,23 @@ decomp_finalize_var_list (tree sl, int save_stmts_are_full_exprs_p)
     }
 }
 
+/* Helper for emit_partial_init_fini_fn OpenMP target handling, called via
+   walk_tree.  Set DECL_CONTEXT on any automatic temporaries which still
+   have it NULL to id->src_fn, so that later copy_tree_body_r can remap those.
+   Otherwise DECL_CONTEXT would be set only during gimplification of the host
+   fn and when copy_tree_body_r doesn't remap those, we'd ICE during the
+   target fn gimplification because the same automatic VAR_DECL can't be
+   used in multiple functions (with the exception of nested functions).  */
+
+static tree
+set_context_for_auto_vars_r (tree *tp, int *, void *data)
+{
+  copy_body_data *id = (copy_body_data *) data;
+  if (auto_var_in_fn_p (*tp, NULL_TREE) && DECL_ARTIFICIAL (*tp))
+    DECL_CONTEXT (*tp) = id->src_fn;
+  return NULL_TREE;
+}
+
 /* Generate code to do the initialization or destruction of the decls in VARS,
    a TREE_LIST of VAR_DECL with static storage duration.
    Whether initialization or destruction is performed is specified by INITP.  */
@@ -4647,6 +4683,7 @@ emit_partial_init_fini_fn (bool initp, unsigned priority, tree vars,
 	  id.transform_new_cfg = true;
 	  id.transform_return_to_modify = false;
 	  id.eh_lp_nr = 0;
+	  walk_tree (&init, set_context_for_auto_vars_r, &id, NULL);
 	  walk_tree (&init, copy_tree_body_r, &id, NULL);
 	}
       /* Do one initialization or destruction.  */
@@ -5846,12 +5883,8 @@ c_parse_final_cleanups (void)
       if (static_init_fini_fns[true]->get_or_insert (DEFAULT_INIT_PRIORITY))
 	has_module_inits = true;
 
-      if (flag_openmp)
-	{
-	  if (!static_init_fini_fns[2 + true])
-	    static_init_fini_fns[2 + true] = priority_map_t::create_ggc ();
-	  static_init_fini_fns[2 + true]->get_or_insert (DEFAULT_INIT_PRIORITY);
-	}
+      /* FIXME: We need to work out what static constructors on OpenMP offload
+	 target in modules will look like.  */
     }
 
   /* Generate initialization and destruction functions for all
@@ -6236,6 +6269,33 @@ mark_single_function (tree expr, tsubst_flags_t complain)
   return true;
 }
 
+/* True iff we have started, but not finished, defining FUNCTION_DECL DECL.  */
+
+bool
+fn_being_defined (tree decl)
+{
+  /* DECL_INITIAL is set to error_mark_node in grokfndecl for a definition, and
+     changed to BLOCK by poplevel at the end of the function.  */
+  return (TREE_CODE (decl) == FUNCTION_DECL
+	  && DECL_INITIAL (decl) == error_mark_node);
+}
+
+/* True if DECL is an instantiation of a function template currently being
+   defined.  */
+
+bool
+fn_template_being_defined (tree decl)
+{
+  if (TREE_CODE (decl) != FUNCTION_DECL
+      || !DECL_LANG_SPECIFIC (decl)
+      || !DECL_TEMPLOID_INSTANTIATION (decl)
+      || DECL_TEMPLATE_INSTANTIATED (decl))
+    return false;
+  tree tinfo = DECL_TEMPLATE_INFO (decl);
+  tree pattern = DECL_TEMPLATE_RESULT (TI_TEMPLATE (tinfo));
+  return fn_being_defined (pattern);
+}
+
 /* Mark DECL (either a _DECL or a BASELINK) as "used" in the program.
    If DECL is a specialization or implicitly declared class member,
    generate the actual definition.  Return false if something goes
@@ -6375,15 +6435,23 @@ mark_used (tree decl, tsubst_flags_t complain /* = tf_warning_or_error */)
 
   /* If DECL has a deduced return type, we need to instantiate it now to
      find out its type.  For OpenMP user defined reductions, we need them
-     instantiated for reduction clauses which inline them by hand directly.  */
+     instantiated for reduction clauses which inline them by hand directly.
+     OpenMP declared mappers are used implicitly so must be instantiated
+     before they can be detected.  */
   if (undeduced_auto_decl (decl)
       || (VAR_P (decl)
 	  && VAR_HAD_UNKNOWN_BOUND (decl))
       || (TREE_CODE (decl) == FUNCTION_DECL
-	  && DECL_OMP_DECLARE_REDUCTION_P (decl)))
+	  && DECL_OMP_DECLARE_REDUCTION_P (decl))
+      || (TREE_CODE (decl) == VAR_DECL
+	  && DECL_LANG_SPECIFIC (decl)
+	  && DECL_OMP_DECLARE_MAPPER_P (decl)))
     maybe_instantiate_decl (decl);
 
   if (!decl_dependent_p (decl)
+      /* Don't require this yet for an instantiation of a function template
+	 we're currently defining (c++/120555).  */
+      && !fn_template_being_defined (decl)
       && !require_deduced_type (decl, complain))
     return false;
 
@@ -6397,9 +6465,6 @@ mark_used (tree decl, tsubst_flags_t complain /* = tf_warning_or_error */)
   if (DECL_TEMPLATE_INFO (decl)
       && uses_template_parms (DECL_TI_ARGS (decl)))
     return true;
-
-  if (!require_deduced_type (decl, complain))
-    return false;
 
   if (builtin_pack_fn_p (decl))
     {

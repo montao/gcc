@@ -2659,10 +2659,16 @@ omp_selector_is_dynamic (tree ctx)
 static tree
 omp_device_num_check (tree *device_num, bool *is_host)
 {
+  /* C++ may wrap the device_num expr in a CLEANUP_POINT_EXPR; we want
+     to look inside of it for the special cases.  */
+  tree t = *device_num;
+  if (TREE_CODE (t) == CLEANUP_POINT_EXPR)
+    t = TREE_OPERAND (t, 0);
+
   /* First check for some constant values we can treat specially.  */
-  if (tree_fits_shwi_p (*device_num))
+  if (tree_fits_shwi_p (t))
     {
-      HOST_WIDE_INT num = tree_to_shwi (*device_num);
+      HOST_WIDE_INT num = tree_to_shwi (t);
       if (num < -1)
 	return integer_zero_node;
       /* Initial device?  */
@@ -2681,9 +2687,9 @@ omp_device_num_check (tree *device_num, bool *is_host)
 
   /* Also test for direct calls to OpenMP routines that return valid
      device numbers.  */
-  if (TREE_CODE (*device_num) == CALL_EXPR)
+  if (TREE_CODE (t) == CALL_EXPR)
     {
-      tree fndecl = get_callee_fndecl (*device_num);
+      tree fndecl = get_callee_fndecl (t);
       if (fndecl && omp_runtime_api_call (fndecl))
 	{
 	  const char *fnname = IDENTIFIER_POINTER (DECL_NAME (fndecl));
@@ -4185,7 +4191,7 @@ omp_parse_pointer (tree *expr0, bool *has_offset)
   return false;
 }
 
-static bool
+static void
 omp_parse_access_method (tree *expr0, enum access_method_kinds *kind)
 {
   tree expr = *expr0;
@@ -4216,18 +4222,17 @@ omp_parse_access_method (tree *expr0, enum access_method_kinds *kind)
   STRIP_NOPS (expr);
 
   *expr0 = expr;
-  return true;
 }
 
-static bool
+static void
 omp_parse_access_methods (vec<omp_addr_token *> &addr_tokens, tree *expr0)
 {
   tree expr = *expr0;
   enum access_method_kinds kind;
   tree am_expr;
 
-  if (omp_parse_access_method (&expr, &kind))
-    am_expr = expr;
+  omp_parse_access_method (&expr, &kind);
+  am_expr = expr;
 
   if (TREE_CODE (expr) == INDIRECT_REF
       || TREE_CODE (expr) == MEM_REF
@@ -4237,7 +4242,6 @@ omp_parse_access_methods (vec<omp_addr_token *> &addr_tokens, tree *expr0)
   addr_tokens.safe_push (new omp_addr_token (kind, am_expr));
 
   *expr0 = expr;
-  return true;
 }
 
 static bool omp_parse_structured_expr (vec<omp_addr_token *> &, tree *);
@@ -4355,8 +4359,7 @@ omp_parse_expr (vec<omp_addr_token *> &addr_tokens, tree expr)
   using namespace omp_addr_tokenizer;
   auto_vec<omp_addr_token *> expr_access_tokens;
 
-  if (!omp_parse_access_methods (expr_access_tokens, &expr))
-    return false;
+  omp_parse_access_methods (expr_access_tokens, &expr);
 
   if (omp_parse_structured_expr (addr_tokens, &expr))
     ;

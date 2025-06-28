@@ -35,6 +35,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "print-rtl.h"
 #include "dbgcnt.h"
 #include "diagnostic-core.h"
+#include "target.h"
 
 /* These should probably move into a C++ class.  */
 static vec<bitmap_head> livein;
@@ -206,8 +207,8 @@ ext_dce_process_sets (rtx_insn *insn, rtx obj, bitmap live_tmp)
 
 	  /* We don't support vector destinations or destinations
 	     wider than DImode.  */
-	  scalar_int_mode outer_mode;
-	  if (!is_a <scalar_int_mode> (GET_MODE (x), &outer_mode)
+	  scalar_mode outer_mode;
+	  if (!is_a <scalar_mode> (GET_MODE (x), &outer_mode)
 	      || GET_MODE_BITSIZE (outer_mode) > HOST_BITS_PER_WIDE_INT)
 	    {
 	      /* Skip the subrtxs of this destination.  There is
@@ -239,7 +240,7 @@ ext_dce_process_sets (rtx_insn *insn, rtx obj, bitmap live_tmp)
 	      /* The inner mode might be larger, just punt for
 		 that case.  Remember, we can not just continue to process
 		 the inner RTXs due to the STRICT_LOW_PART.  */
-	      if (!is_a <scalar_int_mode> (GET_MODE (SUBREG_REG (x)), &outer_mode)
+	      if (!is_a <scalar_mode> (GET_MODE (SUBREG_REG (x)), &outer_mode)
 		  || GET_MODE_BITSIZE (outer_mode) > HOST_BITS_PER_WIDE_INT)
 		{
 		  /* Skip the subrtxs of the STRICT_LOW_PART.  We can't
@@ -293,7 +294,7 @@ ext_dce_process_sets (rtx_insn *insn, rtx obj, bitmap live_tmp)
 		 subreg and restart within the SET processing rather than
 		 the top of the loop which just complicates the flow even
 		 more.  */
-	      if (!is_a <scalar_int_mode> (GET_MODE (SUBREG_REG (x)), &outer_mode)
+	      if (!is_a <scalar_mode> (GET_MODE (SUBREG_REG (x)), &outer_mode)
 		  || GET_MODE_BITSIZE (outer_mode) > HOST_BITS_PER_WIDE_INT)
 		{
 		  skipped_dest = true;
@@ -441,6 +442,11 @@ ext_dce_try_optimize_insn (rtx_insn *insn, rtx set)
 	  print_rtl_single (dump_file, new_pattern);
 	  fprintf (dump_file, "\n");
 	}
+
+      /* INSN may have a REG_EQUAL note indicating that the value was
+	 sign or zero extended.  That note is no longer valid since we've
+	 just removed the extension.  Just wipe the notes.  */
+      remove_reg_equal_equiv_notes (insn, false);
     }
   else
     {
@@ -764,13 +770,25 @@ ext_dce_process_uses (rtx_insn *insn, rtx obj,
 			 We don't want to mark those bits live unnecessarily
 			 as that inhibits extension elimination in important
 			 cases such as those in Coremark.  So we need that
-			 outer code.  */
+			 outer code.
+
+			 But if !TRULY_NOOP_TRUNCATION_MODES_P, the mode
+			 change performed by Y would normally need to be a
+			 TRUNCATE rather than a SUBREG.  It is probably the
+			 guarantee provided by SUBREG_PROMOTED_VAR_P that
+			 allows the SUBREG in Y as an exception.  We must
+			 therefore preserve that guarantee and treat the
+			 upper bits of the inner register as live
+			 regardless of the outer code.  See PR 120050.  */
 		      if (!REG_P (SUBREG_REG (y))
 			  || (SUBREG_PROMOTED_VAR_P (y)
 			      && ((GET_CODE (SET_SRC (x)) == SIGN_EXTEND
 				   && SUBREG_PROMOTED_SIGNED_P (y))
 				  || (GET_CODE (SET_SRC (x)) == ZERO_EXTEND
-				      && SUBREG_PROMOTED_UNSIGNED_P (y)))))
+				      && SUBREG_PROMOTED_UNSIGNED_P (y))
+				  || !TRULY_NOOP_TRUNCATION_MODES_P (
+					GET_MODE (y),
+					GET_MODE (SUBREG_REG (y))))))
 			break;
 
 		      bit = subreg_lsb (y).to_constant ();
@@ -1089,16 +1107,9 @@ ext_dce_rd_transfer_n (int bb_index)
 
   ext_dce_process_bb (bb);
 
-  /* We may have narrowed the set of live objects at the start
-     of this block.  If so, update the bitmaps and indicate to
-     the generic dataflow code that something changed.  */
-  if (!bitmap_equal_p (&livein[bb_index], livenow))
-    {
-      bitmap_copy (&livein[bb_index], livenow);
-      return true;
-    }
-
-  return false;
+  /* We only allow widening the set of objects live at the start
+     of a block.  Otherwise we run the risk of not converging.  */
+  return bitmap_ior_into (&livein[bb_index], livenow);
 }
 
 /* Dummy function for the df_simple_dataflow API.  */

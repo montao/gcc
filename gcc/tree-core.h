@@ -368,6 +368,10 @@ enum omp_clause_code {
   /* OpenMP clause: doacross ({source,sink}:vec).  */
   OMP_CLAUSE_DOACROSS,
 
+  /* OpenMP mapper binding: record implicit mappers in scope for aggregate
+     types used within an offload region.  */
+  OMP_CLAUSE__MAPPER_BINDING_,
+
   /* Internal structure to hold OpenACC cache directive's variable-list.
      #pragma acc cache (variable-list).  */
   OMP_CLAUSE__CACHE_,
@@ -2023,7 +2027,7 @@ struct GTY(()) tree_decl_non_common {
 
 /* Classify a special function declaration type.  */
 
-enum function_decl_type
+enum class function_decl_type : unsigned
 {
   NONE,
   OPERATOR_NEW,

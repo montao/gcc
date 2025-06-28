@@ -109,6 +109,25 @@ public:
   : m_inner (logical_loc)
   {}
 
+  operator bool() { return m_inner != nullptr; }
+
+  // Various accessors
+  enum diagnostic_logical_location_kind_t get_kind () const;
+  logical_location get_parent () const;
+  const char *get_short_name () const;
+  const char *get_fully_qualified_name () const;
+  const char *get_decorated_name () const;
+
+  bool operator== (const logical_location &other) const
+  {
+    return m_inner == other.m_inner;
+  }
+
+  bool operator!= (const logical_location &other) const
+  {
+    return m_inner != other.m_inner;
+  }
+
   const diagnostic_logical_location *m_inner;
 };
 
@@ -310,6 +329,17 @@ public:
 				       version);
   }
 
+  bool
+  add_sink_from_spec (const char *option_name,
+		      const char *spec,
+		      manager control_mgr)
+  {
+    return diagnostic_manager_add_sink_from_spec (m_inner,
+						  option_name,
+						  spec,
+						  control_mgr.m_inner);
+  }
+
   void
   write_patch (FILE *dst_stream)
   {
@@ -362,6 +392,8 @@ public:
   diagnostic
   begin_diagnostic (enum diagnostic_level level);
 
+  void
+  set_analysis_target (file f);
 
   diagnostic_manager *m_inner;
   bool m_owned;
@@ -383,6 +415,51 @@ inline file
 physical_location::get_file () const
 {
   return file (diagnostic_physical_location_get_file (m_inner));
+}
+
+// class logical_location
+
+inline enum diagnostic_logical_location_kind_t
+logical_location::get_kind () const
+{
+  // m_inner must be non-null
+  return diagnostic_logical_location_get_kind (m_inner);
+}
+
+inline logical_location
+logical_location::get_parent () const
+{
+  if (m_inner)
+    return diagnostic_logical_location_get_parent (m_inner);
+  else
+    return nullptr;
+}
+
+inline const char *
+logical_location::get_short_name () const
+{
+  if (m_inner)
+    return diagnostic_logical_location_get_short_name (m_inner);
+  else
+    return nullptr;
+}
+
+inline const char *
+logical_location::get_fully_qualified_name () const
+{
+  if (m_inner)
+    return diagnostic_logical_location_get_fully_qualified_name (m_inner);
+  else
+    return nullptr;
+}
+
+inline const char *
+logical_location::get_decorated_name () const
+{
+  if (m_inner)
+    return diagnostic_logical_location_get_decorated_name (m_inner);
+  else
+    return nullptr;
 }
 
 // class execution_path
@@ -617,6 +694,12 @@ inline diagnostic
 manager::begin_diagnostic (enum diagnostic_level level)
 {
   return diagnostic (diagnostic_begin (m_inner, level));
+}
+
+inline void
+manager::set_analysis_target (file f)
+{
+  diagnostic_manager_set_analysis_target (m_inner, f.m_inner);
 }
 
 } // namespace libgdiagnostics

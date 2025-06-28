@@ -1615,6 +1615,8 @@ fully_constant_vn_reference_p (vn_reference_t ref)
 	      ++i;
 	      break;
 	    }
+	  if (operands[i].reverse)
+	    return NULL_TREE;
 	  if (known_eq (operands[i].off, -1))
 	    return NULL_TREE;
 	  off += operands[i].off;
@@ -3998,6 +4000,41 @@ vn_reference_lookup_pieces (tree vuse, alias_set_type set,
   return NULL_TREE;
 }
 
+/* When OPERANDS is an ADDR_EXPR that can be possibly expressed as a
+   POINTER_PLUS_EXPR return true and fill in its operands in OPS.  */
+
+bool
+vn_pp_nary_for_addr (const vec<vn_reference_op_s>& operands, tree ops[2])
+{
+  gcc_assert (operands[0].opcode == ADDR_EXPR
+	      && operands.last ().opcode == SSA_NAME);
+  poly_int64 off = 0;
+  vn_reference_op_t vro;
+  unsigned i;
+  for (i = 1; operands.iterate (i, &vro); ++i)
+    {
+      if (vro->opcode == SSA_NAME)
+	break;
+      else if (known_eq (vro->off, -1))
+	break;
+      off += vro->off;
+    }
+  if (i == operands.length () - 1
+      && maybe_ne (off, 0)
+      /* Make sure we the offset we accumulated in a 64bit int
+	 fits the address computation carried out in target
+	 offset precision.  */
+      && (off.coeffs[0]
+	  == sext_hwi (off.coeffs[0], TYPE_PRECISION (sizetype))))
+    {
+      gcc_assert (operands[i-1].opcode == MEM_REF);
+      ops[0] = operands[i].op0;
+      ops[1] = wide_int_to_tree (sizetype, off);
+      return true;
+    }
+  return false;
+}
+
 /* Lookup OP in the current hash table, and return the resulting value
    number if it exists in the hash table.  Return NULL_TREE if it does
    not exist in the hash table or if the result field of the structure
@@ -4034,28 +4071,9 @@ vn_reference_lookup (tree op, tree vuse, vn_lookup_kind kind,
       && operands[0].opcode == ADDR_EXPR
       && operands.last ().opcode == SSA_NAME)
     {
-      poly_int64 off = 0;
-      vn_reference_op_t vro;
-      unsigned i;
-      for (i = 1; operands.iterate (i, &vro); ++i)
+      tree ops[2];
+      if (vn_pp_nary_for_addr (operands, ops))
 	{
-	  if (vro->opcode == SSA_NAME)
-	    break;
-	  else if (known_eq (vro->off, -1))
-	    break;
-	  off += vro->off;
-	}
-      if (i == operands.length () - 1
-	  /* Make sure we the offset we accumulated in a 64bit int
-	     fits the address computation carried out in target
-	     offset precision.  */
-	  && (off.coeffs[0]
-	      == sext_hwi (off.coeffs[0], TYPE_PRECISION (sizetype))))
-	{
-	  gcc_assert (operands[i-1].opcode == MEM_REF);
-	  tree ops[2];
-	  ops[0] = operands[i].op0;
-	  ops[1] = wide_int_to_tree (sizetype, off);
 	  tree res = vn_nary_op_lookup_pieces (2, POINTER_PLUS_EXPR,
 					       TREE_TYPE (op), ops, NULL);
 	  if (res)
@@ -4178,28 +4196,9 @@ vn_reference_insert (tree op, tree result, tree vuse, tree vdef)
       && operands[0].opcode == ADDR_EXPR
       && operands.last ().opcode == SSA_NAME)
     {
-      poly_int64 off = 0;
-      vn_reference_op_t vro;
-      unsigned i;
-      for (i = 1; operands.iterate (i, &vro); ++i)
+      tree ops[2];
+      if (vn_pp_nary_for_addr (operands, ops))
 	{
-	  if (vro->opcode == SSA_NAME)
-	    break;
-	  else if (known_eq (vro->off, -1))
-	    break;
-	  off += vro->off;
-	}
-      if (i == operands.length () - 1
-	  /* Make sure we the offset we accumulated in a 64bit int
-	     fits the address computation carried out in target
-	     offset precision.  */
-	  && (off.coeffs[0]
-	      == sext_hwi (off.coeffs[0], TYPE_PRECISION (sizetype))))
-	{
-	  gcc_assert (operands[i-1].opcode == MEM_REF);
-	  tree ops[2];
-	  ops[0] = operands[i].op0;
-	  ops[1] = wide_int_to_tree (sizetype, off);
 	  vn_nary_op_insert_pieces (2, POINTER_PLUS_EXPR,
 				    TREE_TYPE (op), ops, result,
 				    VN_INFO (result)->value_id);
@@ -5167,6 +5166,38 @@ dominated_by_p_w_unex (basic_block bb1, basic_block bb2, bool allow_back)
 	      if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
 		return true;
 	    }
+	}
+    }
+  /* Iterate to the single successor of bb2 with only a single executable
+     incoming edge.  */
+  else if (EDGE_COUNT (bb2->succs) == 1
+	   && EDGE_COUNT (single_succ (bb2)->preds) > 1
+	   /* Limit the number of edges we check, we should bring in
+	      context from the iteration and compute the single
+	      executable incoming edge when visiting a block.  */
+	   && EDGE_COUNT (single_succ (bb2)->preds) < 8)
+    {
+      edge prede = NULL;
+      FOR_EACH_EDGE (e, ei, single_succ (bb2)->preds)
+	if ((e->flags & EDGE_EXECUTABLE)
+	    || (!allow_back && (e->flags & EDGE_DFS_BACK)))
+	  {
+	    if (prede)
+	      {
+		prede = NULL;
+		break;
+	      }
+	    prede = e;
+	  }
+      /* We might actually get to a query with BB2 not visited yet when
+	 we're querying for a predicated value.  */
+      if (prede && prede->src == bb2)
+	{
+	  bb2 = prede->dest;
+
+	  /* Re-do the dominance check with changed bb2.  */
+	  if (dominated_by_p (CDI_DOMINATORS, bb1, bb2))
+	    return true;
 	}
     }
 

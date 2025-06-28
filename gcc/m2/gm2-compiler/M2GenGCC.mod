@@ -43,7 +43,7 @@ FROM SymbolTable IMPORT PushSize, PopSize, PushValue, PopValue,
                         IsConst, IsConstSet, IsProcedure, IsProcType,
                         IsVar, IsVarParamAny, IsTemporary, IsTuple,
                         IsEnumeration,
-                        IsUnbounded, IsArray, IsSet, IsConstructor,
+                        IsUnbounded, IsArray, IsSet, IsConstructor, IsConstructorConstant,
                         IsProcedureVariable,
                         IsUnboundedParamAny,
                         IsRecordField, IsFieldVarient, IsVarient, IsRecord,
@@ -61,7 +61,7 @@ FROM SymbolTable IMPORT PushSize, PopSize, PushValue, PopValue,
                         ForeachProcedureDo,
                         ForeachInnerModuleDo,
                         ForeachLocalSymDo,
-			GetLType,
+			GetLType, GetDType,
                         GetType, GetNth, GetNthParamAny,
                         SkipType, SkipTypeAndSubrange,
                         GetUnboundedHighOffset,
@@ -148,7 +148,7 @@ FROM M2ALU IMPORT PtrToValue,
                   ConvertToType ;
 
 FROM M2GCCDeclare IMPORT WalkAction,
-                         DeclareConstant, TryDeclareConstant,
+                         DeclareConstant, TryDeclareConstant, TryDeclareType,
                          DeclareConstructor, TryDeclareConstructor,
                          StartDeclareScope, EndDeclareScope,
                          PromoteToString, PromoteToCString, DeclareLocalVariable,
@@ -194,7 +194,8 @@ FROM m2expr IMPORT GetIntegerZero, GetIntegerOne,
                    BuildLogicalOr, BuildLogicalAnd, BuildSymmetricDifference,
                    BuildLogicalDifference,
                    BuildLogicalShift, BuildLogicalRotate,
-                   BuildNegate, BuildNegateCheck, BuildAddr, BuildSize, BuildTBitSize,
+                   BuildNegate, BuildNegateCheck, BuildAddr, BuildSize,
+                   BuildTBitSize, BuildSystemTBitSize,
                    BuildOffset, BuildOffset1,
                    BuildLessThan, BuildGreaterThan,
                    BuildLessThanOrEqual, BuildGreaterThanOrEqual,
@@ -231,7 +232,7 @@ FROM m2statement IMPORT BuildAsm, BuildProcedureCallTree, BuildParam, BuildFunct
                         BuildReturnValueCode, SetLastFunction,
                         BuildIncludeVarConst, BuildIncludeVarVar,
                         BuildExcludeVarConst, BuildExcludeVarVar,
-                        BuildBuiltinCallTree,
+                        BuildBuiltinCallTree, CopyByField,
 			GetParamTree, BuildCleanUp,
 			BuildTryFinally,
 			GetLastFunction, SetLastFunction,
@@ -240,7 +241,7 @@ FROM m2statement IMPORT BuildAsm, BuildProcedureCallTree, BuildParam, BuildFunct
 FROM m2type IMPORT ChainOnParamValue, GetPointerType, GetIntegerType, AddStatement,
                    GetCardinalType, GetWordType, GetM2ZType, GetM2RType, GetM2CType,
                    BuildCharConstant, AddStringToTreeList, BuildArrayStringConstructor,
-                   GetArrayNoOfElements, GetTreeType ;
+                   GetArrayNoOfElements, GetTreeType, IsGccStrictTypeEquivalent ;
 
 FROM m2block IMPORT RememberConstant, pushGlobalScope, popGlobalScope, finishFunctionDecl,
                     pushFunctionScope, popFunctionScope,
@@ -680,7 +681,7 @@ BEGIN
    IfGreOp            : CodeIfGre (q) |
    IfInOp             : CodeIfIn (q) |
    IfNotInOp          : CodeIfNotIn (q) |
-   IndrXOp            : CodeIndrX (q, op1, op2, op3) |
+   IndrXOp            : CodeIndrX (q) |
    XIndrOp            : CodeXIndr (q) |
    CallOp             : CodeCall (CurrentQuadToken, op3) |
    ParamOp            : CodeParam (q) |
@@ -1031,6 +1032,10 @@ END FoldStatementNote ;
 
 PROCEDURE CodeStatementNote (tokenno: CARDINAL) ;
 BEGIN
+   IF Debugging
+   THEN
+      MetaErrorT0 (tokenno, '{%W} statement note')
+   END ;
    CurrentQuadToken := tokenno ;
    addStmtNote (TokenToLocation (tokenno))
 END CodeStatementNote ;
@@ -2909,9 +2914,6 @@ BEGIN
          IF TypeCheckBecomes (p, quad)
          THEN
             PerformFoldBecomes (p, quad)
-         ELSE
-            GetQuad (quad, op, des, op2, expr) ;
-            RemoveQuad (p, des, quad)
          END
       END
    END
@@ -3002,7 +3004,7 @@ BEGIN
                 despos, op2pos, exprpos) ;
    Assert (op2pos = UnknownTokenNo) ;
    IF StrictTypeChecking AND
-      (NOT AssignmentTypeCompatible (despos, "", des, expr))
+      (NOT AssignmentTypeCompatible (despos, "", des, expr, TRUE))
    THEN
       MetaErrorT2 (MakeVirtualTok (becomespos, despos, exprpos),
                    'assignment check caught mismatch between {%1Ead} and {%2ad}',
@@ -3231,7 +3233,7 @@ BEGIN
       IF SkipType(GetTypeMode(op1))#SkipType(GetTypeMode(op3))
       THEN
          DescribeTypeError (tokenno, op1, op3) ;
-         (* Assigning an errant op3 might ICE, therefore it is safer to return op1.  *)         
+         (* Assigning an errant op3 might ICE, therefore it is safer to return op1.  *)
          RETURN( Mod2Gcc (op1) )
       END
    END ;
@@ -3493,6 +3495,29 @@ END checkDeclare ;
 
 
 (*
+   PerformCodeBecomes -
+*)
+
+PROCEDURE PerformCodeBecomes (location: location_t;
+                              virtpos: CARDINAL; des, expr: CARDINAL) ;
+VAR
+   destree, exprtree: tree ;
+BEGIN
+   destree := Mod2Gcc (des) ;
+   exprtree := FoldConstBecomes (virtpos, des, expr) ;
+   IF IsVar (des) AND IsVariableSSA (des)
+   THEN
+      Replace (des, exprtree)
+   ELSIF IsGccStrictTypeEquivalent (destree, exprtree)
+   THEN
+      BuildAssignmentStatement (location, destree, exprtree)
+   ELSE
+      CopyByField (location, destree, exprtree)
+   END
+END PerformCodeBecomes ;
+
+
+(*
 ------------------------------------------------------------------------------
    := Operator
 ------------------------------------------------------------------------------
@@ -3525,7 +3550,7 @@ BEGIN
    location := TokenToLocation (virtpos) ;
 
    IF StrictTypeChecking AND
-      (NOT AssignmentTypeCompatible (virtpos, "", des, expr))
+      (NOT AssignmentTypeCompatible (virtpos, "", des, expr, TRUE))
    THEN
       ErrorMessageDecl (virtpos,
                         'assignment check caught mismatch between {%1Ead} and {%2ad}',
@@ -3571,14 +3596,7 @@ BEGIN
       ELSE
          IF checkBecomes (des, expr, virtpos, despos, exprpos)
          THEN
-            IF IsVar (des) AND IsVariableSSA (des)
-            THEN
-               Replace (des, FoldConstBecomes (virtpos, des, expr))
-            ELSE
-               BuildAssignmentStatement (location,
-                                         Mod2Gcc (des),
-                                         FoldConstBecomes (virtpos, des, expr))
-            END
+            PerformCodeBecomes (location, virtpos, des, expr)
          ELSE
             SubQuad (quad)  (* We don't want multiple errors for the quad.  *)
          END
@@ -3900,8 +3918,6 @@ END NoWalkProcedure ;
 
 PROCEDURE CheckBinaryExpressionTypes (quad: CARDINAL; p: WalkAction) : BOOLEAN ;
 VAR
-   lefttype,
-   righttype,
    des, left, right: CARDINAL ;
    typeChecking,
    constExpr,
@@ -3919,28 +3935,13 @@ BEGIN
    IF typeChecking AND (op # LogicalRotateOp) AND (op # LogicalShiftOp)
    THEN
       subexprpos := MakeVirtualTok (operatorpos, leftpos, rightpos) ;
-      lefttype := GetType (left) ;
-      righttype := GetType (right) ;
       IF StrictTypeChecking AND
-         (NOT ExpressionTypeCompatible (subexprpos, "", lefttype, righttype,
+         (NOT ExpressionTypeCompatible (subexprpos, "", left, right,
                                         StrictTypeChecking, FALSE))
       THEN
          MetaErrorT2 (subexprpos,
                       'expression mismatch between {%1Etad} and {%2tad}',
                       left, right) ;
-         NoChange := FALSE ;
-         SubQuad (quad) ;
-         p (des) ;
-         RETURN FALSE
-      END ;
-      (* --fixme-- the ExpressionTypeCompatible above should be enough
-         and the code below can be removed once ExpressionTypeCompatible
-         is bug free.  *)
-      IF NOT IsExpressionCompatible (lefttype, righttype)
-      THEN
-         ErrorMessageDecl (subexprpos,
-                           'expression mismatch between {%1Etad} and {%2tad}',
-                           left, right, TRUE) ;
          NoChange := FALSE ;
          SubQuad (quad) ;
          p (des) ;
@@ -3960,7 +3961,6 @@ END CheckBinaryExpressionTypes ;
 
 PROCEDURE CheckElementSetTypes (quad: CARDINAL) : BOOLEAN ;
 VAR
-   lefttype,
    righttype,
    ignore, left, right: CARDINAL ;
    constExpr,
@@ -3977,13 +3977,9 @@ BEGIN
                 overflowChecking, constExpr,
                 leftpos, rightpos, ignorepos) ;
    subexprpos := MakeVirtualTok (operatorpos, leftpos, rightpos) ;
-   lefttype := GetType (left) ;
    righttype := GetType (right) ;
-   (* --fixme-- the ExpressionTypeCompatible below does not always catch
-      type errors, it needs to be fixed and then some of the subsequent tests
-      can be removed (and/or this procedure function rewritten).  *)
    IF StrictTypeChecking AND
-      (NOT ExpressionTypeCompatible (subexprpos, "", lefttype, righttype,
+      (NOT ExpressionTypeCompatible (subexprpos, "", left, right,
                                      StrictTypeChecking, TRUE))
    THEN
       MetaErrorT2 (subexprpos,
@@ -3998,17 +3994,6 @@ BEGIN
       MetaErrorT1 (rightpos,
                    'an {%kIN} expression is expecting {%1Etad} to be a {%kSET} type',
                    right) ;
-      NoChange := FALSE ;
-      SubQuad (quad) ;
-      RETURN FALSE
-   END ;
-   righttype := GetType (SkipType (righttype)) ;
-   (* Now fall though and compare the set element left against the type of set righttype.  *)
-   IF NOT IsExpressionCompatible (lefttype, righttype)
-   THEN
-      ErrorMessageDecl (subexprpos,
-                        'the types used in expression {%1Etad} {%kIN} {%2tad} are incompatible',
-                        left, right, TRUE) ;
       NoChange := FALSE ;
       SubQuad (quad) ;
       RETURN FALSE
@@ -4810,11 +4795,36 @@ END FoldBuiltinTypeInfo ;
 
 
 (*
+   FoldTBitsize - attempt to fold the standard function SYSTEM.TBITSIZE
+                  quadruple.  If the quadruple is folded it is removed.
+*)
+
+PROCEDURE FoldTBitsize  (tokenno: CARDINAL; p: WalkAction;
+                         quad: CARDINAL;
+                         res, type: CARDINAL) ;
+VAR
+   location: location_t ;
+BEGIN
+   location := TokenToLocation(tokenno) ;
+   TryDeclareType (type) ;
+   type := GetDType (type) ;
+   IF CompletelyResolved (type)
+   THEN
+      AddModGcc (res, BuildSystemTBitSize (location, Mod2Gcc (type))) ;
+      p (res) ;
+      NoChange := FALSE ;
+      SubQuad (quad)
+   END
+END FoldTBitsize ;
+
+
+(*
    FoldStandardFunction - attempts to fold a standard function.
 *)
 
 PROCEDURE FoldStandardFunction (tokenno: CARDINAL; p: WalkAction;
-                                quad: CARDINAL; op1, op2, op3: CARDINAL) ;
+                                quad: CARDINAL;
+                                op1, op2, op3: CARDINAL) ;
 VAR
    s       : String ;
    type,
@@ -4940,13 +4950,7 @@ BEGIN
       END
    ELSIF op2=TBitSize
    THEN
-      IF GccKnowsAbout(op3)
-      THEN
-         AddModGcc(op1, BuildTBitSize(location, Mod2Gcc(op3))) ;
-         p(op1) ;
-         NoChange := FALSE ;
-         SubQuad(quad)
-      END
+      FoldTBitsize (tokenno, p, quad, op1, op3)
    ELSE
       InternalError ('only expecting LENGTH, CAP, ABS, IM, RE')
    END
@@ -8137,25 +8141,52 @@ END CodeIfNotIn ;
    (op2 is the type of the data being indirectly copied)
 *)
 
-PROCEDURE CodeIndrX (quad: CARDINAL; op1, op2, op3: CARDINAL) ;
+PROCEDURE CodeIndrX (quad: CARDINAL) ;
 VAR
-   location: location_t ;
+   constExpr,
+   overflowChecking: BOOLEAN ;
+   op              : QuadOperator ;
+   tokenno,
+   left,
+   type,
+   right,
+   leftpos,
+   rightpos,
+   typepos,
+   indrxpos        : CARDINAL ;
+   length,
+   newstr          : tree ;
+   location        : location_t ;
 BEGIN
-   location := TokenToLocation (CurrentQuadToken) ;
+   GetQuadOtok (quad, indrxpos, op, left, type, right,
+                overflowChecking, constExpr,
+                leftpos, typepos, rightpos) ;
+   tokenno := MakeVirtualTok (indrxpos, leftpos, rightpos) ;
+   location := TokenToLocation (tokenno) ;
 
    (*
       Follow the Quadruple rules:
    *)
-   DeclareConstant (CurrentQuadToken, op3) ;  (* checks to see whether it is a constant and declares it *)
-   DeclareConstructor (CurrentQuadToken, quad, op3) ;
-   IF IsConstString (op3)
+   DeclareConstant (rightpos, right) ;  (* Checks to see whether it is a constant
+                                           and if necessary declare it.  *)
+   DeclareConstructor (rightpos, quad, right) ;
+   IF IsConstString (right)
    THEN
       InternalError ('not expecting to index through a constant string')
+   ELSIF StrictTypeChecking AND
+      (NOT AssignmentTypeCompatible (indrxpos, "", left, GetType (right), TRUE))
+   THEN
+      MetaErrorT2 (tokenno,
+                   'assignment check caught mismatch between {%1Ead} and {%2ad}',
+                   left, right) ;
+      SubQuad (quad)
    ELSE
+
       (*
          Mem[op1] := Mem[Mem[op3]]
       *)
-      BuildAssignmentStatement (location, Mod2Gcc (op1), BuildIndirect (location, Mod2Gcc (op3), Mod2Gcc (op2)))
+      BuildAssignmentStatement (location, Mod2Gcc (left),
+                                BuildIndirect (location, Mod2Gcc (right), Mod2Gcc (type)))
    END
 END CodeIndrX ;
 
@@ -8192,6 +8223,14 @@ BEGIN
    type := SkipType (type) ;
    DeclareConstant (rightpos, right) ;
    DeclareConstructor (rightpos, quad, right) ;
+   IF StrictTypeChecking AND
+      (NOT AssignmentTypeCompatible (xindrpos, "", GetType (left), right, TRUE))
+   THEN
+      MetaErrorT2 (tokenno,
+                   'assignment check caught mismatch between {%1Ead} and {%2ad}',
+                   left, right) ;
+      SubQuad (quad)
+   END ;
    IF IsProcType(SkipType(type))
    THEN
       BuildAssignmentStatement (location, BuildIndirect (location, Mod2Gcc (left), GetPointerType ()), Mod2Gcc (right))

@@ -73,3 +73,20 @@ LIBGDIAGNOSTICS_ABI_0
 
   local: *;
 };
+
+# Add accessors for diagnostic_logical_location.
+LIBGDIAGNOSTICS_ABI_1 {
+  global:
+    diagnostic_logical_location_get_kind;
+    diagnostic_logical_location_get_parent;
+    diagnostic_logical_location_get_short_name;
+    diagnostic_logical_location_get_fully_qualified_name;
+    diagnostic_logical_location_get_decorated_name;
+} LIBGDIAGNOSTICS_ABI_0;
+
+# Add hooks needed for HTML output from sarif-replay
+LIBGDIAGNOSTICS_ABI_2 {
+  global:
+    diagnostic_manager_add_sink_from_spec;
+    diagnostic_manager_set_analysis_target;
+} LIBGDIAGNOSTICS_ABI_1;

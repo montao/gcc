@@ -30,6 +30,7 @@ typedef struct _slp_tree *slp_tree;
 #include "internal-fn.h"
 #include "tree-ssa-operands.h"
 #include "gimple-match.h"
+#include "dominance.h"
 
 /* Used for naming of new temporaries.  */
 enum vect_var_kind {
@@ -53,6 +54,14 @@ enum dr_alignment_support {
   dr_explicit_realign,
   dr_explicit_realign_optimized,
   dr_aligned
+};
+
+/* Define type of peeling support to indicate how peeling for alignment can help
+   make vectorization supported.  */
+enum peeling_support {
+  peeling_known_supported,
+  peeling_maybe_supported,
+  peeling_unsupported
 };
 
 /* Define type of def-use cross-iteration cycle.  */
@@ -265,6 +274,9 @@ struct _slp_tree {
   /* Whether uses of this load or feeders of this store are suitable
      for load/store-lanes.  */
   bool ldst_lanes;
+  /* For BB vect, flag to indicate this load node should be vectorized
+     as to avoid STLF fails because of related stores.  */
+  bool avoid_stlf_fail;
 
   int vertex;
 
@@ -818,6 +830,11 @@ public:
      elements that should be false in the first mask).  */
   tree mask_skip_niters;
 
+  /* If we are using a loop mask to align memory addresses and we're in an
+     early break loop then this variable contains the number of elements that
+     were skipped during the initial iteration of the loop. */
+  tree mask_skip_niters_pfa_offset;
+
   /* The type that the loop control IV should be converted to before
      testing which of the VF scalars are active and inactive.
      Only meaningful if LOOP_VINFO_USING_PARTIAL_VECTORS_P.  */
@@ -853,6 +870,9 @@ public:
 
   /* The mask used to check the alignment of pointers or arrays.  */
   int ptr_mask;
+
+  /* Indicates whether the loop has any non-linear IV.  */
+  bool nonlinear_iv;
 
   /* Data Dependence Relations defining address ranges that are candidates
      for a run-time aliasing check.  */
@@ -934,6 +954,13 @@ public:
      epilogue of loop.  */
   bool epil_using_partial_vectors_p;
 
+  /* True if we've decided to use peeling with versioning together, which allows
+     unaligned unsupported data refs to be uniformly aligned after a certain
+     amount of peeling (mutual alignment).  Otherwise, we use versioning alone
+     so these data refs must be already aligned to a power-of-two boundary
+     without peeling.  */
+  bool allow_mutual_alignment;
+
   /* The bias for len_load and len_store.  For now, only 0 and -1 are
      supported.  -1 must be used when a backend does not support
      len_load/len_store with a length of zero.  */
@@ -957,6 +984,10 @@ public:
 
   /* Main loop IV cond.  */
   gcond* loop_iv_cond;
+
+  /* True if we have an unroll factor requested by the user through pragma GCC
+     unroll.  */
+  bool user_unroll;
 
   /* True if there are no loop carried data dependencies in the loop.
      If loop->safelen <= 1, then this is always true, either the loop
@@ -1058,12 +1089,14 @@ public:
 #define LOOP_VINFO_USING_SELECT_VL_P(L) (L)->using_select_vl_p
 #define LOOP_VINFO_EPIL_USING_PARTIAL_VECTORS_P(L)                             \
   (L)->epil_using_partial_vectors_p
+#define LOOP_VINFO_ALLOW_MUTUAL_ALIGNMENT(L) (L)->allow_mutual_alignment
 #define LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS(L) (L)->partial_load_store_bias
 #define LOOP_VINFO_VECT_FACTOR(L)          (L)->vectorization_factor
 #define LOOP_VINFO_MAX_VECT_FACTOR(L)      (L)->max_vectorization_factor
 #define LOOP_VINFO_MASKS(L)                (L)->masks
 #define LOOP_VINFO_LENS(L)                 (L)->lens
 #define LOOP_VINFO_MASK_SKIP_NITERS(L)     (L)->mask_skip_niters
+#define LOOP_VINFO_MASK_NITERS_PFA_OFFSET(L) (L)->mask_skip_niters_pfa_offset
 #define LOOP_VINFO_RGROUP_COMPARE_TYPE(L)  (L)->rgroup_compare_type
 #define LOOP_VINFO_RGROUP_IV_TYPE(L)       (L)->rgroup_iv_type
 #define LOOP_VINFO_PARTIAL_VECTORS_STYLE(L) (L)->partial_vector_style
@@ -1073,6 +1106,7 @@ public:
 #define LOOP_VINFO_DDRS(L)                 (L)->shared->ddrs
 #define LOOP_VINFO_INT_NITERS(L)           (TREE_INT_CST_LOW ((L)->num_iters))
 #define LOOP_VINFO_PEELING_FOR_ALIGNMENT(L) (L)->peeling_for_alignment
+#define LOOP_VINFO_NON_LINEAR_IV(L)        (L)->nonlinear_iv
 #define LOOP_VINFO_UNALIGNED_DR(L)         (L)->unaligned_dr
 #define LOOP_VINFO_MAY_MISALIGN_STMTS(L)   (L)->may_misalign_stmts
 #define LOOP_VINFO_MAY_ALIAS_DDRS(L)       (L)->may_alias_ddrs
@@ -1080,6 +1114,7 @@ public:
 #define LOOP_VINFO_CHECK_UNEQUAL_ADDRS(L)  (L)->check_unequal_addrs
 #define LOOP_VINFO_CHECK_NONZERO(L)        (L)->check_nonzero
 #define LOOP_VINFO_LOWER_BOUNDS(L)         (L)->lower_bounds
+#define LOOP_VINFO_USER_UNROLL(L)          (L)->user_unroll
 #define LOOP_VINFO_GROUPED_STORES(L)       (L)->grouped_stores
 #define LOOP_VINFO_SLP_INSTANCES(L)        (L)->slp_instances
 #define LOOP_VINFO_SLP_UNROLLING_FACTOR(L) (L)->slp_unrolling_factor
@@ -1281,7 +1316,11 @@ public:
 
   /* Set by early break vectorization when this DR needs peeling for alignment
      for correctness.  */
-  bool need_peeling_for_alignment;
+  bool safe_speculative_read_required;
+
+  /* Set by early break vectorization when this DR's scalar accesses are known
+     to be inbounds of a known bounds loop.  */
+  bool scalar_access_known_in_bounds;
 
   tree base_decl;
 
@@ -1856,11 +1895,25 @@ vect_orig_stmt (stmt_vec_info stmt_info)
 inline stmt_vec_info
 get_later_stmt (stmt_vec_info stmt1_info, stmt_vec_info stmt2_info)
 {
-  if (gimple_uid (vect_orig_stmt (stmt1_info)->stmt)
-      > gimple_uid (vect_orig_stmt (stmt2_info)->stmt))
+  gimple *stmt1 = vect_orig_stmt (stmt1_info)->stmt;
+  gimple *stmt2 = vect_orig_stmt (stmt2_info)->stmt;
+  if (gimple_bb (stmt1) == gimple_bb (stmt2))
+    {
+      if (gimple_uid (stmt1) > gimple_uid (stmt2))
+	return stmt1_info;
+      else
+	return stmt2_info;
+    }
+  /* ???  We should be really calling this function only with stmts
+     in the same BB but we can recover if there's a domination
+     relationship between them.  */
+  else if (dominated_by_p (CDI_DOMINATORS,
+			   gimple_bb (stmt1), gimple_bb (stmt2)))
     return stmt1_info;
-  else
+  else if (dominated_by_p (CDI_DOMINATORS,
+			   gimple_bb (stmt2), gimple_bb (stmt1)))
     return stmt2_info;
+  gcc_unreachable ();
 }
 
 /* If STMT_INFO has been replaced by a pattern statement, return the
@@ -1997,6 +2050,35 @@ dr_target_alignment (dr_vec_info *dr_info)
   return dr_info->target_alignment;
 }
 #define DR_TARGET_ALIGNMENT(DR) dr_target_alignment (DR)
+#define DR_SCALAR_KNOWN_BOUNDS(DR) (DR)->scalar_access_known_in_bounds
+
+/* Return if the stmt_vec_info requires peeling for alignment.  */
+inline bool
+dr_safe_speculative_read_required (stmt_vec_info stmt_info)
+{
+  dr_vec_info *dr_info;
+  if (STMT_VINFO_GROUPED_ACCESS (stmt_info))
+    dr_info = STMT_VINFO_DR_INFO (DR_GROUP_FIRST_ELEMENT (stmt_info));
+  else
+    dr_info = STMT_VINFO_DR_INFO (stmt_info);
+
+  return dr_info->safe_speculative_read_required;
+}
+
+/* Set the safe_speculative_read_required for the the stmt_vec_info, if group
+   access then set on the fist element otherwise set on DR directly.  */
+inline void
+dr_set_safe_speculative_read_required (stmt_vec_info stmt_info,
+				       bool requires_alignment)
+{
+  dr_vec_info *dr_info;
+  if (STMT_VINFO_GROUPED_ACCESS (stmt_info))
+    dr_info = STMT_VINFO_DR_INFO (DR_GROUP_FIRST_ELEMENT (stmt_info));
+  else
+    dr_info = STMT_VINFO_DR_INFO (stmt_info);
+
+  dr_info->safe_speculative_read_required = requires_alignment;
+}
 
 inline void
 set_dr_target_alignment (dr_vec_info *dr_info, poly_uint64 val)
@@ -2105,8 +2187,14 @@ unlimited_cost_model (loop_p loop)
 inline bool
 vect_use_loop_mask_for_alignment_p (loop_vec_info loop_vinfo)
 {
+  /* With early break vectorization we don't know whether the accesses will stay
+     inside the loop or not.  TODO: The early break adjustment code can be
+     implemented the same way as vectorizable_linear_induction.  However we
+     can't test this today so reject it.  */
   return (LOOP_VINFO_FULLY_MASKED_P (loop_vinfo)
-	  && LOOP_VINFO_PEELING_FOR_ALIGNMENT (loop_vinfo));
+	  && LOOP_VINFO_PEELING_FOR_ALIGNMENT (loop_vinfo)
+	  && !(LOOP_VINFO_NON_LINEAR_IV (loop_vinfo)
+	       && LOOP_VINFO_EARLY_BREAKS (loop_vinfo)));
 }
 
 /* Return the number of vectors of type VECTYPE that are needed to get
@@ -2323,6 +2411,7 @@ extern tree get_mask_type_for_scalar_type (vec_info *, tree, unsigned int = 0);
 extern tree get_mask_type_for_scalar_type (vec_info *, tree, slp_tree);
 extern tree get_same_sized_vectype (tree, tree);
 extern bool vect_chooses_same_modes_p (vec_info *, machine_mode);
+extern bool vect_chooses_same_modes_p (machine_mode, machine_mode);
 extern bool vect_get_loop_mask_type (loop_vec_info);
 extern bool vect_is_simple_use (tree, vec_info *, enum vect_def_type *,
 				stmt_vec_info * = NULL, gimple ** = NULL);
@@ -2374,17 +2463,15 @@ record_stmt_cost (stmt_vector_for_cost *body_cost_vec, int count,
 			   STMT_VINFO_VECTYPE (stmt_info), misalign, where);
 }
 
-/* Overload of record_stmt_cost with VECTYPE derived from STMT_INFO and
-   SLP node specified.  */
+/* Overload of record_stmt_cost with VECTYPE derived from SLP node.  */
 
 inline unsigned
 record_stmt_cost (stmt_vector_for_cost *body_cost_vec, int count,
-		  enum vect_cost_for_stmt kind, stmt_vec_info stmt_info,
-		  slp_tree node,
+		  enum vect_cost_for_stmt kind, slp_tree node,
 		  int misalign, enum vect_cost_model_location where)
 {
-  return record_stmt_cost (body_cost_vec, count, kind, stmt_info, node,
-			   STMT_VINFO_VECTYPE (stmt_info), misalign, where);
+  return record_stmt_cost (body_cost_vec, count, kind, node,
+			   SLP_TREE_VECTYPE (node), misalign, where);
 }
 
 extern void vect_finish_replace_stmt (vec_info *, stmt_vec_info, gimple *);
@@ -2558,12 +2645,11 @@ extern bool vectorizable_induction (loop_vec_info, stmt_vec_info,
 				    stmt_vector_for_cost *);
 extern bool vect_transform_reduction (loop_vec_info, stmt_vec_info,
 				      gimple_stmt_iterator *,
-				      gimple **, slp_tree);
+				      slp_tree);
 extern bool vect_transform_cycle_phi (loop_vec_info, stmt_vec_info,
-				      gimple **,
 				      slp_tree, slp_instance);
-extern bool vectorizable_lc_phi (loop_vec_info, stmt_vec_info,
-				 gimple **, slp_tree);
+extern bool vectorizable_lc_phi (loop_vec_info, stmt_vec_info, slp_tree);
+extern bool vect_transform_lc_phi (loop_vec_info, stmt_vec_info, slp_tree);
 extern bool vectorizable_phi (vec_info *, stmt_vec_info, gimple **, slp_tree,
 			      stmt_vector_for_cost *);
 extern bool vectorizable_recurr (loop_vec_info, stmt_vec_info,
@@ -2616,7 +2702,7 @@ extern void duplicate_and_interleave (vec_info *, gimple_seq *, tree,
 extern int vect_get_place_in_interleaving_chain (stmt_vec_info, stmt_vec_info);
 extern slp_tree vect_create_new_slp_node (unsigned, tree_code);
 extern void vect_free_slp_tree (slp_tree);
-extern bool compatible_calls_p (gcall *, gcall *);
+extern bool compatible_calls_p (gcall *, gcall *, bool);
 extern int vect_slp_child_index_for_operand (const gimple *, int op, bool);
 
 extern tree prepare_vec_mask (loop_vec_info, tree, tree, tree,

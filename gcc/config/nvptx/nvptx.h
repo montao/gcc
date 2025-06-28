@@ -101,6 +101,7 @@
    PTX ISA Version 3.1.  */
 #define TARGET_PTX_4_1 (ptx_version_option >= PTX_VERSION_4_1)
 #define TARGET_PTX_4_2 (ptx_version_option >= PTX_VERSION_4_2)
+#define TARGET_PTX_5_0 (ptx_version_option >= PTX_VERSION_5_0)
 #define TARGET_PTX_6_0 (ptx_version_option >= PTX_VERSION_6_0)
 #define TARGET_PTX_6_3 (ptx_version_option >= PTX_VERSION_6_3)
 #define TARGET_PTX_7_0 (ptx_version_option >= PTX_VERSION_7_0)
@@ -378,10 +379,6 @@ struct GTY(()) machine_function
 
 /* See 'libgcc/config/nvptx/crt0.c' for wrapping of 'main'.  */
 #define HAS_INIT_SECTION
-
-/* The C++ front end insists to link against libstdc++ -- which we don't build.
-   Tell it to instead link against the innocuous libgcc.  */
-#define LIBSTDCXX "gcc"
 
 /* The default doesn't fly ('internal compiler error: in simplify_subreg' when
    'dw2_assemble_integer' -> 'assemble_integer' attempts to simplify

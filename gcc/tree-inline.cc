@@ -1892,6 +1892,15 @@ remap_gimple_stmt (gimple *stmt, copy_body_data *id)
 	    gimple_call_set_tail (call_stmt, false);
 	  if (gimple_call_from_thunk_p (call_stmt))
 	    gimple_call_set_from_thunk (call_stmt, false);
+	  /* Silently clear musttail flag when inlining a function
+	     with must tail call from a non-musttail call.  The inlining
+	     removes one frame so acts like musttail's intent, and we
+	     can be inlining a function with musttail calls in the middle
+	     of caller where musttail will always error.  */
+	  if (gimple_call_must_tail_p (call_stmt)
+	      && id->call_stmt
+	      && !gimple_call_must_tail_p (id->call_stmt))
+	    gimple_call_set_must_tail (call_stmt, false);
 	  if (gimple_call_internal_p (call_stmt))
 	    switch (gimple_call_internal_fn (call_stmt))
 	      {
@@ -2230,7 +2239,7 @@ copy_bb (copy_body_data *id, basic_block bb,
 		}
 	      else if (nargs != 0)
 		{
-		  tree newlhs = create_tmp_reg_or_ssa_name (integer_type_node);
+		  tree newlhs = make_ssa_name (integer_type_node);
 		  count = build_int_cst (integer_type_node, nargs);
 		  new_stmt = gimple_build_assign (gimple_call_lhs (stmt),
 						  PLUS_EXPR, newlhs, count);
@@ -2720,8 +2729,11 @@ copy_edges_for_bb (basic_block bb, profile_count num, profile_count den,
 		   && gimple_call_arg (copy_stmt, 0) == boolean_true_node)
 	    nonlocal_goto = false;
 	  else
-	    make_single_succ_edge (copy_stmt_bb, abnormal_goto_dest,
-				   EDGE_ABNORMAL);
+	    {
+	      make_single_succ_edge (copy_stmt_bb, abnormal_goto_dest,
+				     EDGE_ABNORMAL);
+	      gimple_call_set_ctrl_altering (copy_stmt, true);
+	    }
 	}
 
       if ((can_throw || nonlocal_goto)
@@ -2854,7 +2866,6 @@ initialize_cfun (tree new_fndecl, tree callee_fndecl, profile_count count)
   cfun->nonlocal_goto_save_area = src_cfun->nonlocal_goto_save_area;
   cfun->function_end_locus = src_cfun->function_end_locus;
   cfun->curr_properties = src_cfun->curr_properties;
-  cfun->last_verified = src_cfun->last_verified;
   cfun->va_list_gpr_size = src_cfun->va_list_gpr_size;
   cfun->va_list_fpr_size = src_cfun->va_list_fpr_size;
   cfun->has_nonlocal_label = src_cfun->has_nonlocal_label;
@@ -3073,7 +3084,7 @@ copy_cfg_body (copy_body_data * id,
   /* Register specific tree functions.  */
   gimple_register_cfg_hooks ();
 
-  /* If we are inlining just region of the function, make sure to connect
+  /* If we are offlining region of the function, make sure to connect
      new entry to ENTRY_BLOCK_PTR_FOR_FN (cfun).  Since new entry can be
      part of loop, we must compute frequency and probability of
      ENTRY_BLOCK_PTR_FOR_FN (cfun) based on the frequencies and
@@ -3082,12 +3093,14 @@ copy_cfg_body (copy_body_data * id,
     {
       edge e;
       edge_iterator ei;
-      den = profile_count::zero ();
+      ENTRY_BLOCK_PTR_FOR_FN (cfun)->count = profile_count::zero ();
 
       FOR_EACH_EDGE (e, ei, new_entry->preds)
 	if (!e->src->aux)
-	  den += e->count ();
-      ENTRY_BLOCK_PTR_FOR_FN (cfun)->count = den;
+	  ENTRY_BLOCK_PTR_FOR_FN (cfun)->count += e->count ();
+      /* Do not scale - the profile of offlined region should
+	 remain unchanged.  */
+      num = den = profile_count::one ();
     }
 
   profile_count::adjust_for_ipa_scaling (&num, &den);
@@ -4835,7 +4848,9 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
     goto egress;
 
   cg_edge = id->dst_node->get_edge (stmt);
-  gcc_checking_assert (cg_edge);
+  /* Edge should exist and speculations should be resolved at this
+     stage.  */
+  gcc_checking_assert (cg_edge && !cg_edge->speculative);
   /* First, see if we can figure out what function is being called.
      If we cannot, then there is no hope of inlining the function.  */
   if (cg_edge->indirect_unknown_callee)
@@ -5003,6 +5018,9 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
 	loc = LOCATION_LOCUS (DECL_SOURCE_LOCATION (fn));
       if (loc == UNKNOWN_LOCATION)
 	loc = BUILTINS_LOCATION;
+      if (has_discriminator (gimple_location (stmt)))
+	loc = location_with_discriminator
+		(loc, get_discriminator_from_loc (gimple_location (stmt)));
       id->block = make_node (BLOCK);
       BLOCK_ABSTRACT_ORIGIN (id->block) = DECL_ORIGIN (fn);
       BLOCK_SOURCE_LOCATION (id->block) = loc;

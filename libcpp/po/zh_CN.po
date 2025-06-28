@@ -2,22 +2,24 @@
 # Copyright (C) 2005 Free Software Foundation, Inc.
 # This file is distributed under the same license as the gcc package.
 # Meng Jie <zuxy.meng@gmail.com>, 2005-2010.
+# Boyuan Yang <073plan@gmail.com>, 2025.
+# Anbang LI <anbangli@foxmail.com>, 2025.
 # Zhanhaoxiang Zhang <zzhx2006@outlook.com>, 2024, 2025.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: cpplib 15-b20250216\n"
+"Project-Id-Version: cpplib 15.1-b20250316\n"
 "Report-Msgid-Bugs-To: https://gcc.gnu.org/bugs/\n"
-"POT-Creation-Date: 2025-02-14 22:50+0000\n"
-"PO-Revision-Date: 2025-02-20 18:32+0800\n"
-"Last-Translator: Zhanhaoxiang Zhang <zzhx2006@outlook.com>\n"
+"POT-Creation-Date: 2025-03-14 22:05+0000\n"
+"PO-Revision-Date: 2025-05-15 12:47-0400\n"
+"Last-Translator: Boyuan Yang <073plan@gmail.com>\n"
 "Language-Team: Chinese (simplified) <i18n-zh@googlegroups.com>\n"
 "Language: zh_CN\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Bugs: Report translation errors to the Language-Team address.\n"
-"X-Generator: Poedit 3.5\n"
+"X-Generator: Poedit 3.6\n"
 
 #: charset.cc:759
 #, gcc-internal-format, gfc-internal-format
@@ -49,12 +51,12 @@ msgstr "字符 0x%lx 在执行字符集中不是单字节的"
 
 #: charset.cc:1549
 msgid "universal character names are only valid in C++ and C99"
-msgstr "Unicode 字符名只在 C++ 和 C99 中有效"
+msgstr "通用字符名只在 C++ 和 C99 中有效"
 
 #: charset.cc:1553
 #, gcc-internal-format
 msgid "C99%'s universal character names are incompatible with C90"
-msgstr "C99 的 Unicode 字符名与 C90 不兼容"
+msgstr "C99 的通用字符名与 C90 不兼容"
 
 #: charset.cc:1556
 #, gcc-internal-format
@@ -64,29 +66,29 @@ msgstr "%<\\%c%> 的意义与在传统 C 中不同"
 #: charset.cc:1595
 #, gcc-internal-format
 msgid "%<\\N%> not followed by %<{%>"
-msgstr "%<\\N%> 后没有 %<{%>"
+msgstr "%<\\N%> 后面没有 %<{%>"
 
 #: charset.cc:1625
 msgid "empty named universal character escape sequence; treating it as separate tokens"
-msgstr "空的命名 Unicode 字符转义序列；将其视为独立 token 处理"
+msgstr "空命名通用字符转义序列; 将其视为单独的词元"
 
 #: charset.cc:1632
 msgid "empty named universal character escape sequence"
-msgstr "空的命名 Unicode 字符转义序列"
+msgstr "空的命名通用字符转义序列"
 
 #: charset.cc:1639
 msgid "named universal character escapes are only valid in C++23"
-msgstr "命名 Unicode 字符转义序列(named universal character escapes)仅在 C++23 中有效"
+msgstr "命名通用字符转义仅在 C++23 中有效"
 
 #: charset.cc:1659
 #, gcc-internal-format
 msgid "%<\\N{%.*s}%> is not a valid universal character; treating it as separate tokens"
-msgstr "%<\\N{%.*s}%> 不是一个有效的 Unicode 字符；将其视为独立 token 处理"
+msgstr "%<\\N{%.*s}%> 不是有效的通用字符; 将其视为独立的词元"
 
 #: charset.cc:1665
 #, gcc-internal-format
 msgid "%<\\N{%.*s}%> is not a valid universal character"
-msgstr "%<\\N{%.*s}%> 不是一个有效的 Unicode 字符"
+msgstr "%<\\N{%.*s}%> 不是一个有效的通用字符"
 
 #: charset.cc:1675
 #, gcc-internal-format
@@ -96,7 +98,7 @@ msgstr "你是说 %<\\N{%s}%> 吗？"
 #: charset.cc:1693
 #, gcc-internal-format
 msgid "%<\\N{%> not terminated with %<}%> after %.*s; treating it as separate tokens"
-msgstr "在 %.*s 之后 %<\\N{%> 未以 %<}%> 结束；将其视为独立 token 处理"
+msgstr "在 %.*s 之后 %<\\N{%> 未以 %<}%> 结束；将其视为独立词元"
 
 #: charset.cc:1702
 #, gcc-internal-format
@@ -110,7 +112,7 @@ msgstr "在 %<_cpp_valid_ucn%> 中但不是一个 UCN"
 
 #: charset.cc:1753
 msgid "empty delimited escape sequence; treating it as separate tokens"
-msgstr "空的带分隔符的转义序列；将其视为独立 token 处理"
+msgstr "空的带分隔符的转义序列；将其视为独立词元"
 
 #: charset.cc:1760 charset.cc:2163 charset.cc:2280
 msgid "empty delimited escape sequence"
@@ -128,12 +130,12 @@ msgstr "带分隔符的转义序列仅在 C2Y 中有效"
 #: charset.cc:1794
 #, gcc-internal-format
 msgid "%<\\u{%> not terminated with %<}%> after %.*s; treating it as separate tokens"
-msgstr "在 %.*s 之后 %<\\u{%> 未以 %<}%> 结束；将其视为独立 token 处理"
+msgstr "在 %.*s 之后 %<\\u{%> 未以 %<}%> 结束；将其视为独立词元"
 
 #: charset.cc:1806
 #, gcc-internal-format
 msgid "incomplete universal character name %.*s"
-msgstr "不完全的 Unicode 字符名 %.*s"
+msgstr "不完整的通用字符名 %.*s"
 
 #: charset.cc:1810
 #, gcc-internal-format
@@ -143,12 +145,12 @@ msgstr "在 %.*s 之后 %<\\u{%> 未以 %<}%> 结束"
 #: charset.cc:1818
 #, gcc-internal-format
 msgid "%.*s is not a valid universal character"
-msgstr "%.*s 不是一个有效的 Unicode 字符"
+msgstr "%.*s 不是一个有效的通用字符"
 
 #: charset.cc:1834 charset.cc:1838
 #, gcc-internal-format
 msgid "%.*s is not a valid universal character name before C23"
-msgstr "在C23之前，%.*s 不是一个有效的 Unicode 字符名"
+msgstr "在C23之前，%.*s 不是一个有效的通用字符名"
 
 #: charset.cc:1854 lex.cc:2096
 #, gcc-internal-format
@@ -158,17 +160,17 @@ msgstr "%<$%> 出现在标识符或数字中"
 #: charset.cc:1864
 #, gcc-internal-format
 msgid "universal character %.*s is not valid in an identifier"
-msgstr "Unicode 字符 %.*s 在标识符中无效"
+msgstr "通用字符 %.*s 在标识符中无效"
 
 #: charset.cc:1868
 #, gcc-internal-format
 msgid "universal character %.*s is not valid at the start of an identifier"
-msgstr "Unicode 字符 %.*s 在标识符开头无效"
+msgstr "通用字符 %.*s 在标识符开头无效"
 
 #: charset.cc:1875
 #, gcc-internal-format
 msgid "%.*s is outside the UCS codespace"
-msgstr "%.*s 超出了 UCS 码空间"
+msgstr "%.*s 在 UCS 码空间之外"
 
 #: charset.cc:1919 charset.cc:3072
 msgid "converting UCN to source character set"
@@ -186,7 +188,7 @@ msgstr "扩展字符 %.*s 在标识符中无效"
 #: charset.cc:2007
 #, gcc-internal-format
 msgid "extended character %.*s is not valid at the start of an identifier"
-msgstr "扩展字符 %.*s 在标识符开头无效"
+msgstr "扩展字符 %.*s 在标识符的开头无效"
 
 #: charset.cc:2129
 #, gcc-internal-format
@@ -209,8 +211,8 @@ msgstr "16 进制转义序列越界"
 
 #: charset.cc:2247
 #, gcc-internal-format
-msgid "%<\\o%> not followed by %<}%>"
-msgstr "%<\\o%> 后没有 %<}%>"
+msgid "%<\\o%> not followed by %<{%>"
+msgstr "%<\\o%> 后面没有 %<{%>"
 
 #: charset.cc:2305
 #, gcc-internal-format
@@ -298,18 +300,18 @@ msgstr "%<#%s%> 指示的末尾有多余的标识符"
 msgid "extra tokens at end of #%s directive"
 msgstr "#%s 指示的末尾有多余的标识符"
 
-#: directives.cc:396 directives.cc:1370
+#: directives.cc:396
 #, gcc-internal-format
 msgid "%<#%s%> is a GCC extension"
 msgstr "%<#%s%> 是一个 GCC 扩展"
 
-#: directives.cc:404 directives.cc:2681 directives.cc:2720
+#: directives.cc:404 directives.cc:2686 directives.cc:2725
 #, gcc-internal-format
 msgid "%<#%s%> before C++23 is a GCC extension"
 msgstr "%<#%s%> 在C++23以前是一个 GCC 扩展"
 
-#: directives.cc:409 directives.cc:415 directives.cc:1373 directives.cc:2685
-#: directives.cc:2725
+#: directives.cc:409 directives.cc:415 directives.cc:1374 directives.cc:2690
+#: directives.cc:2730
 #, gcc-internal-format
 msgid "%<#%s%> before C23 is a GCC extension"
 msgstr "%<#%s%> 在C23以前是一个 GCC 扩展"
@@ -386,7 +388,7 @@ msgstr "缺少结尾的 %<>%> 字符"
 msgid "%<#%s%> expects %<\"FILENAME\"%> or %<<FILENAME>%>"
 msgstr "%<#%s%> 需要 %<\"FILENAME\"%> 或 %<<FILENAME>%>"
 
-#: directives.cc:911 directives.cc:1386
+#: directives.cc:911 directives.cc:1391
 #, gcc-internal-format, gfc-internal-format
 msgid "empty filename in #%s"
 msgstr "#%s 中文件名为空"
@@ -459,182 +461,192 @@ msgstr "预期为字符串字面量"
 msgid "%<#embed%> not supported in traditional C"
 msgstr "在传统C中不支持 %<#embed%>"
 
-#: directives.cc:1431
+#: directives.cc:1370
+#, gcc-internal-format
+msgid "%<#%s%> before C++26 is a GCC extension"
+msgstr "%<#%s%> 在 C++26 以前是一个 GCC 扩展"
+
+#: directives.cc:1379
+#, gcc-internal-format
+msgid "%<#%s%> is a C23 feature"
+msgstr "%<#%s%> 是一个 C23 特性"
+
+#: directives.cc:1436
 #, gcc-internal-format
 msgid "invalid flag %qs in line directive"
 msgstr "line 指示中有无效的标记 %qs"
 
-#: directives.cc:1499
+#: directives.cc:1504
 #, gcc-internal-format
 msgid "unexpected end of file after %<#line%>"
 msgstr "%<#line%> 后未预期的文件结束"
 
-#: directives.cc:1502
+#: directives.cc:1507
 #, gcc-internal-format
 msgid "%qs after %<#line%> is not a positive integer"
 msgstr "%<#line%> 后的 %qs 不是一个正整数"
 
-#: directives.cc:1508 directives.cc:1511
+#: directives.cc:1513 directives.cc:1516
 msgid "line number out of range"
 msgstr "行号超出范围"
 
-#: directives.cc:1524 directives.cc:1605
+#: directives.cc:1529 directives.cc:1610
 #, gcc-internal-format
 msgid "%qs is not a valid filename"
 msgstr "%qs 不是一个有效的文件名"
 
-#: directives.cc:1565
+#: directives.cc:1570
 #, gcc-internal-format
 msgid "%qs after %<#%> is not a positive integer"
 msgstr "%<#%> 后的 %qs 不是一个正整数"
 
-#: directives.cc:1632
+#: directives.cc:1637
 #, gcc-internal-format
 msgid "file %qs linemarker ignored due to incorrect nesting"
 msgstr "文件 %qs 中的行标记因嵌套不正确而被忽略"
 
-#: directives.cc:1710 directives.cc:1712 directives.cc:1714 directives.cc:2321
+#: directives.cc:1715 directives.cc:1717 directives.cc:1719 directives.cc:2326
 #, gcc-internal-format, gfc-internal-format
 msgid "%s"
 msgstr "%s"
 
-#: directives.cc:1738
+#: directives.cc:1743
 #, gcc-internal-format, gfc-internal-format
 msgid "invalid #%s directive"
 msgstr "无效的 #%s 指示"
 
-#: directives.cc:1801
+#: directives.cc:1806
 #, gcc-internal-format
 msgid "registering pragmas in namespace %qs with mismatched name expansion"
 msgstr "在命名空间 %qs 中注册 pragma 时名称扩展不匹配"
 
-#: directives.cc:1810
+#: directives.cc:1815
 #, gcc-internal-format
 msgid "registering pragma %qs with name expansion and no namespace"
 msgstr "pragma %qs 被注册为一个命名扩展，而没有命名空间"
 
-#: directives.cc:1828
+#: directives.cc:1833
 #, gcc-internal-format
 msgid "registering %qs as both a pragma and a pragma namespace"
 msgstr "%qs 既被注册为一个 pragma 又被注册为一个 pragma 命名空间"
 
-#: directives.cc:1831
+#: directives.cc:1836
 #, gcc-internal-format
 msgid "%<#pragma %s %s%> is already registered"
 msgstr "%<#pragma %s %s%> 已经被注册"
 
-#: directives.cc:1834
+#: directives.cc:1839
 #, gcc-internal-format
 msgid "%<#pragma %s%> is already registered"
 msgstr "%<#pragma %s%> 已经被注册"
 
-#: directives.cc:1865
+#: directives.cc:1870
 msgid "registering pragma with NULL handler"
 msgstr "pragma 注册为被 NULL 处理"
 
-#: directives.cc:2083
+#: directives.cc:2088
 #, gcc-internal-format
 msgid "%<#pragma once%> in main file"
 msgstr "%<#pragma once%> 出现在主文件中"
 
-#: directives.cc:2153
+#: directives.cc:2158
 #, gcc-internal-format
 msgid "invalid %<#pragma %s_macro%> directive"
 msgstr "无效的 %<#pragma %s_macro%> 指示"
 
-#: directives.cc:2232
+#: directives.cc:2237
 #, gcc-internal-format
 msgid "invalid %<#pragma GCC poison%> directive"
 msgstr "无效的 %<#pragma GCC poison%> 指示"
 
-#: directives.cc:2241
+#: directives.cc:2246
 #, gcc-internal-format
 msgid "poisoning existing macro %qs"
 msgstr "对已存在的宏 %qs 投毒"
 
-#: directives.cc:2263
+#: directives.cc:2268
 #, gcc-internal-format
 msgid "%<#pragma system_header%> ignored outside include file"
 msgstr "%<#pragma system_header%> 在包含文件外被忽略"
 
-#: directives.cc:2288
+#: directives.cc:2293
 #, gcc-internal-format, gfc-internal-format
 msgid "cannot find source file %s"
 msgstr "找不到源文件 %s"
 
-#: directives.cc:2292
+#: directives.cc:2297
 #, gcc-internal-format, gfc-internal-format
 msgid "current file is older than %s"
 msgstr "当前文件早于 %s"
 
-#: directives.cc:2316
+#: directives.cc:2321
 #, gcc-internal-format
 msgid "invalid %<#pragma GCC %s%> directive"
 msgstr "无效的 %<#pragma GCC %s%> 指示"
 
-#: directives.cc:2536
+#: directives.cc:2541
 #, gcc-internal-format
 msgid "%<_Pragma%> takes a parenthesized string literal"
 msgstr "%<_Pragma%> 需要一个括起的字符串字面常量"
 
-#: directives.cc:2619
+#: directives.cc:2624
 #, gcc-internal-format
 msgid "%<#else%> without %<#if%>"
 msgstr "%<#else%> 没有匹配的 %<#if%>"
 
-#: directives.cc:2624
+#: directives.cc:2629
 #, gcc-internal-format
 msgid "%<#else%> after %<#else%>"
 msgstr "%<#else%> 出现在 %<#else%> 后"
 
-#: directives.cc:2626 directives.cc:2661
+#: directives.cc:2631 directives.cc:2666
 msgid "the conditional began here"
 msgstr "条件自此开始"
 
-#: directives.cc:2652
+#: directives.cc:2657
 #, gcc-internal-format
 msgid "%<#%s%> without %<#if%>"
 msgstr "%<#%s%> 没有匹配的 %<#if%>"
 
-#: directives.cc:2658
+#: directives.cc:2663
 #, gcc-internal-format
 msgid "%<#%s%> after %<#else%>"
 msgstr "%<#%s%> 出现在 %<#else%> 后"
 
-#: directives.cc:2762
+#: directives.cc:2767
 #, gcc-internal-format
 msgid "%<#endif%> without %<#if%>"
 msgstr "%<#endif%> 没有匹配的 %<#if%>"
 
-#: directives.cc:2847
+#: directives.cc:2852
 #, gcc-internal-format
 msgid "missing %<(%> after predicate"
 msgstr "谓词后缺少 %<(%>"
 
-#: directives.cc:2865
+#: directives.cc:2870
 #, gcc-internal-format
 msgid "missing %<)%> to complete answer"
 msgstr "完整的答案缺少 %<)%>"
 
-#: directives.cc:2877
+#: directives.cc:2882
 #, gcc-internal-format
 msgid "predicate%'s answer is empty"
 msgstr "谓词的答案为空"
 
-#: directives.cc:2907
+#: directives.cc:2912
 msgid "assertion without predicate"
 msgstr "断言后没有谓词"
 
-#: directives.cc:2910
+#: directives.cc:2915
 msgid "predicate must be an identifier"
 msgstr "谓词必须是一个标识符"
 
-#: directives.cc:2992
+#: directives.cc:2997
 #, gcc-internal-format
 msgid "%qs re-asserted"
 msgstr "重断言 %qs"
 
-#: directives.cc:3300
+#: directives.cc:3305
 #, gcc-internal-format, gfc-internal-format
 msgid "unterminated #%s"
 msgstr "未终止的 #%s"

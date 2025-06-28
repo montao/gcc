@@ -1848,6 +1848,12 @@ scan_expr_access (tree expr, gimple *stmt, isra_scan_context ctx,
   if (!desc || !desc->split_candidate)
     return;
 
+  if (storage_order_barrier_p (expr))
+    {
+      disqualify_split_candidate (desc, "Encountered a storage order barrier.");
+      return;
+    }
+
   if (!poffset.is_constant (&offset)
       || !psize.is_constant (&size)
       || !pmax_size.is_constant (&max_size))
@@ -2242,7 +2248,11 @@ isra_analyze_call (cgraph_edge *cs)
 	  BITMAP_FREE (analyzed);
 	}
     }
-  else
+  /* Don't set m_return_ignored for musttail calls.  The tailc/musttail passes
+     compare the returned value against the IPA-VRP return value range if
+     it is a singleton, but if the call is changed to something which doesn't
+     return anything, it will always fail.  */
+  else if (!gimple_call_must_tail_p (call_stmt))
     csum->m_return_ignored = true;
 }
 
@@ -4640,7 +4650,7 @@ ipa_sra_summarize_function (cgraph_node *node)
 {
   if (dump_file)
     fprintf (dump_file, "Creating summary for %s/%i:\n", node->name (),
-	     node->order);
+	     node->get_uid ());
   gcc_obstack_init (&gensum_obstack);
   loaded_decls = new hash_set<tree>;
 

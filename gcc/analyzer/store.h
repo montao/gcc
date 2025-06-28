@@ -299,6 +299,16 @@ struct bit_range
 
   bool as_byte_range (byte_range *out) const;
 
+  bool
+  operator< (const bit_range &other) const
+  {
+    if (m_start_bit_offset < other.m_start_bit_offset)
+      return true;
+    if (m_start_bit_offset > other.m_start_bit_offset)
+      return false;
+    return (m_size_in_bits < other.m_size_in_bits);
+  }
+
   bit_offset_t m_start_bit_offset;
   bit_size_t m_size_in_bits;
 };
@@ -666,7 +676,7 @@ public:
 				 store_manager *mgr);
 
   void mark_as_escaped ();
-  void on_unknown_fncall (const gcall *call, store_manager *mgr,
+  void on_unknown_fncall (const gcall &call, store_manager *mgr,
 			  const conjured_purge &p);
   void on_asm (const gasm *stmt, store_manager *mgr,
 	       const conjured_purge &p);
@@ -800,7 +810,7 @@ public:
 			   model_merger *merger);
 
   void mark_as_escaped (const region *base_reg);
-  void on_unknown_fncall (const gcall *call, store_manager *mgr,
+  void on_unknown_fncall (const gcall &call, store_manager *mgr,
 			  const conjured_purge &p);
   bool escaped_p (const region *reg) const;
 
