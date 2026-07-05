@@ -57,10 +57,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Tp, typename _CharT = char> struct formatter;
 
 /// @cond undocumented
-  [[noreturn]]
-  inline void
-  __throw_format_error(const char* __what);
-
 namespace __format
 {
 #ifdef _GLIBCXX_USE_WCHAR_T
@@ -189,6 +185,11 @@ namespace __format
       return type_identity<_Rg>{};
     }();
 #endif // format_ranges
+
+#if __glibcxx_print >= 202403L
+  template<typename>
+    constexpr bool enable_nonlocking_formatter_optimization = false;
+#endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std

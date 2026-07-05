@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -453,7 +453,7 @@ package Atree is
 
    function Parent_Or_List_Containing (X : Union_Id) return Union_Id;
    --  X must be in Node_Range or in List_Range. If X is in Node_Range and is
-   --  contained in a list, returns that list, otherwise return the parent of
+   --  contained in a list, returns that list, otherwise returns the parent of
    --  the list or node represented by X.
 
    function Paren_Count (N : Node_Id) return Nat;
@@ -650,6 +650,20 @@ package Atree is
    --  if Type_Only = Base_Type_Only, we need to go to the Base_Type, and
    --  similarly for the other two cases. This can return something other
    --  than N only if N is an Entity.
+
+   function Node_To_Fetch_From_If_Set
+     (N : Node_Or_Entity_Id; Field : Node_Or_Entity_Field)
+     return Node_Or_Entity_Id is
+      (case Field_Descriptors (Field).Type_Only is
+         when No_Type_Only => N,
+         when Base_Type_Only => Base_Type_If_Set (N),
+         when Impl_Base_Type_Only => Implementation_Base_Type_If_Set (N),
+         when Root_Type_Only => Root_Type_If_Set (N));
+   --  This is a more permissive version of Node_To_Fetch_From, which
+   --  returns the same value, except it returns Empty in cases where
+   --  Node_To_Fetch_From would crash because relevant fields are not yet
+   --  set. This is used in Treepr, to allow it to print half-baked nodes
+   --  without crashing.
 
    -----------------------------
    -- Private Part Subpackage --

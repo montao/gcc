@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -852,7 +852,7 @@ private
       Source_Index           : Source_File_Index;
       Cunit                  : Node_Id;
       Cunit_Entity           : Entity_Id;
-      Dependency_Num         : Int;
+      Dependency_Num         : Nat;
       Ident_String           : Node_Id;
       Main_Priority          : Int;
       Main_CPU               : Int;
@@ -901,7 +901,7 @@ private
    function Unit_Name_Hash (Id : Unit_Name_Type) return Unit_Name_Header_Num;
    --  Simple hash function for Unit_Name_Types
 
-   package Unit_Names is new GNAT.Htable.Simple_HTable
+   package Unit_Names is new GNAT.HTable.Simple_HTable
      (Header_Num => Unit_Name_Header_Num,
       Element    => Unit_Number_Type,
       No_Element => No_Unit,

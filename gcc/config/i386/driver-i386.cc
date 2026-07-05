@@ -1,5 +1,5 @@
 /* Subroutines for the gcc driver.
-   Copyright (C) 2006-2025 Free Software Foundation, Inc.
+   Copyright (C) 2006-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -466,6 +466,8 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	processor = PROCESSOR_GEODE;
       else if (has_feature (FEATURE_MOVBE) && family == 22)
 	processor = PROCESSOR_BTVER2;
+      else if (has_feature (FEATURE_AVX512BMM))
+	processor = PROCESSOR_ZNVER6;
       else if (has_feature (FEATURE_AVX512VP2INTERSECT))
 	processor = PROCESSOR_ZNVER5;
       else if (has_feature (FEATURE_AVX512F))
@@ -498,6 +500,18 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	processor = PROCESSOR_K6;
       else
 	processor = PROCESSOR_PENTIUM;
+    }
+  else if (vendor == VENDOR_HYGON)
+    {
+      processor = PROCESSOR_GENERIC;
+      if (model == 4)
+	processor = PROCESSOR_C86_4G_M4;
+      else if (model == 6)
+	processor = PROCESSOR_C86_4G_M6;
+      else if (model == 7)
+	processor = PROCESSOR_C86_4G_M7;
+      else if (model >= 8)
+	processor = PROCESSOR_C86_4G_M8;
     }
   else if (vendor == VENDOR_CENTAUR)
     {
@@ -553,6 +567,7 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	  processor = PROCESSOR_PENTIUM;
 	  break;
 	case 6:
+	case 18:
 	case 19:
 	  processor = PROCESSOR_PENTIUMPRO;
 	  break;
@@ -600,8 +615,11 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	      if (has_feature (FEATURE_AVX512F))
 		{
 		  /* Assume Diamond Rapids.  */
-		  if (has_feature (FEATURE_AMX_TRANSPOSE))
+		  if (has_feature (FEATURE_AMX_FP8))
 		    cpu = "diamondrapids";
+		  /* Assume Nova Lake.  */
+		  else if (has_feature (FEATURE_AVX10_2))
+		    cpu = "novalake";
 		  /* Assume Granite Rapids D.  */
 		  else if (has_feature (FEATURE_AMX_COMPLEX))
 		    cpu = "graniterapids-d";
@@ -639,18 +657,24 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 		}
 	      else if (has_feature (FEATURE_AVX))
 		{
-		  /* Assume Panther Lake.  */
-		  if (has_feature (FEATURE_PREFETCHI))
-		    cpu = "pantherlake";
 		  /* Assume Clearwater Forest.  */
-		  else if (has_feature (FEATURE_USER_MSR))
+		  if (has_feature (FEATURE_USER_MSR))
 		    cpu = "clearwaterforest";
-		  /* Assume Arrow Lake S.  */
 		  else if (has_feature (FEATURE_SM3))
-		    cpu = "arrowlake-s";
+		    {
+			if (has_feature (FEATURE_KL))
+			  /* Assume Arrow Lake S.  */
+			  cpu = "arrowlake-s";
+			else
+			  /* Assume Panther Lake.  */
+			  cpu = "pantherlake";
+		    }
 		  /* Assume Sierra Forest.  */
-		  else if (has_feature (FEATURE_AVXVNNIINT8))
+		  else if (has_feature (FEATURE_CLDEMOTE))
 		    cpu = "sierraforest";
+		  /* Assume Arrow Lake.  */
+		  else if (has_feature (FEATURE_AVXVNNIINT8))
+		    cpu = "arrowlake";
 		  /* Assume Alder Lake.  */
 		  else if (has_feature (FEATURE_SERIALIZE))
 		    cpu = "alderlake";
@@ -820,6 +844,9 @@ const char *host_detect_local_cpu (int argc, const char **argv)
     case PROCESSOR_ZNVER5:
       cpu = "znver5";
       break;
+    case PROCESSOR_ZNVER6:
+      cpu = "znver6";
+      break;
     case PROCESSOR_BTVER1:
       cpu = "btver1";
       break;
@@ -834,6 +861,18 @@ const char *host_detect_local_cpu (int argc, const char **argv)
       break;
     case PROCESSOR_SHIJIDADAO:
       cpu = "shijidadao";
+      break;
+    case PROCESSOR_C86_4G_M4:
+      cpu = "c86-4g-m4";
+      break;
+    case PROCESSOR_C86_4G_M6:
+      cpu = "c86-4g-m6";
+      break;
+    case PROCESSOR_C86_4G_M7:
+      cpu = "c86-4g-m7";
+      break;
+    case PROCESSOR_C86_4G_M8:
+      cpu = "c86-4g-m8";
       break;
 
     default:

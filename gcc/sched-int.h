@@ -1,6 +1,6 @@
 /* Instruction scheduling pass.  This file contains definitions used
    internally in the scheduler.
-   Copyright (C) 1992-2025 Free Software Foundation, Inc.
+   Copyright (C) 1992-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -572,7 +572,7 @@ public:
 
   /* True when this context should be treated as a readonly by
      the analysis.  */
-  BOOL_BITFIELD readonly : 1;
+  bool readonly : 1;
 };
 
 typedef class deps_desc *deps_t;

@@ -1,6 +1,6 @@
 // <barrier> -*- C++ -*-
 
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -114,6 +114,12 @@ It looks different from literature pseudocode for two main reasons:
 	_M_state.store(_M_alloc_state().release(), memory_order_release);
     }
 
+    ~__tree_barrier_base()
+    { delete[] _M_state.load(memory_order_relaxed); }
+
+    __tree_barrier_base(const __tree_barrier_base&&) = delete;
+    __tree_barrier_base& operator=(const __tree_barrier_base&&) = delete;
+
     unique_ptr<__state_t[]>
     _M_alloc_state()
     {
@@ -146,7 +152,7 @@ It looks different from literature pseudocode for two main reasons:
 	      if (__current == __end_node)
 		__current = 0;
 	      auto __expect = __old_phase;
-	      __atomic_phase_ref_t __phase(__state[__current]
+	      __atomic_phase_ref_t __phase(&__state[__current]
 					      .__tickets[__round]);
 	      if (__current == __last_node && (__current_expected & 1))
 		{
@@ -198,7 +204,7 @@ It looks different from literature pseudocode for two main reasons:
 
 	std::hash<std::thread::id> __hasher;
 	size_t __current = __hasher(std::this_thread::get_id());
-	__atomic_phase_ref_t __phase(_M_phase);
+	__atomic_phase_ref_t __phase(&_M_phase);
 	const auto __old_phase = __phase.load(memory_order_relaxed);
 	const auto __cur = static_cast<unsigned char>(__old_phase);
 
@@ -230,7 +236,7 @@ It looks different from literature pseudocode for two main reasons:
       void
       wait(arrival_token&& __old_phase) const
       {
-	__atomic_phase_const_ref_t __phase(_M_phase);
+	__atomic_phase_const_ref_t __phase(&_M_phase);
 	__phase.wait(__old_phase, memory_order_acquire);
       }
 

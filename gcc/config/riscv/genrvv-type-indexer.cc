@@ -1,5 +1,5 @@
 /* Generate the RVV type indexer tables.
-   Copyright (C) 2023-2025 Free Software Foundation, Inc.
+   Copyright (C) 2023-2026 Free Software Foundation, Inc.
 This file is part of GCC.
 GCC is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
@@ -20,7 +20,6 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "coretypes.h"
 
-#include <assert.h>
 #include <math.h>
 
 #define BOOL_SIZE_LIST                                                         \
@@ -364,11 +363,11 @@ main (int argc, const char **argv)
 	    fprintf (fp, "  /*QUAD_EMUL_UNSIGNED*/ %s,\n",
 		     inttype (8, lmul_log2 - 1, true).c_str ());
 	    fprintf (fp, "  /*QUAD_FIX*/ %s,\n",
-		     inttype (8, lmul_log2, unsigned_p).c_str ());
+		     inttype (sew / 4, lmul_log2, unsigned_p).c_str ());
 	    fprintf (fp, "  /*QUAD_FIX_SIGNED*/ %s,\n",
-		     inttype (8, lmul_log2, false).c_str ());
+		     inttype (sew / 4, lmul_log2, false).c_str ());
 	    fprintf (fp, "  /*QUAD_FIX_UNSIGNED*/ %s,\n",
-		     inttype (8, lmul_log2, true).c_str ());
+		     inttype (sew / 4, lmul_log2, true).c_str ());
 	    fprintf (fp, "  /*OCT_TRUNC*/ %s,\n",
 		     same_ratio_eew_type (sew, lmul_log2, sew / 8, unsigned_p,
 					  false)

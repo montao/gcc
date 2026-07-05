@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2026 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    F2003 I/O support contributed by Jerry DeLisle
 
@@ -145,7 +145,8 @@ typedef enum
   FMT_LPAREN, FMT_RPAREN, FMT_X, FMT_S, FMT_SS, FMT_SP, FMT_STRING,
   FMT_BADSTRING, FMT_P, FMT_I, FMT_B, FMT_BN, FMT_BZ, FMT_O, FMT_Z, FMT_F,
   FMT_E, FMT_EN, FMT_ES, FMT_G, FMT_L, FMT_A, FMT_D, FMT_H, FMT_END, FMT_DC,
-  FMT_DP, FMT_STAR, FMT_RC, FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ, FMT_DT
+  FMT_DP, FMT_STAR, FMT_RC, FMT_RD, FMT_RN, FMT_RP, FMT_RU, FMT_RZ, FMT_DT, FMT_EX,
+  FMT_LPS, FMT_LPZ, FMT_LZ
 }
 format_token;
 
@@ -655,6 +656,9 @@ typedef struct gfc_unit
 
   int read_bad, current_record, saved_pos, previous_nonadvancing_write;
 
+  /* Position information for better diagnostics.  */
+  int line_number, column_number;
+
   enum
   { NO_ENDFILE, AT_ENDFILE, AFTER_ENDFILE }
   endfile;
@@ -728,6 +732,7 @@ typedef struct gfc_unit
   int last_char;
   bool has_size;
   GFC_IO_INT size_used;
+  intptr_t self;
 }
 gfc_unit;
 
@@ -782,8 +787,8 @@ internal_proto(close_unit);
 extern gfc_unit *set_internal_unit (st_parameter_dt *, gfc_unit *, int);
 internal_proto(set_internal_unit);
 
-extern void stash_internal_unit (st_parameter_dt *);
-internal_proto(stash_internal_unit);
+extern void check_for_recursive (st_parameter_dt *dtp);
+internal_proto(check_for_recursive);
 
 extern gfc_unit *find_unit (int);
 internal_proto(find_unit);
@@ -885,6 +890,9 @@ internal_proto(read_a);
 extern void read_f (st_parameter_dt *, const fnode *, char *, int);
 internal_proto(read_f);
 
+extern void read_ex (st_parameter_dt *, const fnode *, char *, int);
+internal_proto(read_ex);
+
 extern void read_l (st_parameter_dt *, const fnode *, char *, int);
 internal_proto(read_l);
 
@@ -944,6 +952,9 @@ internal_proto(write_en);
 
 extern void write_es (st_parameter_dt *, const fnode *, const char *, int);
 internal_proto(write_es);
+
+extern void write_ex (st_parameter_dt *, const fnode *, const char *, int);
+internal_proto(write_ex);
 
 extern void write_f (st_parameter_dt *, const fnode *, const char *, int);
 internal_proto(write_f);

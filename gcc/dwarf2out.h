@@ -1,5 +1,5 @@
 /* dwarf2out.h - Various declarations for functions found in dwarf2out.cc
-   Copyright (C) 1998-2025 Free Software Foundation, Inc.
+   Copyright (C) 1998-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -161,8 +161,8 @@ struct GTY(()) dw_cfa_location {
   poly_int64 base_offset;
   /* REG is in DWARF_FRAME_REGNUM space, *not* normal REGNO space.  */
   struct cfa_reg reg;
-  BOOL_BITFIELD indirect : 1;  /* 1 if CFA is accessed via a dereference.  */
-  BOOL_BITFIELD in_use : 1;    /* 1 if a saved cfa is stored here.  */
+  bool indirect : 1;  /* 1 if CFA is accessed via a dereference.  */
+  bool in_use : 1;    /* 1 if a saved cfa is stored here.  */
 };
 
 
@@ -288,7 +288,7 @@ struct GTY(()) dw_val_node {
 	     from DW_OP_addr with a dtp-relative symbol relocation.  */
 	  unsigned int dw_loc_dtprel_v : 1;
 	  /* For DW_OP_pick, DW_OP_dup and DW_OP_over operations: true iff.
-	     it targets a DWARF prodecure argument.  In this case, it needs to be
+	     it targets a DWARF procedure argument.  In this case, it needs to be
 	     relocated according to the current frame offset.  */
 	  unsigned int dw_loc_frame_offset_rel_v : 1;
 	} u1;
@@ -345,7 +345,7 @@ struct GTY((chain_next ("%h.dw_loc_next"))) dw_loc_descr_node {
      from DW_OP_addr with a dtp-relative symbol relocation.  */
 #define dw_loc_dtprel dw_loc_oprnd1.u.u1.dw_loc_dtprel_v
   /* For DW_OP_pick, DW_OP_dup and DW_OP_over operations: true iff.
-     it targets a DWARF prodecure argument.  In this case, it needs to be
+     it targets a DWARF procedure argument.  In this case, it needs to be
      relocated according to the current frame offset.  */
 #define dw_loc_frame_offset_rel dw_loc_oprnd1.u.u1.dw_loc_frame_offset_rel_v
 #define dw_loc_addr dw_loc_oprnd2.u.u2

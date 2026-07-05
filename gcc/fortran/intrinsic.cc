@@ -1,6 +1,6 @@
 /* Build up a list of intrinsic subroutines and functions for the
    name-resolution stage.
-   Copyright (C) 2000-2025 Free Software Foundation, Inc.
+   Copyright (C) 2000-2026 Free Software Foundation, Inc.
    Contributed by Andy Vaught & Katherine Holcomb
 
 This file is part of GCC.
@@ -1840,6 +1840,14 @@ add_functions (void)
 
   make_generic ("cosh", GFC_ISYM_COSH, GFC_STD_F77);
 
+  add_sym_2 ("coshape", GFC_ISYM_COSHAPE, CLASS_INQUIRY, ACTUAL_NO,
+	     BT_INTEGER, di, GFC_STD_F2018,
+	     gfc_check_coshape, NULL , gfc_resolve_coshape,
+	     ca, BT_REAL, dr, REQUIRED,
+	     kind, BT_INTEGER, di, OPTIONAL);
+
+  make_generic ("coshape", GFC_ISYM_COSHAPE, GFC_STD_F2018);
+
   add_sym_3 ("count", GFC_ISYM_COUNT, CLASS_TRANSFORMATIONAL, ACTUAL_NO,
 	     BT_INTEGER, di, GFC_STD_F95,
 	     gfc_check_count, gfc_simplify_count, gfc_resolve_count,
@@ -3577,7 +3585,7 @@ add_functions (void)
 	     gfc_check_fn_d, gfc_simplify_tand, gfc_resolve_trig,
 	     x, BT_REAL, dd, REQUIRED);
 
-  /* The following function is internally used for coarray libray functions.
+  /* The following function is internally used for coarray library functions.
      "make_from_module" makes it inaccessible for external users.  */
   add_sym_1 (GFC_PREFIX ("caf_get"), GFC_ISYM_CAF_GET, CLASS_IMPURE, ACTUAL_NO,
 	     BT_REAL, dr, GFC_STD_GNU, NULL, NULL, NULL,
@@ -3933,21 +3941,43 @@ add_subroutines (void)
 	      pt, BT_INTEGER, di, OPTIONAL, INTENT_IN,
 	      gt, BT_INTEGER, di, OPTIONAL, INTENT_OUT);
 
+  add_sym_4s ("split", GFC_ISYM_SPLIT, CLASS_PURE,
+	      BT_UNKNOWN, 0, GFC_STD_F2023,
+	      gfc_check_split, NULL, gfc_resolve_split,
+	      "string", BT_CHARACTER, dc, REQUIRED, INTENT_IN,
+	      "set", BT_CHARACTER, dc, REQUIRED, INTENT_IN,
+	      "pos", BT_INTEGER, di, REQUIRED, INTENT_INOUT,
+	      "back", BT_LOGICAL, dl, OPTIONAL, INTENT_IN);
+
   /* The following subroutines are part of ISO_C_BINDING.  */
 
-  add_sym_3s ("c_f_pointer", GFC_ISYM_C_F_POINTER, CLASS_IMPURE, BT_UNKNOWN, 0,
+  add_sym_4s ("c_f_pointer", GFC_ISYM_C_F_POINTER, CLASS_IMPURE, BT_UNKNOWN, 0,
 	      GFC_STD_F2003, gfc_check_c_f_pointer, NULL, NULL,
 	      "cptr", BT_VOID, 0, REQUIRED, INTENT_IN,
 	      "fptr", BT_UNKNOWN, 0, REQUIRED, INTENT_OUT,
-	      "shape", BT_INTEGER, di, OPTIONAL, INTENT_IN);
-  make_from_module();
+	      "shape", BT_INTEGER, di, OPTIONAL, INTENT_IN,
+	      "lower", BT_INTEGER, di, OPTIONAL, INTENT_IN);
+  make_from_module ();
 
   add_sym_2s ("c_f_procpointer", GFC_ISYM_C_F_PROCPOINTER, CLASS_IMPURE,
 	      BT_UNKNOWN, 0, GFC_STD_F2003, gfc_check_c_f_procpointer,
 	      NULL, NULL,
 	      "cptr", BT_VOID, 0, REQUIRED, INTENT_IN,
 	      "fptr", BT_UNKNOWN, 0, REQUIRED, INTENT_OUT);
-  make_from_module();
+  make_from_module ();
+
+  /* This represents both forms of the intrinsic; the one with the
+     signature given here, and the one that accepts a scalar for the
+     first argument with name "cstrptr" instead of "cstrarray".
+     This is handled by special-casing in sort_actual as well as
+     in the check function.  */
+  add_sym_3s ("c_f_strpointer", GFC_ISYM_C_F_STRPOINTER, CLASS_IMPURE,
+	      BT_UNKNOWN, 0, GFC_STD_F2023, gfc_check_c_f_strpointer,
+	      NULL, NULL,
+	      "cstrarray", BT_VOID, dc, REQUIRED, INTENT_IN,
+	      "fstrptr", BT_UNKNOWN, dc, REQUIRED, INTENT_OUT,
+	      "nchars", BT_INTEGER, di, OPTIONAL, INTENT_IN);
+  make_from_module ();
 
   /* Internal subroutine for emitting a runtime error.  */
 
@@ -4003,7 +4033,7 @@ add_subroutines (void)
 	      errmsg, BT_CHARACTER, dc, OPTIONAL, INTENT_INOUT);
 
 
-  /* The following subroutine is internally used for coarray libray functions.
+  /* The following subroutine is internally used for coarray library functions.
      "make_from_module" makes it inaccessible for external users.  */
   add_sym_2s (GFC_PREFIX ("caf_send"), GFC_ISYM_CAF_SEND, CLASS_IMPURE,
 	      BT_UNKNOWN, 0, GFC_STD_GNU, NULL, NULL, NULL,
@@ -4499,6 +4529,7 @@ sort_actual (const char *name, gfc_actual_arglist **ap,
 {
   gfc_actual_arglist *actual, *a;
   gfc_intrinsic_arg *f;
+  bool is_c_f_strpointer = false;
 
   remove_nullargs (ap);
   actual = *ap;
@@ -4519,7 +4550,9 @@ sort_actual (const char *name, gfc_actual_arglist **ap,
     return true;
 
   /* ALLOCATED has two mutually exclusive keywords, but only one
-     can be present at time and neither is optional. */
+     can be present at time and neither is optional.  Likewise
+     C_F_STRPOINTER, but since that subroutine has multiple arguments
+     it has to be handled in the keywords loop below.  */
   if (strcmp (name, "allocated") == 0)
     {
       if (!a)
@@ -4588,9 +4621,32 @@ whoops:
 keywords:
   /* Associate the remaining actual arguments, all of which have
      to be keyword arguments.  */
+  is_c_f_strpointer = strcmp (name, "c_f_strpointer") == 0;
   for (; a; a = a->next)
     {
       int idx;
+
+      /* Special case C_F_STRPOINTER.  The first argument can either
+	 be an array named "cstrarray" or a scalar named "cstrptr".  */
+      if (is_c_f_strpointer)
+	{
+	  idx = 0;
+	  if (strcmp (a->name, "cstrarray") == 0)
+	    {
+	      if (a->expr->rank != 0)
+		goto got_keyword;
+	      gfc_error ("Array entity required at %L", &a->expr->where);
+	      return false;
+	    }
+	  else if (strcmp (a->name, "cstrptr") == 0)
+	    {
+	      if (a->expr->rank == 0)
+		goto got_keyword;
+	      gfc_error ("Scalar entity required at %L", &a->expr->where);
+	      return false;
+	    }
+	}
+
       FOR_EACH_VEC_ELT (dummy_args, idx, f)
 	if (strcmp (a->name, f->name) == 0)
 	  break;
@@ -4606,10 +4662,11 @@ keywords:
 	  return false;
 	}
 
+    got_keyword:
       if (ordered_actual_args[idx] != NULL)
 	{
 	  gfc_error ("Argument %qs appears twice in call to %qs at %L",
-		     f->name, name, where);
+		     a->name, name, where);
 	  return false;
 	}
       ordered_actual_args[idx] = a;
@@ -4942,11 +4999,52 @@ finish:
   return true;
 }
 
+/* Mark actual arguments as used according to the INTENTs of a
+   formal arglist.  */
 
-/* Initialize the gfc_current_intrinsic_arg[] array for the benefit of
-   error messages.  This subroutine returns false if a subroutine
-   has more than MAX_INTRINSIC_ARGS, in which case the actual argument
-   list cannot match any intrinsic.  */
+static void
+mark_args_as_used (gfc_intrinsic_arg *f, gfc_actual_arglist *a)
+{
+  while (f != NULL && a != NULL)
+    {
+      if (a->expr != NULL)
+	{
+	  if (f->value)
+	    {
+	      gfc_value_used_expr (a->expr, VALUE_VALUE_ARG);
+	      continue;
+	    }
+
+	  switch (f->intent)
+	    {
+	    case INTENT_INOUT:
+	    case INTENT_UNKNOWN:
+	      gfc_value_set_and_used (a->expr, &a->expr->where, VALUE_ARG,
+				      VALUE_MAYBE_USED);
+	      break;
+
+	    case INTENT_IN:
+	      gfc_value_used_expr (a->expr, VALUE_INTENT_IN);
+	      break;
+
+	    case INTENT_OUT:
+	      if (a->expr->expr_type == EXPR_VARIABLE)
+		{
+		  gfc_symbol *s = a->expr->symtree->n.sym;
+		  gfc_expr_set_at (a->expr, &a->expr->where, VALUE_INTENT_OUT);
+		  if (s->attr.allocatable)
+		    s->attr.allocated = 1;
+		}
+	      break;
+	    }
+	}
+      f = f->next;
+      a = a->next;
+    }
+}
+
+/* Initialize the gfc_current_intrinsic_arg[] array for the benefit of error
+   messages.  Errors out if there are too many arguments.  */
 
 static void
 init_arglist (gfc_intrinsic_sym *isym)
@@ -5407,6 +5505,7 @@ gfc_intrinsic_sub_interface (gfc_code *c, int error_flag)
 
   c->resolved_sym->attr.noreturn = isym->noreturn;
 
+  mark_args_as_used (isym->formal, c->ext.actual);
   return MATCH_YES;
 
 fail:
@@ -5456,6 +5555,9 @@ gfc_convert_type_warn (gfc_expr *expr, gfc_typespec *ts, int eflag, int wflag,
 
   if (ts->type == BT_UNKNOWN)
     goto bad;
+
+  if (from_ts.type == BT_DERIVED && from_ts.u.derived->attr.pdt_type)
+    *ts = from_ts;
 
   expr->do_not_warn = ! wflag;
 

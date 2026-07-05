@@ -1,7 +1,7 @@
 /* An experimental state machine, for tracking bad calls from within
    signal handlers.
 
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -22,7 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "analyzer/common.h"
 
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "sbitmap.h"
 #include "ordered-hash-map.h"
 #include "selftest.h"
@@ -63,7 +63,6 @@ public:
   bool inherited_state_p () const final override { return false; }
 
   bool  on_stmt (sm_context &sm_ctxt,
-		const supernode *node,
 		const gimple *stmt) const final override;
 
   bool can_purge_p (state_t s) const final override;
@@ -173,7 +172,7 @@ private:
     if (id_equal ("exit", DECL_NAME (m_unsafe_fndecl)))
       return "_exit";
 
-    return NULL;
+    return nullptr;
   }
 };
 
@@ -221,7 +220,9 @@ public:
   }
 
   void add_events_to_path (checker_path *emission_path,
-			   const exploded_edge &eedge ATTRIBUTE_UNUSED)
+			   const exploded_edge &eedge ATTRIBUTE_UNUSED,
+			   pending_diagnostic &,
+			   const state_transition *)
     const final override
   {
     emission_path->add_event
@@ -258,7 +259,6 @@ public:
       = program_point::from_function_entry (*ext_state.get_model_manager (),
 					    eg->get_supergraph (),
 					    *handler_fun);
-
     program_state state_entering_handler (ext_state);
     update_model_for_signal_handler (state_entering_handler.m_region_model,
 				     *handler_fun);
@@ -269,7 +269,7 @@ public:
 						       state_entering_handler,
 						       src_enode);
     if (dst_enode)
-      eg->add_edge (src_enode, dst_enode, NULL, /*state_change (),*/
+      eg->add_edge (src_enode, dst_enode, nullptr, /*state_change (),*/
 		    true, /* assume does work  */
 		    std::make_unique<signal_delivery_edge_info_t> ());
   }
@@ -324,7 +324,6 @@ signal_unsafe_p (tree fndecl)
 
 bool
 signal_state_machine::on_stmt (sm_context &sm_ctxt,
-			       const supernode *node,
 			       const gimple *stmt) const
 {
   const state_t global_state = sm_ctxt.get_global_state ();
@@ -351,7 +350,7 @@ signal_state_machine::on_stmt (sm_context &sm_ctxt,
 	if (tree callee_fndecl = sm_ctxt.get_fndecl_for_call (*call))
 	  if (signal_unsafe_p (callee_fndecl))
 	    if (sm_ctxt.get_global_state () == m_in_signal_handler)
-	      sm_ctxt.warn (node, stmt, NULL_TREE,
+	      sm_ctxt.warn (NULL_TREE,
 			    std::make_unique<signal_unsafe_call>
 			     (*this, *call, callee_fndecl));
     }

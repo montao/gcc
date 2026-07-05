@@ -1,5 +1,5 @@
 /* Generic routines for manipulating SSA_NAME expressions
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -119,7 +119,7 @@ range_info_get_range (const_tree name, vrange &r)
   SSA_NAME_RANGE_INFO (name)->get_vrange (r, TREE_TYPE (name));
 }
 
-/* Set the global range for NAME from R.  Return TRUE if successfull,
+/* Set the global range for NAME from R.  Return TRUE if successful,
    or FALSE if we can't set a range of NAME's type.  */
 
 inline bool
@@ -406,6 +406,10 @@ make_ssa_name_fn (struct function *fn, tree var, gimple *stmt,
   SSA_NAME_IN_FREE_LIST (t) = 0;
   SSA_NAME_IS_DEFAULT_DEF (t) = 0;
   init_ssa_name_imm_use (t);
+#if defined ENABLE_GIMPLE_CHECKING
+  t->ssa_name.active_iterated_stmt = NULL;
+  t->ssa_name.fast_iteration_depth = 0;
+#endif
 
   return t;
 }
@@ -453,6 +457,8 @@ set_range_info (tree name, const vrange &r)
       tmp.dump (dump_file);
       fputc ('\n', dump_file);
     }
+  // Update the active query, if needed.
+  get_range_query (cfun)->update_range_info (name, r);
   return true;
 }
 
@@ -588,7 +594,7 @@ get_known_nonzero_bits_1 (const_tree name)
 }
 
 /* Return a wide_int with known non-zero bits in SSA_NAME
-   NAME, the constant for INTEGER_CST, or -1 if unknown.
+   NAME, the constant for INTEGER_CST, or 0 if unknown.
    In addition to what get_known_nonzero_bits_1 handles, this handles one
    level of BIT_IOR_EXPR, either as a def_stmt or tree directly.  */
 
@@ -611,15 +617,15 @@ get_known_nonzero_bits (const_tree name)
   return get_known_nonzero_bits_1 (name);
 }
 
-/* Return TRUE is OP, an SSA_NAME has a range of values [0..1], false
-   otherwise.
+/* Return TRUE is OP, an SSA_NAME has a range of values [0..1] at the
+   STMT, false otherwise.
 
    This can be because it is a boolean type, any unsigned integral
    type with a single bit of precision, or has known range of [0..1]
    via range analysis.  */
 
 bool
-ssa_name_has_boolean_range (tree op)
+ssa_name_has_boolean_range (tree op, gimple *stmt)
 {
   gcc_assert (TREE_CODE (op) == SSA_NAME);
 
@@ -636,7 +642,7 @@ ssa_name_has_boolean_range (tree op)
       && (TYPE_PRECISION (TREE_TYPE (op)) > 1))
     {
       int_range<2> r;
-      if (get_range_query (cfun)->range_of_expr (r, op)
+      if (get_range_query (cfun)->range_of_expr (r, op, stmt)
 	  && r == range_true_and_false (TREE_TYPE (op)))
 	return true;
 

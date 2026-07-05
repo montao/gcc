@@ -1,5 +1,5 @@
 /* Implements exception handling.
-   Copyright (C) 1989-2025 Free Software Foundation, Inc.
+   Copyright (C) 1989-2026 Free Software Foundation, Inc.
    Contributed by Mike Stump <mrs@cygnus.com>.
 
 This file is part of GCC.
@@ -2566,7 +2566,7 @@ maybe_add_nop_after_section_switch (void)
 		}
 
 	      /* We visit only labels from cold section.  We should never hit
-		 begining of the insn stream here.  */
+		 beginning of the insn stream here.  */
 	      insn = PREV_INSN (insn);
 	    }
 	}

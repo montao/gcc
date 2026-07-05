@@ -1,5 +1,5 @@
 /* Subclasses of custom_edge_info for describing outcomes of function calls.
-   Copyright (C) 2021-2025 Free Software Foundation, Inc.
+   Copyright (C) 2021-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -24,7 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfg.h"
 #include "digraph.h"
 #include "sbitmap.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 
 #include "analyzer/analyzer-logging.h"
 #include "analyzer/supergraph.h"
@@ -43,6 +43,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/exploded-graph.h"
 #include "analyzer/call-details.h"
 #include "analyzer/call-info.h"
+#include "analyzer/state-transition.h"
 
 #if ENABLE_ANALYZER
 
@@ -56,6 +57,14 @@ custom_edge_info::update_state (program_state *state,
 				region_model_context *ctxt) const
 {
   return update_model (state->m_region_model, eedge, ctxt);
+}
+
+void
+custom_edge_info::get_dot_attrs (const char *&out_style,
+				 const char *&out_color) const
+{
+  out_color = "red";
+  out_style = "\"dotted\"";
 }
 
 /* Base implementation of custom_edge_info::create_enode vfunc.  */
@@ -87,7 +96,9 @@ call_info::print (pretty_printer *pp) const
 
 void
 call_info::add_events_to_path (checker_path *emission_path,
-			       const exploded_edge &eedge) const
+			       const exploded_edge &eedge,
+			       pending_diagnostic &,
+			       const state_transition *) const
 {
   class call_event : public custom_event
   {
@@ -112,11 +123,15 @@ call_info::add_events_to_path (checker_path *emission_path,
   tree caller_fndecl = src_point.get_fndecl ();
   const int stack_depth = src_point.get_stack_depth ();
 
+  /* TODO: we don't yet make use of the state_transition (if any), as
+     doing so presumably requires a combinatorial explosion of
+     known functions vs pending diagnostics.  */
+
   emission_path->add_event
     (std::make_unique<call_event> (event_loc_info (get_call_stmt ().location,
-					      caller_fndecl,
-					      stack_depth),
-			      this));
+						   caller_fndecl,
+						   stack_depth),
+				   this));
 }
 
 /* Recreate a call_details instance from this call_info.  */

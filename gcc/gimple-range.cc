@@ -1,5 +1,5 @@
 /* Code for GIMPLE range related routines.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
    and Aldy Hernandez <aldyh@redhat.com>.
 
@@ -36,6 +36,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-range.h"
 #include "gimple-fold.h"
 #include "gimple-walk.h"
+#include "dbgcnt.h"
 
 gimple_ranger::gimple_ranger (bool use_imm_uses) :
 	non_executable_edge_flag (cfun),
@@ -78,9 +79,15 @@ gimple_ranger::const_query ()
   return m_cache.const_query ();
 }
 
+// Implement range of EXPR on stmt S, and return it in R.
+// Return false if no range can be calculated.
+
 bool
 gimple_ranger::range_of_expr (vrange &r, tree expr, gimple *stmt)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_of_expr (r, expr, stmt);
+
   unsigned idx;
   if (!gimple_range_ssa_p (expr))
     return get_tree_range (r, expr, stmt);
@@ -98,8 +105,9 @@ gimple_ranger::range_of_expr (vrange &r, tree expr, gimple *stmt)
 	fputs ("\n", dump_file);
     }
 
-  // If there is no statement, just get the global value.
-  if (!stmt)
+  // If there is no statement or stmt happens to be not in the IL,
+  // just get the global value.
+  if (!stmt || !gimple_bb (stmt))
     {
       value_range tmp (TREE_TYPE (expr));
       // If there is no global range for EXPR yet, try to evaluate it.
@@ -155,6 +163,9 @@ gimple_ranger::range_of_expr (vrange &r, tree expr, gimple *stmt)
 bool
 gimple_ranger::range_on_entry (vrange &r, basic_block bb, tree name)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_on_entry (r, bb, name);
+
   if (!gimple_range_ssa_p (name))
     return get_tree_range (r, name, NULL, bb, NULL);
 
@@ -171,7 +182,7 @@ gimple_ranger::range_on_entry (vrange &r, basic_block bb, tree name)
   range_of_stmt (r, SSA_NAME_DEF_STMT (name), name);
 
   // Now see if there is any on_entry value which may refine it.
-  if (m_cache.block_range (entry_range, bb, name))
+  if (bb && m_cache.block_range (entry_range, bb, name))
     r.intersect (entry_range);
 
   if (idx)
@@ -185,6 +196,9 @@ gimple_ranger::range_on_entry (vrange &r, basic_block bb, tree name)
 bool
 gimple_ranger::range_on_exit (vrange &r, basic_block bb, tree name)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_on_exit (r, bb, name);
+
   if (!gimple_range_ssa_p (name))
     return get_tree_range (r, name, NULL, NULL, bb);
 
@@ -224,6 +238,9 @@ gimple_ranger::range_on_exit (vrange &r, basic_block bb, tree name)
 bool
 gimple_ranger::range_on_edge (vrange &r, edge e, tree name)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_on_edge (r, e, name);
+
   value_range edge_range (TREE_TYPE (name));
 
   if (!r.supports_type_p (TREE_TYPE (name)))
@@ -252,7 +269,7 @@ gimple_ranger::range_on_edge (vrange &r, edge e, tree name)
 
   bool res = true;
   if (!gimple_range_ssa_p (name))
-    res = get_tree_range (r, name, NULL);
+    res = get_tree_range (r, name, NULL, NULL, NULL, e);
   else
     {
       range_on_exit (r, e->src, name);
@@ -278,7 +295,7 @@ bool
 gimple_ranger::fold_range_internal (vrange &r, gimple *s, tree name)
 {
   fold_using_range f;
-  fur_depend src (s, this);
+  fur_depend src (s, this, &m_cache);
   return f.fold_stmt (r, s, src, name);
 }
 
@@ -291,6 +308,9 @@ gimple_ranger::fold_range_internal (vrange &r, gimple *s, tree name)
 bool
 gimple_ranger::range_of_stmt (vrange &r, gimple *s, tree name)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_of_stmt (r, s, name);
+
   bool res;
   r.set_undefined ();
 
@@ -389,7 +409,9 @@ gimple_ranger::prefill_stmt_dependencies (tree ssa)
 
   unsigned idx;
   gimple *stmt = SSA_NAME_DEF_STMT (ssa);
-  gcc_checking_assert (stmt && gimple_bb (stmt));
+  gcc_checking_assert (stmt);
+  if (!gimple_bb (stmt))
+    return;
 
   // Only pre-process range-ops and phis.
   if (!gimple_range_op_handler::supported_p (stmt) && !is_a<gphi *> (stmt))
@@ -551,6 +573,29 @@ gimple_ranger::register_transitive_inferred_ranges (basic_block bb)
 	      m_cache.register_inferred_value (r, lhs, bb);
 	    }
 	}
+    }
+}
+
+// Indicate NAME should have its range recalculated next time it is used.
+
+void
+gimple_ranger::update_range_info (tree name)
+{
+  m_cache.mark_stale (name);
+}
+
+// This is called to update ranger's concept of a global value for NAME
+// with range R by an outside entity.
+
+void
+gimple_ranger::update_range_info (tree name, const vrange &r)
+{
+  value_range current (TREE_TYPE (name));
+  m_cache.get_global_range (current, name);
+  if (current.intersect (r))
+    {
+      m_cache.set_global_range (name, current, true);
+      m_cache.mark_stale (name);
     }
 }
 
@@ -749,6 +794,9 @@ dom_ranger::~dom_ranger ()
 bool
 dom_ranger::range_of_expr (vrange &r, tree expr, gimple *s)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_of_expr (r, expr, s);
+
   unsigned idx;
   if (!gimple_range_ssa_p (expr))
     return get_tree_range (r, expr, s);
@@ -782,8 +830,11 @@ dom_ranger::range_of_expr (vrange &r, tree expr, gimple *s)
 bool
 dom_ranger::range_on_edge (vrange &r, edge e, tree expr)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_on_edge (r, e, expr);
+
   if (!gimple_range_ssa_p (expr))
-    return get_tree_range (r, expr, NULL);
+    return get_tree_range (r, expr, NULL, NULL, NULL, e);
 
   basic_block bb = e->src;
   unsigned idx;
@@ -830,6 +881,9 @@ dom_ranger::range_in_bb (vrange &r, basic_block bb, tree name)
 bool
 dom_ranger::range_of_stmt (vrange &r, gimple *s, tree name)
 {
+  if (!dbg_cnt (ranger_cnt))
+    return get_global_range_query ()->range_of_stmt (r, s, name);
+
   unsigned idx;
   bool ret;
   if (!name)
@@ -868,7 +922,7 @@ dom_ranger::range_of_stmt (vrange &r, gimple *s, tree name)
 // Preprocess block BB.  If there is a single predecessor, start with any
 // contextual ranges on the incoming edge, otherwise the initial list
 // of ranges i empty for this block.  Then Merge in any contextual ranges
-// from the dominator block.  Tihs will become the contextual ranges
+// from the dominator block.  This will become the contextual ranges
 // that apply to this block.
 
 void

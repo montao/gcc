@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -117,7 +117,7 @@ extern bool cursor_at_sol;
                 fprintf(stderr, "%s", (b)->name); \
                 if( (b)->type == FldLiteralA || (b)->type == FldLiteralN ) \
                     { \
-                    fprintf(stderr, " \"%s\"", (b)->data.initial); \
+                    fprintf(stderr, " \"%s\"", (b)->data.original()); \
                     } \
                 else \
                     { \
@@ -140,7 +140,13 @@ extern bool cursor_at_sol;
                 fprintf(stderr, "%s", (b).field->name); \
                 if( (b).field->type == FldLiteralA || (b).field->type == FldLiteralN ) \
                     { \
-                    fprintf(stderr, " \"%s\"", (b).field->data.initial); \
+                    size_t nbytes; \
+                    const char *literal = __gg__iconverter((b).field->codeset.encoding, \
+                                                           DEFAULT_SOURCE_ENCODING, \
+                                                           (b).field->data.original(), \
+                                                           strlen((b).field->data.original()), \
+                                                           &nbytes); \
+                    fprintf(stderr, " \"%s\"", literal); \
                     } \
                 else \
                     { \
@@ -176,8 +182,18 @@ extern bool cursor_at_sol;
                 } \
             else \
                 { \
-		fprintf(stderr, " %p:%s (%s)", (void*)b, b->name, b->type_str()); \
+                fprintf(stderr, " %p:%s (%s)", static_cast<void*>(b), b->name, b->type_str()); \
                 } \
+            show_parse_sol = false; \
+            } while(0);
+
+// Use this version when b is known to be valid.  This is necessary to quiet
+// cppcheck nullPointerRedundantCheck warnings
+#define SHOW_PARSE_LABEL_OK(a, b) \
+        do \
+            { \
+            fprintf(stderr, "%s", a); \
+            fprintf(stderr, " %p:%s (%s)", static_cast<void*>(b), b->name, b->type_str()); \
             show_parse_sol = false; \
             } while(0);
 
@@ -211,6 +227,7 @@ extern bool cursor_at_sol;
 #define TRACE1_FIELD_VALUE(a, field, b) \
         do \
             { \
+            gcc_assert(field); \
             cursor_at_sol=false; \
             if ( field->type == FldConditional ) \
               {                                       \
@@ -300,7 +317,7 @@ extern bool cursor_at_sol;
       gg_fprintf(trace_handle, 1, " (%s", gg_string_literal(cbl_field_type_str((b)->type))); \
       if( b->type != FldLiteralN && b->type != FldConditional ) \
         { \
-        cbl_field_t* B(b); \
+        const cbl_field_t* B(b); \
         if( !b->var_decl_node ) \
           { \
           gg_fprintf(trace_handle, 0, #b "->var_decl_node is NULL", NULL_TREE); \
@@ -317,7 +334,7 @@ extern bool cursor_at_sol;
       else if( b->type == FldLiteralN ) \
         { \
         gg_fprintf(trace_handle, 1, " attr 0x%lx",  build_int_cst_type(SIZE_T, b->attr)); \
-        gg_fprintf(trace_handle, 1, " c:o:d:r %ld", build_int_cst_type(SIZE_T, b->data.capacity)); \
+        gg_fprintf(trace_handle, 1, " c:o:d:r %ld", build_int_cst_type(SIZE_T, b->data.capacity())); \
         gg_fprintf(trace_handle, 1, ":%ld",         build_int_cst_type(SIZE_T, b->offset)); \
         gg_fprintf(trace_handle, 1, ":%d",          build_int_cst_type(INT,    b->data.digits)); \
         gg_fprintf(trace_handle, 1, ":%d",         build_int_cst_type(INT,    b->data.rdigits)); \
@@ -383,7 +400,7 @@ extern bool cursor_at_sol;
       else if( (b).field->type == FldLiteralN ) \
         { \
         gg_fprintf(trace_handle, 1, " attr 0x%lx",  build_int_cst_type(SIZE_T, (b).field->attr)); \
-        gg_fprintf(trace_handle, 1, " c:o:d:r %ld", build_int_cst_type(SIZE_T, (b).field->data.capacity)); \
+        gg_fprintf(trace_handle, 1, " c:o:d:r %ld", build_int_cst_type(SIZE_T, (b).field->data.capacity())); \
         gg_fprintf(trace_handle, 1, ":%ld",         build_int_cst_type(SIZE_T, (b).field->offset)); \
         gg_fprintf(trace_handle, 1, ":%d",          build_int_cst_type(INT,    (b).field->data.digits)); \
         gg_fprintf(trace_handle, 1, ":%d)",         build_int_cst_type(INT,    (b).field->data.rdigits)); \
@@ -423,31 +440,50 @@ extern bool cursor_at_sol;
     } while(0);
 
 // Use CHECK_FIELD when a should be non-null, and a->var_decl_node also should
-// by non-null:
+// by non-null.  (The useless calls to abort() are because cppcheck doesn't
+// understand that gcc_unreachable doesn't return);
+
+// Use this after doing any SHOW_PARSE stuff, to avoid cppcheck complaints
+// about nullPointerRedundantCheck 
 #define CHECK_FIELD(a)                                                  \
-        do {                                                                  \
+        do {                                                            \
         if(!a)                                                          \
             {                                                           \
-            yywarn("%s: parameter %<" #a "%> is NULL", __func__);        \
-            gcc_unreachable();                                          \
+            cbl_internal_error("%s: parameter %<" #a "%> is NULL", __func__); \
             }                                                           \
-        if( !a->var_decl_node && a->type != FldConditional && a->type != FldLiteralA) \
+        if( !a->var_decl_node )                                         \
             {                                                           \
-            yywarn("%s: parameter %<" #a "%> is variable "               \
+            cbl_internal_error("%s: parameter %<" #a "%> is variable "              \
                    "%s<%s> with NULL %<var_decl_node%>",                \
                 __func__,                                               \
                 a->name,                                                \
                 cbl_field_type_str(a->type) );                          \
-            gcc_unreachable();                                          \
             }                                                           \
         } while(0);
+
+// This version is a bit more lax, for special cases
+#define CHECK_FIELD2(a)                                                  \
+        do {                                                            \
+        if(!a)                                                          \
+            {                                                           \
+            cbl_internal_error("%s: parameter %<" #a "%> is NULL", __func__);       \
+            }                                                           \
+        if( !a->var_decl_node && a->type != FldConditional && a->type != FldLiteralA) \
+            {                                                           \
+            cbl_internal_error("%s: parameter %<" #a "%> is variable "               \
+                   "%s<%s> with NULL %<var_decl_node%>",                \
+                __func__,                                               \
+                a->name,                                                \
+                cbl_field_type_str(a->type) );                          \
+            }                                                           \
+        } while(0);
+
 
 #define CHECK_LABEL(a)                                                  \
         do{                                                             \
         if(!a)                                                          \
             {                                                           \
-            yywarn("%s: parameter %<" #a "%> is NULL", __func__);       \
-            gcc_unreachable();                                          \
+            cbl_internal_error("%s: parameter %<" #a "%> is NULL", __func__);       \
             }                                                           \
         }while(0);
 
@@ -460,7 +496,7 @@ class ANALYZE
     int level;
     inline static int analyze_level=1;
   public:
-    ANALYZE(const char *func_) : func(func_)
+    ANALYZE(const char *func_) : func(func_) // cppcheck-suppress noExplicitConstructor
       {
       level = 0;
       if( getenv("Analyze") )
@@ -504,6 +540,7 @@ class ANALYZE
       }
   };
 #else
+// cppcheck-suppress ctuOneDefinitionRuleViolation
 class ANALYZE
   {
   public:

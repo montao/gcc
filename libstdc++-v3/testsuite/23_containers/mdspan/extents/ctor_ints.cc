@@ -16,39 +16,58 @@ static_assert(!std::is_constructible_v<std::extents<int, 1, dyn, 3>, int, int>);
 // Not constructible from non integer-like objects.
 static_assert(!std::is_constructible_v<std::extents<int, 1>, int, A>);
 
+#ifdef __SIZEOF_INT128__
+static_assert(std::is_constructible_v<std::extents<__int128, 1, 2>,
+				      __int128, unsigned __int128>);
+static_assert(std::is_constructible_v<std::extents<unsigned __int128, 1, 2>,
+				      unsigned int, int>);
+#endif
+
 // No implicit conversion from integer-like objects.
-template<typename Extent, typename... OExtents>
-  constexpr bool
+template<typename ExtentsType, typename OIndex, typename... RIndicies>
+  consteval bool
   is_explicit()
   {
-    return std::is_nothrow_constructible_v<Extent, OExtents...>
-	   && !std::is_convertible_v<Extent, OExtents...>;
+    if (!std::is_nothrow_constructible_v<ExtentsType, OIndex, RIndicies...>)
+      return false;
+    if constexpr (sizeof...(RIndicies) == 0)
+      if (std::is_convertible_v<OIndex, ExtentsType>)
+	return false;
+
+    extern void testConv(ExtentsType);
+    return !requires (OIndex index, RIndicies... rindicies)
+      { testConv({index, rindicies...}); };
   }
 
 static_assert(is_explicit<std::extents<int, 1>, int>());
 static_assert(is_explicit<std::extents<int, 1>, unsigned int>());
 static_assert(is_explicit<std::extents<unsigned int, 1>, int>());
 
+static_assert(is_explicit<std::dextents<int, 1>, int>());
+static_assert(is_explicit<std::dextents<int, 2>, int, int>());
+static_assert(is_explicit<std::dextents<int, 3>, int, int, int>());
+
+	
 constexpr bool
 test_all()
 {
   auto expected = std::extents<int, 1, 2, 3>(1, 2, 3);
 
   // From all extents.
-  VERIFY((std::extents<int, 1, 2, 3>(1, 2, 3)) == expected);
-  VERIFY((std::extents<int, dyn, 2, 3>(1, 2, 3)) == expected);
-  VERIFY((std::extents<int, dyn, 2, dyn>(1, 2, 3)) == expected);
+  VERIFY(std::extents<int, 1, 2, 3>(1, 2, 3) == expected);
+  VERIFY(std::extents<int, dyn, 2, 3>(1, 2, 3) == expected);
+  VERIFY(std::extents<int, dyn, 2, dyn>(1, 2, 3) == expected);
 
-  VERIFY((std::extents<int, 1, 2, 3>{1, 2, 3}) == expected);
-  VERIFY((std::extents<int, dyn, 2, 3>{1, 2, 3}) == expected);
-  VERIFY((std::extents<int, dyn, 2, dyn>{1, 2, 3}) == expected);
+  VERIFY(std::extents<int, 1, 2, 3>{1, 2, 3} == expected);
+  VERIFY(std::extents<int, dyn, 2, 3>{1, 2, 3} == expected);
+  VERIFY(std::extents<int, dyn, 2, dyn>{1, 2, 3} == expected);
 
   // From only dynamic extents.
-  VERIFY((std::extents<int, dyn, 2, 3>(1)) == expected);
-  VERIFY((std::extents<int, dyn, 2, dyn>(1, 3)) == expected);
+  VERIFY(std::extents<int, dyn, 2, 3>(1) == expected);
+  VERIFY(std::extents<int, dyn, 2, dyn>(1, 3) == expected);
 
-  VERIFY((std::extents<int, dyn, 2, 3>{1}) == expected);
-  VERIFY((std::extents<int, dyn, 2, dyn>{1, 3}) == expected);
+  VERIFY(std::extents<int, dyn, 2, 3>{1} == expected);
+  VERIFY(std::extents<int, dyn, 2, dyn>{1, 3} == expected);
 
   return true;
 }

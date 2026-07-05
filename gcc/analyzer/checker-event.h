@@ -1,5 +1,5 @@
-/* Subclasses of diagnostic_event for analyzer diagnostics.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+/* Subclasses of diagnostics::paths::event for analyzer diagnostics.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -24,6 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-logical-location.h"
 #include "analyzer/program-state.h"
 #include "analyzer/event-loc-info.h"
+#include "diagnostics/digraphs.h"
 
 namespace ana {
 
@@ -36,13 +37,14 @@ enum class event_kind
   custom,
   stmt,
   region_creation,
+  state_transition,
   function_entry,
   state_change,
   start_cfg_edge,
   end_cfg_edge,
   catch_,
-  call_edge,
-  return_edge,
+  call_,
+  return_,
   start_consolidated_cfg_edges,
   end_consolidated_cfg_edges,
   inlined_call,
@@ -61,12 +63,13 @@ extern const char *event_kind_to_string (enum event_kind ek);
    The class hierarchy looks like this (using indentation to show
    inheritance, and with event_kinds shown for the concrete subclasses):
 
-   diagnostic_event
+   diagnostics::paths::event
      checker_event
        debug_event (event_kind::debug)
        custom_event (event_kind::custom)
 	 precanned_custom_event
        statement_event (event_kind::stmt)
+       state_transition_event (event_kind::data_flow)
        region_creation_event (event_kind::region_creation)
        function_entry_event (event_kind::function_entry)
        state_change_event (event_kind::state_change)
@@ -75,8 +78,8 @@ extern const char *event_kind_to_string (enum event_kind ek);
 	   start_cfg_edge_event (event_kind::start_cfg_edge)
 	   end_cfg_edge_event (event_kind::end_cfg_edge)
 	   catch_cfg_edge_event (event_kind::catch_cfg_edge)
-         call_event (event_kind::call_edge)
-         return_edge (event_kind::return_edge)
+	 call_event (event_kind::call_)
+       return_event (event_kind::return_)
        start_consolidated_cfg_edges_event (event_kind::start_consolidated_cfg_edges)
        end_consolidated_cfg_edges_event (event_kind::end_consolidated_cfg_edges)
        inlined_call_event (event_kind::inlined_call)
@@ -90,30 +93,32 @@ extern const char *event_kind_to_string (enum event_kind ek);
        unwind_event (event_kind::unwind)
        warning_event (event_kind::warning).  */
 
-/* Abstract subclass of diagnostic_event; the base class for use in
-   checker_path (the analyzer's diagnostic_path subclass).  */
+/* Abstract subclass of diagnostics::paths::event; the base class for use in
+   checker_path (the analyzer's diagnostics::paths::path subclass).  */
 
-class checker_event : public diagnostic_event
+class checker_event : public diagnostics::paths::event
 {
 public:
-  /* Implementation of diagnostic_event.  */
+  /* Implementation of diagnostics::paths::event.  */
 
   location_t get_location () const final override { return m_loc; }
   int get_stack_depth () const final override { return m_effective_depth; }
-  logical_location get_logical_location () const final override
+  diagnostics::logical_locations::key
+  get_logical_location () const final override
   {
     return m_logical_loc;
   }
   meaning get_meaning () const override;
   bool connect_to_next_event_p () const override { return false; }
-  diagnostic_thread_id_t get_thread_id () const final override
+  diagnostics::paths::thread_id_t get_thread_id () const final override
   {
     return 0;
   }
 
   void
-  maybe_add_sarif_properties (sarif_builder &,
-			      sarif_object &thread_flow_loc_obj) const override;
+  maybe_add_sarif_properties (diagnostics::sarif_builder &,
+			      diagnostics::sarif_object &thread_flow_loc_obj)
+    const override;
 
   /* Additional functionality.  */
   enum event_kind get_kind () const { return m_kind; }
@@ -123,19 +128,19 @@ public:
 
   virtual void prepare_for_emission (checker_path *,
 				     pending_diagnostic *pd,
-				     diagnostic_event_id_t emission_id);
+				     diagnostics::paths::event_id_t emission_id);
   virtual bool is_call_p () const { return false; }
   virtual bool is_function_entry_p () const  { return false; }
   virtual bool is_return_p () const  { return false; }
 
+  std::unique_ptr<diagnostics::digraphs::digraph>
+  maybe_make_diagnostic_state_graph (bool debug) const final override;
+
   virtual const program_state *
   get_program_state () const { return nullptr; }
 
-  std::unique_ptr<xml::document>
-  maybe_make_xml_state (bool debug) const final override;
-
   /* For use with %@.  */
-  const diagnostic_event_id_t *get_id_ptr () const
+  const diagnostics::paths::event_id_t *get_id_ptr () const
   {
     return &m_emission_id;
   }
@@ -159,8 +164,8 @@ protected:
   int m_original_depth;
   int m_effective_depth;
   pending_diagnostic *m_pending_diagnostic;
-  diagnostic_event_id_t m_emission_id; // only set once all pruning has occurred
-  logical_location m_logical_loc;
+  diagnostics::paths::event_id_t m_emission_id; // only set once all pruning has occurred
+  diagnostics::logical_locations::key m_logical_loc;
 };
 
 /* A concrete event subclass for a purely textual event, for use in
@@ -240,6 +245,31 @@ public:
 
   const gimple * const m_stmt;
   const program_state m_dst_state;
+};
+
+/* A concrete checker_event subclass referencing a state_transition,
+   for cases where the state_transition doesn't already have its own event.  */
+
+class state_transition_event : public checker_event
+{
+public:
+  state_transition_event (const event_loc_info &loc_info,
+			  const state_transition *state_trans)
+  : checker_event (event_kind::state_transition, loc_info),
+    m_state_trans (state_trans)
+  {
+    gcc_assert (m_state_trans);
+  }
+
+  void print_desc (pretty_printer &) const final override;
+
+  void prepare_for_emission (checker_path *path,
+			     pending_diagnostic *pd,
+			     diagnostics::paths::event_id_t emission_id) final override;
+
+private:
+  // borrowed from the exploded_path
+  const state_transition *m_state_trans;
 };
 
 /* An abstract event subclass describing the creation of a region that
@@ -349,14 +379,13 @@ class function_entry_event : public checker_event
 {
 public:
   function_entry_event (const event_loc_info &loc_info,
-			const program_state &state)
+			const program_state &state,
+			const state_transition_at_call *state_trans)
   : checker_event (event_kind::function_entry, loc_info),
-    m_state (state)
+    m_state (state),
+    m_state_trans (state_trans)
   {
   }
-
-  function_entry_event (const program_point &dst_point,
-			const program_state &state);
 
   void print_desc (pretty_printer &pp) const override;
   meaning get_meaning () const override;
@@ -369,8 +398,17 @@ public:
     return &m_state;
   }
 
+  void
+  prepare_for_emission (checker_path *path,
+			pending_diagnostic *pd,
+			diagnostics::paths::event_id_t emission_id) final override;
+
+  const state_transition_at_call *
+  get_state_transition_at_call () const { return m_state_trans; }
+
 private:
   const program_state &m_state;
+  const state_transition_at_call *m_state_trans;
 };
 
 /* Subclass of checker_event describing a state change.  */
@@ -378,8 +416,8 @@ private:
 class state_change_event : public checker_event
 {
 public:
-  state_change_event (const supernode *node, const gimple *stmt,
-		      int stack_depth,
+  state_change_event (const event_loc_info &loc_info,
+		      const gimple *stmt,
 		      const state_machine &sm,
 		      const svalue *sval,
 		      state_machine::state_t from,
@@ -404,7 +442,6 @@ public:
 
   const exploded_node *get_exploded_node () const { return m_enode; }
 
-  const supernode *m_node;
   const gimple *m_stmt;
   const state_machine &m_sm;
   const svalue *m_sval;
@@ -421,26 +458,18 @@ public:
 class superedge_event : public checker_event
 {
 public:
-  void maybe_add_sarif_properties (sarif_builder &,
-				   sarif_object &thread_flow_loc_obj)
+  void
+  maybe_add_sarif_properties (diagnostics::sarif_builder &,
+			      diagnostics::sarif_object &thread_flow_loc_obj)
     const override;
-
-  /* Mark this edge event as being either an interprocedural call or
-     return in which VAR is in STATE, and that this is critical to the
-     diagnostic (so that print_desc can attempt to get a better description
-     from any pending_diagnostic).  */
-  void record_critical_state (tree var, state_machine::state_t state)
-  {
-    m_var = var;
-    m_critical_state = state;
-  }
-
-  const callgraph_superedge& get_callgraph_superedge () const;
 
   bool should_filter_p (int verbosity) const;
 
   const program_state *
   get_program_state () const override;
+
+  virtual const call_and_return_op *
+  get_call_and_return_op () const;
 
  protected:
   superedge_event (enum event_kind kind, const exploded_edge &eedge,
@@ -449,8 +478,6 @@ public:
  public:
   const exploded_edge &m_eedge;
   const superedge *m_sedge;
-  tree m_var;
-  state_machine::state_t m_critical_state;
 };
 
 /* An abstract event subclass for when a CFG edge is followed; it has two
@@ -462,11 +489,17 @@ class cfg_edge_event : public superedge_event
 public:
   meaning get_meaning () const override;
 
-  const cfg_superedge& get_cfg_superedge () const;
+  ::edge get_cfg_edge () const;
+
+  bool maybe_get_edge_sense (bool *out) const;
 
  protected:
-  cfg_edge_event (enum event_kind kind, const exploded_edge &eedge,
-		  const event_loc_info &loc_info);
+  cfg_edge_event (enum event_kind kind,
+		  const exploded_edge &eedge,
+		  const event_loc_info &loc_info,
+		  const control_flow_op *op);
+
+  const control_flow_op *m_op;
 };
 
 /* A concrete event subclass for the start of a CFG edge
@@ -476,22 +509,16 @@ class start_cfg_edge_event : public cfg_edge_event
 {
 public:
   start_cfg_edge_event (const exploded_edge &eedge,
-			const event_loc_info &loc_info)
-  : cfg_edge_event (event_kind::start_cfg_edge, eedge, loc_info)
+			const event_loc_info &loc_info,
+			const control_flow_op *op)
+  : cfg_edge_event (event_kind::start_cfg_edge, eedge, loc_info, op)
   {
   }
 
   void print_desc (pretty_printer &pp) const override;
   bool connect_to_next_event_p () const final override { return true; }
 
-protected:
-  label_text maybe_describe_condition (bool can_colorize) const;
-
 private:
-  static label_text maybe_describe_condition (bool can_colorize,
-					      tree lhs,
-					      enum tree_code op,
-					      tree rhs);
   static bool should_print_expr_p (tree);
 };
 
@@ -502,8 +529,9 @@ class end_cfg_edge_event : public cfg_edge_event
 {
 public:
   end_cfg_edge_event (const exploded_edge &eedge,
-		      const event_loc_info &loc_info)
-  : cfg_edge_event (event_kind::end_cfg_edge, eedge, loc_info)
+		      const event_loc_info &loc_info,
+		      const control_flow_op *op)
+  : cfg_edge_event (event_kind::end_cfg_edge, eedge, loc_info, op)
   {
   }
 
@@ -521,8 +549,9 @@ class catch_cfg_edge_event : public cfg_edge_event
 public:
   catch_cfg_edge_event (const exploded_edge &eedge,
 			const event_loc_info &loc_info,
+			const control_flow_op &op,
 			tree type)
-  : cfg_edge_event (event_kind::catch_, eedge, loc_info),
+  : cfg_edge_event (event_kind::catch_, eedge, loc_info, &op),
     m_type (type)
   {
   }
@@ -535,8 +564,27 @@ public:
       pp_string (&pp, "...catching exception here");
   }
 
+  meaning get_meaning () const override;
+
 private:
   tree m_type;
+};
+
+struct critical_state
+{
+  critical_state ()
+  : m_var (NULL_TREE),
+    m_state (nullptr)
+  {
+  }
+  critical_state (tree var, state_machine::state_t state)
+  : m_var (var),
+    m_state (state)
+  {
+  }
+
+  tree m_var;
+  state_machine::state_t m_state;
 };
 
 /* A concrete event subclass for an interprocedural call.  */
@@ -545,7 +593,8 @@ class call_event : public superedge_event
 {
 public:
   call_event (const exploded_edge &eedge,
-	      const event_loc_info &loc_info);
+	      const event_loc_info &loc_info,
+	      const state_transition_at_call *state_trans);
 
   void print_desc (pretty_printer &pp) const override;
   meaning get_meaning () const override;
@@ -555,29 +604,76 @@ public:
   const program_state *
   get_program_state () const final override;
 
+  void
+  prepare_for_emission (checker_path *path,
+			pending_diagnostic *pd,
+			diagnostics::paths::event_id_t emission_id) final override;
+
+  /* Mark this edge event as being either an interprocedural call or
+     return in which VAR is in STATE, and that this is critical to the
+     diagnostic (so that print_desc can attempt to get a better description
+     from any pending_diagnostic).  */
+  void record_critical_state (tree var, state_machine::state_t state)
+  {
+    m_critical_state = critical_state (var, state);
+  }
+
+  const state_transition_at_call *
+  get_state_transition_at_call () const { return m_state_trans; }
+
 protected:
   tree get_caller_fndecl () const;
   tree get_callee_fndecl () const;
 
   const supernode *m_src_snode;
   const supernode *m_dest_snode;
+  critical_state m_critical_state;
+  const state_transition_at_call *m_state_trans;
 };
 
 /* A concrete event subclass for an interprocedural return.  */
 
-class return_event : public superedge_event
+class return_event : public checker_event
 {
 public:
   return_event (const exploded_edge &eedge,
-		const event_loc_info &loc_info);
+		const event_loc_info &loc_info,
+		const state_transition_at_return *state_trans);
 
   void print_desc (pretty_printer &pp) const final override;
   meaning get_meaning () const override;
 
   bool is_return_p () const final override;
 
+  const call_and_return_op *
+  get_call_and_return_op () const
+  {
+    return m_call_and_return_op;
+  }
+
+  const program_state *
+  get_program_state () const override;
+
+  void
+  prepare_for_emission (checker_path *path,
+			pending_diagnostic *pd,
+			diagnostics::paths::event_id_t emission_id) final override;
+
+  /* Mark this edge event as being either an interprocedural call or
+     return in which VAR is in STATE, and that this is critical to the
+     diagnostic (so that print_desc can attempt to get a better description
+     from any pending_diagnostic).  */
+  void record_critical_state (tree var, state_machine::state_t state)
+  {
+    m_critical_state = critical_state (var, state);
+  }
+
+  const exploded_edge &m_eedge;
   const supernode *m_src_snode;
   const supernode *m_dest_snode;
+  const call_and_return_op *m_call_and_return_op;
+  critical_state m_critical_state;
+  const state_transition_at_return *m_state_trans;
 };
 
 /* A concrete event subclass for the start of a consolidated run of CFG
@@ -662,9 +758,11 @@ public:
 
   void print_desc (pretty_printer &pp) const final override;
 
+  meaning get_meaning () const override;
+
   void prepare_for_emission (checker_path *path,
 			     pending_diagnostic *pd,
-			     diagnostic_event_id_t emission_id) final override;
+			     diagnostics::paths::event_id_t emission_id) final override;
 
 private:
   const exploded_node *m_enode;
@@ -683,6 +781,8 @@ public:
   tree get_longjmp_caller () const;
   tree get_setjmp_caller () const;
   const exploded_edge *get_eedge () const { return m_eedge; }
+
+  meaning get_meaning () const override;
 
  protected:
   rewind_event (const exploded_edge *eedge,
@@ -730,10 +830,10 @@ public:
 
   void prepare_for_emission (checker_path *path,
 			     pending_diagnostic *pd,
-			     diagnostic_event_id_t emission_id) final override;
+			     diagnostics::paths::event_id_t emission_id) final override;
 
 private:
-  diagnostic_event_id_t m_original_setjmp_event_id;
+  diagnostics::paths::event_id_t m_original_setjmp_event_id;
 };
 
 /* An abstract subclass for throwing/rethrowing an exception.  */
@@ -749,6 +849,8 @@ public:
     m_throw_call (throw_call)
   {
   }
+
+  meaning get_meaning () const override;
 
 protected:
   const exploded_node *m_enode;
@@ -812,6 +914,8 @@ public:
     m_num_frames (1)
   {
   }
+
+  meaning get_meaning () const override;
 
   void print_desc (pretty_printer &pp) const final override;
 

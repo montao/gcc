@@ -1,5 +1,5 @@
 /* Scalar evolution detector.
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <s.pop@laposte.net>
 
 This file is part of GCC.
@@ -670,6 +670,17 @@ scev_dfs::add_to_evolution_1 (tree chrec_before, tree to_add, gimple *at_stmt)
 	  to_add = chrec_convert (type, to_add, at_stmt);
 	  right = chrec_convert_rhs (type, right, at_stmt);
 	  right = chrec_fold_plus (chrec_type (right), right, to_add);
+	  /* When we have an evolution in a non-wrapping type and
+	     in the process of accumulating CHREC_RIGHT there was
+	     overflow this indicates in the association that happened
+	     in building the CHREC clearly involved UB.  Avoid this.
+	     In building a CHREC we basically turn (a + INCR1) + INCR2
+	     into a + (INCR1 + INCR2) which is not always valid.
+	     Note this check only catches few invalid cases.  */
+	  if ((INTEGRAL_TYPE_P (type) && ! TYPE_OVERFLOW_WRAPS (type))
+	      && TREE_CODE (right) == INTEGER_CST
+	      && TREE_OVERFLOW (right))
+	    return chrec_dont_know;
 	  return build_polynomial_chrec (var, left, right);
 	}
       else
@@ -695,7 +706,7 @@ scev_dfs::add_to_evolution_1 (tree chrec_before, tree to_add, gimple *at_stmt)
       /* When we add the first evolution we need to replace the symbolic
 	 evolution we've put in when the DFS reached the loop PHI node
 	 with the initial value.  There's only a limited cases of
-	 extra operations ontop of that symbol allowed, namely
+	 extra operations on top of that symbol allowed, namely
 	 sign-conversions we can look through.  For other cases we leave
 	 the symbolic initial condition which causes build_polynomial_chrec
 	 to return chrec_dont_know.  See PR42512, PR66375 and PR107176 for
@@ -869,9 +880,23 @@ scev_dfs::add_to_evolution (tree chrec_before, enum tree_code code,
     }
 
   if (code == MINUS_EXPR)
-    to_add = chrec_fold_multiply (type, to_add, SCALAR_FLOAT_TYPE_P (type)
-				  ? build_real (type, dconstm1)
-				  : build_int_cst_type (type, -1));
+    {
+      if (INTEGRAL_TYPE_P (type)
+	  && TYPE_OVERFLOW_UNDEFINED (type)
+	  && !expr_not_equal_to (to_add,
+				 wi::to_wide (TYPE_MIN_VALUE (type))))
+	{
+	  tree utype = unsigned_type_for (type);
+	  to_add = chrec_convert_rhs (utype, to_add);
+	  to_add = chrec_fold_multiply (utype, to_add,
+					build_int_cst_type (utype, -1));
+	  to_add = chrec_convert_rhs (type, to_add);
+	}
+      else
+	to_add = chrec_fold_multiply (type, to_add, SCALAR_FLOAT_TYPE_P (type)
+				      ? build_real (type, dconstm1)
+				      : build_int_cst_type (type, -1));
+    }
 
   res = add_to_evolution_1 (chrec_before, to_add, at_stmt);
 
@@ -1343,7 +1368,46 @@ simplify_peeled_chrec (class loop *loop, tree arg, tree init_cond)
   hash_map<tree, name_expansion *> *peeled_chrec_map = NULL;
 
   ev = instantiate_parameters (loop, analyze_scalar_evolution (loop, arg));
-  if (ev == NULL_TREE || TREE_CODE (ev) != POLYNOMIAL_CHREC)
+  if (ev == NULL_TREE)
+    return chrec_dont_know;
+
+  /* Support the case where we can derive the original CHREC from the
+     peeled one if that's a converted other IV.  This can be done
+     when the original unpeeled converted IV does not overflow and
+     has the same initial value.  */
+  if (CONVERT_EXPR_P (ev)
+      && TREE_CODE (init_cond) == INTEGER_CST
+      && TREE_CODE (TREE_OPERAND (ev, 0)) == POLYNOMIAL_CHREC
+      && (TYPE_PRECISION (TREE_TYPE (ev))
+	  > TYPE_PRECISION (TREE_TYPE (TREE_OPERAND (ev, 0))))
+      && (!TYPE_UNSIGNED (TREE_TYPE (ev))
+	  || TYPE_UNSIGNED (TREE_TYPE (TREE_OPERAND (ev, 0)))))
+    {
+      left = CHREC_LEFT (TREE_OPERAND (ev, 0));
+      right = CHREC_RIGHT (TREE_OPERAND (ev, 0));
+      tree left_before = chrec_fold_minus (TREE_TYPE (TREE_OPERAND (ev, 0)),
+					   left, right);
+      if (TREE_CODE (left_before) == INTEGER_CST
+	  && wi::to_widest (init_cond) == wi::to_widest (left_before)
+	  && !scev_probably_wraps_p (NULL_TREE, left_before, right, NULL,
+				     loop, false))
+	{
+	  tree tp = TREE_TYPE (right);
+
+	  /* We need a sign-extension to make things like
+	     u8(6, 4, 2) => i32(6, 4, 2), instead of i32(6, 260, 514).  */
+	  if (TYPE_UNSIGNED (tp))
+	    right = fold_convert (signed_type_for (tp), right);
+
+	  return build_polynomial_chrec (loop->num, init_cond,
+					 chrec_convert (TREE_TYPE (ev),
+							right, NULL,
+							false, NULL_TREE));
+	}
+      return chrec_dont_know;
+    }
+
+  if (TREE_CODE (ev) != POLYNOMIAL_CHREC)
     return chrec_dont_know;
 
   left = CHREC_LEFT (ev);
@@ -1712,6 +1776,20 @@ interpret_rhs_expr (class loop *loop, gimple *at_stmt,
       res = chrec_fold_plus (type, chrec1, chrec2);
       break;
 
+    case POINTER_DIFF_EXPR:
+      {
+	tree utype = unsigned_type_for (type);
+	chrec1 = analyze_scalar_evolution (loop, rhs1);
+	chrec2 = analyze_scalar_evolution (loop, rhs2);
+	chrec1 = chrec_convert (utype, chrec1, at_stmt);
+	chrec2 = chrec_convert (utype, chrec2, at_stmt);
+	chrec1 = instantiate_parameters (loop, chrec1);
+	chrec2 = instantiate_parameters (loop, chrec2);
+	res = chrec_fold_minus (utype, chrec1, chrec2);
+	res = chrec_convert (type, res, at_stmt);
+	break;
+      }
+
     case PLUS_EXPR:
       chrec1 = analyze_scalar_evolution (loop, rhs1);
       chrec2 = analyze_scalar_evolution (loop, rhs2);
@@ -1828,8 +1906,8 @@ interpret_rhs_expr (class loop *loop, gimple *at_stmt,
 	 the operation done in an unsigned type of the same precision
 	 as the final truncation.  We cannot derive a scalar evolution
 	 for the widened operation but for the truncated result.  */
-      if (TREE_CODE (type) == INTEGER_TYPE
-	  && TREE_CODE (TREE_TYPE (rhs1)) == INTEGER_TYPE
+      if (INTEGRAL_NB_TYPE_P (type)
+	  && INTEGRAL_NB_TYPE_P (TREE_TYPE (rhs1))
 	  && TYPE_PRECISION (type) < TYPE_PRECISION (TREE_TYPE (rhs1))
 	  && TYPE_OVERFLOW_UNDEFINED (type)
 	  && TREE_CODE (rhs1) == SSA_NAME
@@ -3050,7 +3128,7 @@ scev_reset (void)
 
    We do not use information whether TYPE can overflow so it is safe to
    use this test even for derived IVs not computed every iteration or
-   hypotetical IVs to be inserted into code.  */
+   hypothetical IVs to be inserted into code.  */
 
 bool
 iv_can_overflow_p (class loop *loop, tree type, tree base, tree step)
@@ -3088,7 +3166,7 @@ iv_can_overflow_p (class loop *loop, tree type, tree base, tree step)
   type_max = wi::max_value (type);
 
   /* Just sanity check that we don't see values out of the range of the type.
-     In this case the arithmetics bellow would overflow.  */
+     In this case the arithmetics below would overflow.  */
   gcc_checking_assert (wi::ge_p (base_min, type_min, sgn)
 		       && wi::le_p (base_max, type_max, sgn));
 
@@ -3560,7 +3638,7 @@ expression_expensive_p (tree expr, bool *cond_overflow_p)
 	  /* ???  Both the explicit unsharing and gimplification of expr will
 	     expand shared trees to multiple copies.
 	     Guard against exponential growth by counting the visits and
-	     comparing againt the number of original nodes.  Allow a tiny
+	     comparing against the number of original nodes.  Allow a tiny
 	     bit of duplication to catch some additional optimizations.  */
 	  || expanded_size > (cache.elements () + 1));
 }
@@ -3776,6 +3854,69 @@ analyze_and_compute_bitop_with_inv_effect (class loop* loop, tree phidef,
   return fold_build2 (code1, type, inv, match_op[0]);
 }
 
+/* Try to compute the final value of PHIDEF when PHIDEF is the result of a
+   loop-header PHI.
+
+   This handles the nonzero-latch-count delayed-value form:
+
+     y_phi = PHI <latch_arg (latch), init (preheader)>
+
+   If the latch count is known to be nonzero, the final value is:
+
+     latch_arg evaluated at iteration niter - 1
+
+   Return NULL_TREE if the pattern does not apply.  */
+static tree
+compute_final_value_from_loop_phi_latch (class loop *loop,
+	class loop *ex_loop, gphi *header_phi, tree niter, bool* folded_casts)
+{
+  if (gimple_bb (header_phi) != loop->header
+      || gimple_phi_num_args (header_phi) != 2)
+    return NULL_TREE;
+
+  /* If niter is a symbolic value make sure it can never be zero, otherwise we
+     do a bad replacement.  */
+  if (!tree_expr_nonzero_p (niter))
+    return NULL_TREE;
+
+  tree latch_arg = PHI_ARG_DEF_FROM_EDGE (header_phi,
+					  loop_latch_edge (loop));
+
+  tree ev = analyze_scalar_evolution_in_loop (ex_loop,
+					      loop,
+					      latch_arg,
+					      folded_casts);
+  if (ev == chrec_dont_know)
+    return NULL_TREE;
+
+  bool invariant_p;
+  if (no_evolution_in_loop_p (ev, ex_loop->num, &invariant_p) && invariant_p)
+    return ev;
+  else if (TREE_CODE (ev) == POLYNOMIAL_CHREC
+	   && get_chrec_loop (ev) == ex_loop)
+  {
+    tree niter_type = TREE_TYPE (niter);
+    tree prev_iter = fold_build2 (MINUS_EXPR,
+				  niter_type,
+				  niter,
+				  build_one_cst (niter_type));
+
+    tree res = chrec_apply (ex_loop->num, ev, prev_iter);
+    if (res == chrec_dont_know)
+      return NULL_TREE;
+
+    if (chrec_contains_symbols_defined_in_loop (res, ex_loop->num))
+    {
+      res = instantiate_parameters (ex_loop, res);
+      if (res == chrec_dont_know)
+	return NULL_TREE;
+    }
+
+    return res;
+  }
+  return NULL_TREE;
+}
+
 /* Do final value replacement for LOOP, return true if we did anything.  */
 
 bool
@@ -3787,7 +3928,11 @@ final_value_replacement_loop (class loop *loop)
   if (!exit)
     return false;
 
-  tree niter = number_of_latch_executions (loop);
+  class tree_niter_desc niter_desc;
+  if (!number_of_iterations_exit (loop, exit, &niter_desc, false))
+    return false;
+
+  tree niter = niter_desc.niter;
   if (niter == chrec_dont_know)
     return false;
 
@@ -3826,8 +3971,12 @@ final_value_replacement_loop (class loop *loop)
       def = analyze_scalar_evolution_in_loop (ex_loop, loop, def,
 					      &folded_casts);
 
-      tree bitinv_def, bit_def;
+      tree bitinv_def, bit_def, phi_latch_final_value;
       unsigned HOST_WIDE_INT niter_num;
+
+      gphi *header_phi = TREE_CODE (phidef) == SSA_NAME
+			 ? dyn_cast<gphi*> (SSA_NAME_DEF_STMT (phidef))
+			 : NULL;
 
       if (def != chrec_dont_know)
 	def = compute_overall_effect_of_inner_loop (ex_loop, def);
@@ -3862,6 +4011,16 @@ final_value_replacement_loop (class loop *loop)
 								   phidef,
 								   niter_num)))
 	def = bit_def;
+
+      else if (header_phi
+	       && integer_zerop (niter_desc.may_be_zero)
+	       && (phi_latch_final_value
+		   = compute_final_value_from_loop_phi_latch (loop,
+							      ex_loop,
+							      header_phi,
+							      niter,
+							      &folded_casts)))
+	def = phi_latch_final_value;
 
       bool cond_overflow_p;
       if (!tree_does_not_contain_chrecs (def)
@@ -3906,16 +4065,20 @@ final_value_replacement_loop (class loop *loop)
 	 GENERIC interface).  */
       def = unshare_expr (def);
       auto loc = gimple_phi_arg_location (phi, exit->dest_idx);
-      remove_phi_node (&psi, false);
+
+      /* Create the replacement statements.  */
+      gimple_seq stmts;
+      def = force_gimple_operand (def, &stmts, false, NULL_TREE);
 
       /* Propagate constants immediately, but leave an unused initialization
 	 around to avoid invalidating the SCEV cache.  */
       if (CONSTANT_CLASS_P (def) && !SSA_NAME_OCCURS_IN_ABNORMAL_PHI (rslt))
 	replace_uses_by (rslt, def);
 
-      /* Create the replacement statements.  */
-      gimple_seq stmts;
-      def = force_gimple_operand (def, &stmts, false, NULL_TREE);
+      /* Remove the old phi after the gimplification to make sure the
+	 SSA name is defined by a statement so that fold_stmt during
+	 the gimplification does not crash. */
+      remove_phi_node (&psi, false);
       gassign *ass = gimple_build_assign (rslt, def);
       gimple_set_location (ass, loc);
       gimple_seq_add_stmt (&stmts, ass);
@@ -3954,11 +4117,17 @@ final_value_replacement_loop (class loop *loop)
 	{
 	  gimple *use_stmt;
 	  imm_use_iterator imm_iter;
+	  auto_vec<gimple *, 4> to_fold;
 	  FOR_EACH_IMM_USE_STMT (use_stmt, imm_iter, rslt)
+	    if (!stmt_can_throw_internal (cfun, use_stmt))
+	      to_fold.safe_push (use_stmt);
+	  /* Delay folding until after the immediate use walk is completed
+	     as we have an active ranger and that might walk immediate
+	     uses of rslt again.  See PR122502.  */
+	  for (gimple *use_stmt : to_fold)
 	    {
 	      gimple_stmt_iterator gsi = gsi_for_stmt (use_stmt);
-	      if (!stmt_can_throw_internal (cfun, use_stmt)
-		  && fold_stmt (&gsi, follow_all_ssa_edges))
+	      if (fold_stmt (&gsi, follow_all_ssa_edges))
 		update_stmt (gsi_stmt (gsi));
 	    }
 	}

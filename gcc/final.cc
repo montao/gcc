@@ -1,5 +1,5 @@
 /* Convert RTL to assembler code and output it, for GNU compiler.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -83,6 +83,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "function-abi.h"
 #include "common/common-target.h"
 #include "diagnostic.h"
+#include "diagnostics/file-cache.h"
 
 #include "dwarf2out.h"
 
@@ -2116,7 +2117,7 @@ asm_show_source (const char *filename, int linenum)
   if (!filename)
     return;
 
-  char_span line
+  diagnostics::char_span line
     = global_dc->get_file_cache ().get_source_line (filename, linenum);
   if (!line)
     return;
@@ -3294,7 +3295,11 @@ output_asm_operand_names (rtx *operands, int *oporder, int nops)
   for (i = 0; i < nops; i++)
     {
       int addressp;
-      rtx op = operands[oporder[i]];
+      int opnum = oporder[i];
+      /* Skip invalid ops. */
+      if (opnum == MAX_RECOG_OPERANDS)
+	continue;
+      rtx op = operands[opnum];
       tree expr = get_mem_expr_from_op (op, &addressp);
 
       fprintf (asm_out_file, "%c%s",
@@ -3427,8 +3432,8 @@ output_asm_insn (const char *templ, rtx *operands)
 #ifdef ASSEMBLER_DIALECT
   int dialect = 0;
 #endif
-  int oporder[MAX_RECOG_OPERANDS];
-  char opoutput[MAX_RECOG_OPERANDS];
+  int oporder[MAX_RECOG_OPERANDS+1];
+  char opoutput[MAX_RECOG_OPERANDS+1];
   int ops = 0;
 
   /* An insn may return a null string template
@@ -3516,7 +3521,11 @@ output_asm_insn (const char *templ, rtx *operands)
 	      output_operand_lossage ("operand number missing "
 				      "after %%-letter");
 	    else if (this_is_asm_operands && opnum >= insn_noperands)
-	      output_operand_lossage ("operand number out of range");
+	      {
+		/* Force the opnum in bounds to a bogus location. */
+		opnum = MAX_RECOG_OPERANDS;
+		output_operand_lossage ("operand number out of range");
+	      }
 	    else if (letter == 'l')
 	      output_asm_label (operands[opnum]);
 	    else if (letter == 'a')
@@ -3557,7 +3566,11 @@ output_asm_insn (const char *templ, rtx *operands)
 
 	    opnum = strtoul (p, &endptr, 10);
 	    if (this_is_asm_operands && opnum >= insn_noperands)
-	      output_operand_lossage ("operand number out of range");
+	      {
+		/* Force the opnum in bounds to a bogus location. */
+		opnum = MAX_RECOG_OPERANDS;
+		output_operand_lossage ("operand number out of range");
+	      }
 	    else
 	      output_operand (operands[opnum], 0);
 
@@ -4485,6 +4498,7 @@ rest_of_clean_state (void)
 
   flag_rerun_cse_after_global_opts = 0;
   reload_completed = 0;
+  post_ra_split_completed = false;
   epilogue_completed = 0;
 #ifdef STACK_REGS
   regstack_completed = 0;

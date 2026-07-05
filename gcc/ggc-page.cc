@@ -1,5 +1,5 @@
 /* "Bag-of-pages" garbage collector for the GNU compiler.
-   Copyright (C) 1999-2025 Free Software Foundation, Inc.
+   Copyright (C) 1999-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1589,7 +1589,7 @@ gt_ggc_m_S (const void *p)
 	 a STRING_CST.  */
       gcc_assert (offset == offsetof (struct tree_string, str));
       p = ((const char *) p) - offset;
-      gt_ggc_mx_lang_tree_node (CONST_CAST (void *, p));
+      gt_ggc_mx_lang_tree_node (const_cast<void *> (p));
       return;
     }
 

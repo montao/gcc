@@ -1,6 +1,6 @@
 (* ARRAYOFCHAR.def provides output procedures for the ARRAY OF CHAR datatype.
 
-Copyright (C) 2025 Free Software Foundation, Inc.
+Copyright (C) 2025-2026 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaiusmod2@gmail.com>.
 
 This file is part of GNU Modula-2.
@@ -34,14 +34,14 @@ IMPORT StrLib ;
    Write - writes a string to file f.
 *)
 
-PROCEDURE Write (f: File; a: ARRAY OF CHAR) ;
+PROCEDURE Write (f: File; str: ARRAY OF CHAR) ;
 VAR
    len, i: CARDINAL ;
 BEGIN
-   len := StrLib.StrLen (a) ;
+   len := StrLib.StrLen (str) ;
    i := 0 ;
    WHILE i < len DO
-      WriteChar (f, a[i]) ;
+      WriteChar (f, str[i]) ;
       INC (i)
    END
 END Write ;

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -3044,6 +3044,23 @@ package body Osint is
       end loop;
 
       --  There were no directory separator, just return Name
+
+      return Name;
+   end Strip_Directory;
+
+   ---------------------
+   -- Strip_Directory --
+   ---------------------
+
+   function Strip_Directory (Name : String) return String is
+   begin
+      pragma Assert (not Is_Directory_Separator (Name (Name'Last)));
+
+      for I in reverse Name'Range loop
+         if Is_Directory_Separator (Name (I)) then
+            return Name (I + 1 .. Name'Last);
+         end if;
+      end loop;
 
       return Name;
    end Strip_Directory;

@@ -1,6 +1,6 @@
 // TR2 <dynamic_bitset> -*- C++ -*-
 
-// Copyright (C) 2009-2025 Free Software Foundation, Inc.
+// Copyright (C) 2009-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -37,7 +37,7 @@
 #include <vector>
 #include <string>
 #include <istream>
-#include <bits/functexcept.h>
+#include <bits/stdexcept_throw.h>
 #include <bits/stl_algo.h>	// For fill
 #include <bits/cxxabi_forced.h>
 

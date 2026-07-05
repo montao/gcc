@@ -1,5 +1,5 @@
 /* A program for re-emitting diagnostics saved in SARIF form.
-   Copyright (C) 2022-2025 Free Software Foundation, Inc.
+   Copyright (C) 2022-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -37,6 +37,7 @@ set_defaults (replay_options &replay_opts)
   replay_opts.m_echo_file = false;
   replay_opts.m_json_comments = false;
   replay_opts.m_verbose = false;
+  replay_opts.m_debug_physical_locations = false;
   replay_opts.m_diagnostics_colorize = DIAGNOSTIC_COLORIZE_IF_TTY;
 }
 
@@ -57,7 +58,7 @@ print_version ()
 {
   printf (_("%s %s%s\n"), progname, pkgversion_string,
 	  version_string);
-  printf ("Copyright %s 2024-2025 Free Software Foundation, Inc.\n",
+  printf ("Copyright %s 2024-2026 Free Software Foundation, Inc.\n",
 	  _("(C)"));
   fputs (_("This is free software; see the source for copying conditions.  There is NO\n\
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"),
@@ -93,6 +94,11 @@ static const char *const usage_msg = (
 "\n"
 "  --usage\n"
 "     Print this message and exit.\n"
+"\n"
+"Options for maintainers:\n"
+"\n"
+"  -fdebug-physical-locations\n"
+"    Dump debugging information about physical locations to stderr.\n"
 "\n");
 
 static void
@@ -182,7 +188,11 @@ parse_options (int argc, char **argv,
 	  print_version ();
 	  exit (0);
 	}
-
+      else if (strcmp (option, "-fdebug-physical-locations") == 0)
+	{
+	  opts.m_replay_opts.m_debug_physical_locations = true;
+	  handled = true;
+	}
       if (!handled)
 	{
 	  if (option[0] == '-')
@@ -245,6 +255,8 @@ main (int argc, char **argv)
 	  note.finish ("about to replay %qs...", filename);
 	}
       libgdiagnostics::manager playback_mgr;
+      playback_mgr.set_debug_physical_locations
+	(opts.m_replay_opts.m_debug_physical_locations);
       playback_mgr.add_text_sink (stderr,
 				  opts.m_replay_opts.m_diagnostics_colorize);
       for (auto spec : opts.m_extra_output_specs)

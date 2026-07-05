@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -87,7 +87,7 @@ member(tree var, const char *member_name)
     }
 
 tree
-member(cbl_field_t *var, const char *member_name)
+member(const cbl_field_t *var, const char *member_name)
     {
     return gg_struct_field_ref(var->var_decl_node, member_name);
     }
@@ -156,8 +156,9 @@ tree cblc_field_p_type_node;
 tree cblc_field_pp_type_node;
 tree cblc_file_type_node;
 tree cblc_file_p_type_node;
-tree cbl_enabled_exception_type_node;
 tree cblc_goto_type_node;
+tree cblc_referlet_type_node;
+tree cblc_refer_type_node;
 
 // The following functions return type_decl nodes for the various structures
 
@@ -179,32 +180,32 @@ create_cblc_field_t()
         size_t occurs_upper;        // non-zero for a table
         uint64_t attr;              // See cbl_field_attr_t
         signed char type;           // A one-byte copy of cbl_field_type_t
-        signed char level;          // This variable's level in the naming heirarchy
+        signed char level;          // This variable's level in the naming hierarchy
         signed char digits;         // Digits specified in PIC string; e.g. 5 for 99v999
         signed char rdigits;        // Digits to the right of the decimal point. 3 for 99v999
+        cbl_encoding_t  encoding;   // Same as cbl_field_t::codeset::encoding
+        int             alphabet;   // Same as cbl_field_t::codeset::language
         } cblc_field_t;
     */
-    tree retval = NULL_TREE;
-    retval = gg_get_filelevel_struct_type_decl( "cblc_field_t",
-                                            16,
-                                            UCHAR_P, "data",
-                                            SIZE_T,  "capacity",
-                                            SIZE_T,  "allocated",
-                                            SIZE_T,  "offset",
-                                            CHAR_P,  "name",
-                                            CHAR_P,  "picture",
-                                            CHAR_P,  "initial",
-                                            CHAR_P,  "parent",
-                                            SIZE_T,  "occurs_lower",
-                                            SIZE_T,  "occurs_upper",
-                                            ULONGLONG, "attr",
-                                            SCHAR,   "type",
-                                            SCHAR,   "level",
-                                            SCHAR,   "digits",
-                                            SCHAR,   "rdigits",
-                                            INT,     "dummy");  // Needed to make it an even number of 32-bit ints
-    retval = TREE_TYPE(retval);
-
+    tree retval = gg_get_structure_type_decl("cblc_field_t",
+                                              UCHAR_P, "data",
+                                              SIZE_T,  "capacity",
+                                              SIZE_T,  "allocated",
+                                              SIZE_T,  "offset",
+                                              CHAR_P,  "name",
+                                              CHAR_P,  "picture",
+                                              CHAR_P,  "initial",
+                                              CHAR_P,  "parent",
+                                              SIZE_T,  "occurs_lower",
+                                              SIZE_T,  "occurs_upper",
+                                              ULONGLONG, "attr",
+                                              SCHAR,   "type",
+                                              SCHAR,   "level",
+                                              SCHAR,   "digits",
+                                              SCHAR,   "rdigits",
+                                              INT,     "encoding",
+                                              INT,     "alphabet",
+                                              NULL_TREE);
     return retval;
     }
 
@@ -216,10 +217,15 @@ create_cblc_file_t()
     /*
 typedef struct cblc_file_t
     {
+    // This structure must match the code in structs.cc
     char                *name;             // This is the name of the structure; might be the name of an environment variable
-    size_t               symbol_index;     // The symbol table index of the related cbl_file_t structure
+    size_t               symbol_table_index;  // of the related cbl_field_t structure
     char                *filename;         // The name of the file to be opened
     FILE                *file_pointer;     // The FILE *pointer
+    size_t               file_fpos;        // Calculated file position
+    char                *buffer;           // read buffer
+    size_t               buffer_pos;       // next character from the buffer
+    size_t               buffer_len;       // number of characters in the buffer
     cblc_field_t        *default_record;   // The record_area
     size_t               record_area_min;  // The size of the smallest 01 record in the FD
     size_t               record_area_max;  // The size of the largest  01 record in the FD
@@ -241,73 +247,95 @@ typedef struct cblc_file_t
     int                  errnum;           // most recent errno; can't reuse "errno" as the name
     file_status_t        io_status;        // See 2014 standard, section 9.1.12
     int                  padding;          // Actually a char
-    int                  delimiter;        // ends a record; defaults to '\n'.
+    uint32_t             delimiter;        // ends a record; defaults to '\n'.
+    int                  stride;           // Width of a character
     int                  flags;            // cblc_file_flags_t
-    int                  recent_char;      // This is the most recent char sent to the file
+    uint32_t             recent_char;      // This is the most recent char sent to the file
     int                  recent_key;
-    cblc_file_prior_op_t prior_op;
-    int                  dummy             // We need an even number of INT
+    cblc_file_prior_op_t prior_op;         // run-time type is INT
+    cbl_encoding_t       encoding;         // We assume size int
+    int                  alphabet;         // Actually cbl_encoding_t
     } cblc_file_t;
     */
-
-    tree retval = NULL_TREE;
-    retval = gg_get_filelevel_struct_type_decl( "cblc_file_t",
-                                            31,
-                                            CHAR_P,    "name",
-                                            SIZE_T,    "symbol_table_index",
-                                            CHAR_P,    "filename",
-                                            FILE_P,    "file_pointer",
-                                            cblc_field_p_type_node, "default_record",
-                                            SIZE_T,    "record_area_min",
-                                            SIZE_T,    "record_area_max",
-                                            build_pointer_type(cblc_field_p_type_node), "keys",
-                                            build_pointer_type(INT),"key_numbers",
-                                            build_pointer_type(INT),"uniques",
-                                            cblc_field_p_type_node, "password",
-                                            cblc_field_p_type_node, "status",
-                                            cblc_field_p_type_node, "user_status",
-                                            cblc_field_p_type_node, "vsam_status",
-                                            cblc_field_p_type_node, "record_length",
-                                            VOID_P,                 "supplemental",
-                                            VOID_P,                 "implementation",
-                                            SIZE_T,    "reserve",
-                                            LONG,      "prior_read_location",
-                                            INT,       "org",
-                                            INT,       "access",
-                                            INT,       "mode_char",
-                                            INT,       "errnum",
-                                            INT,       "io_status",
-                                            INT,       "padding",
-                                            INT,       "delimiter",
-                                            INT,       "flags",
-                                            INT,       "recent_char",
-                                            INT,       "recent_key",
-                                            INT,       "prior_op",
-                                            INT,       "dummy");
-    retval = TREE_TYPE(retval);
+    tree retval = gg_get_structure_type_decl("cblc_file_t",
+                                             CHAR_P,    "name",
+                                             ULONGLONG, "symbol_table_index",
+                                             CHAR_P,    "filename",
+                                             FILE_P,    "file_pointer",
+                                             SIZE_T,    "file_fpos",
+                                             CHAR_P,    "buffer",
+                                             SIZE_T,    "buffer_pos",
+                                             SIZE_T,    "buffer_len",
+                                             cblc_field_p_type_node, "default_record",
+                                             SIZE_T,    "record_area_min",
+                                             SIZE_T,    "record_area_max",
+                                             build_pointer_type(cblc_field_p_type_node), "keys",
+                                             build_pointer_type(INT),"key_numbers",
+                                             build_pointer_type(INT),"uniques",
+                                             cblc_field_p_type_node, "password",
+                                             cblc_field_p_type_node, "status",
+                                             cblc_field_p_type_node, "user_status",
+                                             cblc_field_p_type_node, "vsam_status",
+                                             cblc_field_p_type_node, "record_length",
+                                             VOID_P,                 "supplemental",
+                                             VOID_P,                 "implementation",
+                                             SIZE_T,    "reserve",
+                                             LONG,      "prior_read_location",
+                                             INT,       "org",
+                                             INT,       "access",
+                                             INT,       "mode_char",
+                                             INT,       "errnum",
+                                             INT,       "io_status",
+                                             INT,       "padding",
+                                             UINT,      "delimiter",
+                                             INT,       "stride",
+                                             INT,       "flags",
+                                             UINT,      "recent_char",
+                                             INT,       "recent_key",
+                                             INT,       "prior_op",
+                                             INT,       "encoding", // Actually cbl_encoding_t
+                                             INT,       "alphabet",
+                                             NULL_TREE);
     return retval;
     }
 
 static tree
-create_cbl_enabled_exception_t()
+create_referlet_t()
     {
     /*
-    struct cbl_enabled_exception_t
-        {
-        bool enabled, location;
-        ec_type_t ec;
-        size_t file;
-        };
+      typedef struct cblc_referlet_t
+          {
+          cblc_field_t        *field;
+          size_t               offset;
+          size_t               size;
+          } cblc_referlet_t;
     */
-    tree retval = NULL_TREE;
-    retval = gg_get_filelevel_struct_type_decl( "cbl_enabled_exception_t",
-                                            4,
-                                            BOOL,   "enabled",
-                                            BOOL,   "location",
-                                            UINT,   "ec",
-                                            SIZE_T, "file");
-    retval = TREE_TYPE(retval);
+    tree retval = gg_get_structure_type_decl("cblc_referlet_t",
+                                              cblc_field_p_type_node, "field",
+                                              SIZE_T,               "offset",
+                                              SIZE_T,               "size",
+                                              NULL_TREE);
+    return retval;
+    }
 
+static tree
+create_refer_t()
+    {
+    /*
+      typedef struct cblc_refer_t
+          {
+          cblc_field_t        *field;
+          size_t               offset;
+          size_t               size;
+          int                  flags;
+          } cblc_refer_t;
+    */
+    tree retval = gg_get_structure_type_decl("cblc_refer_t",
+                                              cblc_field_p_type_node, "field",
+                                              SIZE_T,               "offset",
+                                              SIZE_T,               "size",
+                                              INT,                  "flags",
+                                              NULL_TREE);
     return retval;
     }
 
@@ -323,7 +351,8 @@ create_our_type_nodes()
         cblc_field_pp_type_node           = build_pointer_type(cblc_field_p_type_node);
         cblc_file_type_node               = create_cblc_file_t();
         cblc_file_p_type_node             = build_pointer_type(cblc_file_type_node);
-        cbl_enabled_exception_type_node   = create_cbl_enabled_exception_t();
+        cblc_referlet_type_node           = create_referlet_t();
+        cblc_refer_type_node              = create_refer_t();
         }
     }
 

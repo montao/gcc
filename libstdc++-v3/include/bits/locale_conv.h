@@ -1,6 +1,6 @@
 // wstring_convert implementation -*- C++ -*-
 
-// Copyright (C) 2015-2025 Free Software Foundation, Inc.
+// Copyright (C) 2015-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -47,6 +47,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    * @addtogroup locales
    * @{
    */
+
+  /// @cond undocumented
 
   template<typename _OutStr, typename _InChar, typename _Codecvt,
 	   typename _State, typename _Fn>
@@ -255,6 +257,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	_Tp* _M_ptr;
       };
   }
+  /// @endcond
 
 _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
@@ -283,7 +286,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       wstring_convert(_Codecvt* __pcvt) : _M_cvt(__pcvt, "wstring_convert")
       { }
 
-      /** Construct with an initial converstion state.
+      /** Construct with an initial conversion state.
        *
        * @param  __pcvt The facet to use for conversions.
        * @param  __state Initial conversion state.

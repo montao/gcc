@@ -1,5 +1,5 @@
 /* A pass for lowering trees to RTL.
-   Copyright (C) 2004-2025 Free Software Foundation, Inc.
+   Copyright (C) 2004-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -90,7 +90,7 @@ along with GCC; see the file COPYING3.  If not see
 struct ssaexpand SA;
 
 /* This variable holds the currently expanded gimple statement for purposes
-   of comminucating the profile info to the builtin expanders.  */
+   of communicating the profile info to the builtin expanders.  */
 gimple *currently_expanding_gimple_stmt;
 
 static rtx expand_debug_expr (tree);
@@ -383,7 +383,7 @@ align_local_variable (tree decl, bool really_expand)
   else
     align = LOCAL_DECL_ALIGNMENT (decl);
 
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     align = MAX (align, (unsigned) HWASAN_TAG_GRANULE_SIZE * BITS_PER_UNIT);
 
   if (TREE_CODE (decl) != SSA_NAME && really_expand)
@@ -722,7 +722,7 @@ vars_ssa_cache::dump (FILE *file)
 /* Returns the filled in cache for NAME.
    This will fill in the cache if it does not exist already.
    Returns an empty for ssa names that can't contain pointers
-   (only intergal types and pointer types will contain pointers).  */
+   (only integral types and pointer types will contain pointers).  */
 
 const_bitmap
 vars_ssa_cache::operator() (tree name)
@@ -834,8 +834,8 @@ add_scope_conflicts_2 (vars_ssa_cache &cache, tree name,
 {
   gcc_assert (TREE_CODE (name) == SSA_NAME);
 
-  /* Querry the cache for the mapping of addresses that are referendd by
-     ssa name NAME. Querrying it will fill in it.  */
+  /* Query the cache for the mapping of addresses that are referenced by
+     ssa name NAME.  Querying it will fill in it.  */
   bitmap_iterator bi;
   unsigned i;
   const_bitmap bmap = cache (name);
@@ -900,7 +900,7 @@ add_scope_conflicts_1 (vars_ssa_cache &cache, basic_block bb, bitmap work, bool 
 	    {
 	      /* When we are inheriting live variables from our predecessors
 		 through a CFG merge we might not see an actual mention of
-		 the variables to record the approprate conflict as defs/uses
+		 the variables to record the appropriate conflict as defs/uses
 		 might be through indirect stores/loads.  For this reason
 		 we have to make sure each live variable conflicts with
 		 each other.  When there's just a single predecessor the
@@ -1337,7 +1337,7 @@ expand_one_stack_var_at (tree decl, rtx base, unsigned base_align,
   /* If this fails, we've overflowed the stack frame.  Error nicely?  */
   gcc_assert (known_eq (offset, trunc_int_for_mode (offset, Pmode)));
 
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     x = targetm.memtag.add_tag (base, offset,
 				hwasan_current_frame_tag ());
   else
@@ -1472,14 +1472,14 @@ expand_stack_vars (bool (*pred) (unsigned), class stack_vars_data *data)
       if (pred && !pred (i))
 	continue;
 
-      base = (hwasan_sanitize_stack_p ()
+      base = (hwassist_sanitize_stack_p ()
 	      ? hwasan_frame_base ()
 	      : virtual_stack_vars_rtx);
       alignb = stack_vars[i].alignb;
       if (alignb * BITS_PER_UNIT <= MAX_SUPPORTED_STACK_ALIGNMENT)
 	{
 	  poly_int64 hwasan_orig_offset;
-	  if (hwasan_sanitize_stack_p ())
+	  if (hwassist_sanitize_stack_p ())
 	    {
 	      /* There must be no tag granule "shared" between different
 		 objects.  This means that no HWASAN_TAG_GRANULE_SIZE byte
@@ -1578,7 +1578,7 @@ expand_stack_vars (bool (*pred) (unsigned), class stack_vars_data *data)
 	      offset = alloc_stack_frame_space (stack_vars[i].size, alignb);
 	      base_align = crtl->max_used_stack_slot_alignment;
 
-	      if (hwasan_sanitize_stack_p ())
+	      if (hwassist_sanitize_stack_p ())
 		{
 		  /* Align again since the point of this alignment is to handle
 		     the "end" of the object (i.e. smallest address after the
@@ -1623,7 +1623,7 @@ expand_stack_vars (bool (*pred) (unsigned), class stack_vars_data *data)
 	  large_alloc = aligned_upper_bound (large_alloc, alignb);
 	  offset = large_alloc;
 	  large_alloc += stack_vars[i].size;
-	  if (hwasan_sanitize_stack_p ())
+	  if (hwassist_sanitize_stack_p ())
 	    {
 	      /* An object with a large alignment requirement means that the
 		 alignment requirement is greater than the required alignment
@@ -1654,7 +1654,7 @@ expand_stack_vars (bool (*pred) (unsigned), class stack_vars_data *data)
 	  expand_one_stack_var_at (stack_vars[j].decl,
 				   base, base_align, offset);
 	}
-      if (hwasan_sanitize_stack_p ())
+      if (hwassist_sanitize_stack_p ())
 	hwasan_increment_frame_tag ();
     }
 
@@ -1697,7 +1697,7 @@ set_parm_rtl (tree parm, rtx x)
 					      TYPE_MODE (TREE_TYPE (parm)),
 					      TYPE_ALIGN (TREE_TYPE (parm)));
 
-      /* If the variable alignment is very large we'll dynamicaly
+      /* If the variable alignment is very large we'll dynamically
 	 allocate it, which means that in-frame portion is just a
 	 pointer.  ??? We've got a pseudo for sure here, do we
 	 actually dynamically allocate its spilling area if needed?
@@ -1747,7 +1747,7 @@ expand_one_stack_var_1 (tree var)
   gcc_assert (byte_align * BITS_PER_UNIT <= MAX_SUPPORTED_STACK_ALIGNMENT);
 
   rtx base;
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     {
       /* Allocate zero bytes to align the stack.  */
       poly_int64 hwasan_orig_offset
@@ -1775,7 +1775,7 @@ expand_one_stack_var_1 (tree var)
   expand_one_stack_var_at (var, base,
 			   crtl->max_used_stack_slot_alignment, offset);
 
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     hwasan_increment_frame_tag ();
 }
 
@@ -1847,7 +1847,7 @@ expand_one_ssa_partition (tree var)
 					  TYPE_MODE (TREE_TYPE (var)),
 					  TYPE_ALIGN (TREE_TYPE (var)));
 
-  /* If the variable alignment is very large we'll dynamicaly allocate
+  /* If the variable alignment is very large we'll dynamically allocate
      it, which means that in-frame portion is just a pointer.  */
   if (align > MAX_SUPPORTED_STACK_ALIGNMENT)
     align = GET_MODE_ALIGNMENT (Pmode);
@@ -2075,7 +2075,7 @@ expand_one_var (tree var, bool toplevel, bool really_expand,
       else
 	align = MINIMUM_ALIGNMENT (var, DECL_MODE (var), DECL_ALIGN (var));
 
-      /* If the variable alignment is very large we'll dynamicaly allocate
+      /* If the variable alignment is very large we'll dynamically allocate
 	 it, which means that in-frame portion is just a pointer.  */
       if (align > MAX_SUPPORTED_STACK_ALIGNMENT)
 	align = GET_MODE_ALIGNMENT (Pmode);
@@ -2379,7 +2379,7 @@ init_vars_expansion (void)
   /* Initialize local stack smashing state.  */
   has_protected_decls = false;
   has_short_buffer = false;
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     hwasan_record_frame_init ();
 }
 
@@ -2705,13 +2705,14 @@ expand_used_vars (bitmap forced_stack_vars)
       expand_stack_vars (NULL, &data);
     }
 
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     hwasan_emit_prologue ();
   if (asan_sanitize_allocas_p () && cfun->calls_alloca)
     var_end_seq = asan_emit_allocas_unpoison (virtual_stack_dynamic_rtx,
 					      virtual_stack_vars_rtx,
 					      var_end_seq);
-  else if (hwasan_sanitize_allocas_p () && cfun->calls_alloca)
+  else if ((hwasan_sanitize_allocas_p () || memtag_sanitize_p ())
+	   && cfun->calls_alloca)
     /* When using out-of-line instrumentation we only want to emit one function
        call for clearing the tags in a region of shadow stack.  When there are
        alloca calls in this frame we want to emit a call using the
@@ -2719,7 +2720,7 @@ expand_used_vars (bitmap forced_stack_vars)
        rtx we created in expand_stack_vars.  */
     var_end_seq = hwasan_emit_untag_frame (virtual_stack_dynamic_rtx,
 					   virtual_stack_vars_rtx);
-  else if (hwasan_sanitize_stack_p ())
+  else if (hwassist_sanitize_stack_p ())
     /* If no variables were stored on the stack, `hwasan_get_frame_extent`
        will return NULL_RTX and hence `hwasan_emit_untag_frame` will return
        NULL (i.e. an empty sequence).  */
@@ -3275,44 +3276,6 @@ expand_asm_loc (tree string, int vol, location_t locus)
   emit_insn (body);
 }
 
-/* Return the number of times character C occurs in string S.  */
-static int
-n_occurrences (int c, const char *s)
-{
-  int n = 0;
-  while (*s)
-    n += (*s++ == c);
-  return n;
-}
-
-/* A subroutine of expand_asm_operands.  Check that all operands have
-   the same number of alternatives.  Return true if so.  */
-
-static bool
-check_operand_nalternatives (const vec<const char *> &constraints)
-{
-  unsigned len = constraints.length();
-  if (len > 0)
-    {
-      int nalternatives = n_occurrences (',', constraints[0]);
-
-      if (nalternatives + 1 > MAX_RECOG_ALTERNATIVES)
-	{
-	  error ("too many alternatives in %<asm%>");
-	  return false;
-	}
-
-      for (unsigned i = 1; i < len; ++i)
-	if (n_occurrences (',', constraints[i]) != nalternatives)
-	  {
-	    error ("operand constraints for %<asm%> differ "
-		   "in number of alternatives");
-	    return false;
-	  }
-    }
-  return true;
-}
-
 /* Check for overlap between registers marked in CLOBBERED_REGS and
    anything inappropriate in T.  Emit error and return the register
    variable definition for error, NULL_TREE for ok.  */
@@ -3478,10 +3441,6 @@ expand_asm_stmt (gasm *stmt)
 	= TREE_STRING_POINTER (TREE_VALUE (TREE_PURPOSE (t)));
     }
 
-  /* ??? Diagnose during gimplification?  */
-  if (! check_operand_nalternatives (constraints))
-    return;
-
   /* Count the number of meaningful clobbered registers, ignoring what
      we would ignore later.  */
   auto_vec<rtx> clobber_rvec;
@@ -3555,7 +3514,8 @@ expand_asm_stmt (gasm *stmt)
 	 no point in going further.  */
       constraint = constraints[i];
       if (!parse_output_constraint (&constraint, i, ninputs, noutputs,
-				    &allows_mem, &allows_reg, &is_inout))
+				    &allows_mem, &allows_reg, &is_inout,
+				    nullptr))
 	return;
 
       /* If the output is a hard register, verify it doesn't conflict with
@@ -3633,8 +3593,8 @@ expand_asm_stmt (gasm *stmt)
 
       constraint = constraints[i + noutputs];
       if (! parse_input_constraint (&constraint, i, ninputs, noutputs, 0,
-				    constraints.address (),
-				    &allows_mem, &allows_reg))
+				    constraints.address (), &allows_mem,
+				    &allows_reg, nullptr))
 	return;
 
       if (! allows_reg && allows_mem)
@@ -3664,7 +3624,7 @@ expand_asm_stmt (gasm *stmt)
 
       ok = parse_output_constraint (&constraints[i], i, ninputs,
 				    noutputs, &allows_mem, &allows_reg,
-				    &is_inout);
+				    &is_inout, nullptr);
       gcc_assert (ok);
 
       /* If an output operand is not a decl or indirect ref and our constraint
@@ -3769,7 +3729,7 @@ expand_asm_stmt (gasm *stmt)
       constraint = constraints[i + noutputs];
       ok = parse_input_constraint (&constraint, i, ninputs, noutputs, 0,
 				   constraints.address (),
-				   &allows_mem, &allows_reg);
+				   &allows_mem, &allows_reg, nullptr);
       gcc_assert (ok);
 
       /* EXPAND_INITIALIZER will not generate code for valid initializer
@@ -3826,13 +3786,22 @@ expand_asm_stmt (gasm *stmt)
      Case in point is when the i386 backend moved from cc0 to a hard reg --
      maintaining source-level compatibility means automatically clobbering
      the flags register.  */
-  rtx_insn *after_md_seq = NULL;
   auto_vec<rtx> use_rvec;
   if (targetm.md_asm_adjust)
-    after_md_seq
+    {
+      rtx_insn *after_md_seq
 	= targetm.md_asm_adjust (output_rvec, input_rvec, input_mode,
 				 constraints, use_rvec, clobber_rvec,
 				 clobbered_regs, locus);
+      if (after_md_seq)
+	{
+	  push_to_sequence (after_md_seq);
+	  emit_insn (after_rtl_seq);
+	  after_rtl_seq = get_insns ();
+	  after_rtl_end = get_last_insn ();
+	  end_sequence ();
+	}
+    }
 
   /* Do not allow the hook to change the output and input count,
      lest it mess up the operand numbering.  */
@@ -4007,8 +3976,6 @@ expand_asm_stmt (gasm *stmt)
   if (fallthru_label)
     emit_label (fallthru_label);
 
-  if (after_md_seq)
-    emit_insn (after_md_seq);
   if (after_rtl_seq)
     {
       if (nlabels == 0)
@@ -4957,7 +4924,7 @@ expand_debug_expr (tree exp)
       /* Fall through.  */
 
     case INTEGER_CST:
-      if (TREE_CODE (TREE_TYPE (exp)) == BITINT_TYPE
+      if (BITINT_TYPE_P (TREE_TYPE (exp))
 	  && TYPE_MODE (TREE_TYPE (exp)) == BLKmode)
 	return NULL;
       /* FALLTHRU */
@@ -5358,6 +5325,9 @@ expand_debug_expr (tree exp)
       return simplify_gen_binary (MULT, mode, op0, op1);
 
     case RDIV_EXPR:
+      gcc_assert (FLOAT_MODE_P (mode)
+		  || ALL_FIXED_POINT_MODE_P (mode));
+      /* Fall through.  */
     case TRUNC_DIV_EXPR:
     case EXACT_DIV_EXPR:
       if (unsignedp)
@@ -5694,11 +5664,9 @@ expand_debug_expr (tree exp)
       else if (TREE_CODE (TREE_TYPE (exp)) == VECTOR_TYPE)
 	{
 	  unsigned i;
-	  unsigned HOST_WIDE_INT nelts;
+	  poly_uint64 elts = TYPE_VECTOR_SUBPARTS (TREE_TYPE (exp));
+	  unsigned HOST_WIDE_INT nelts = constant_lower_bound (elts);
 	  tree val;
-
-	  if (!TYPE_VECTOR_SUBPARTS (TREE_TYPE (exp)).is_constant (&nelts))
-	    goto flag_unsupported;
 
 	  op0 = gen_rtx_CONCATN (mode, rtvec_alloc (nelts));
 
@@ -6780,7 +6748,7 @@ discover_nonconstant_array_refs_r (tree * tp, int *walk_subtrees,
   /* References of size POLY_INT_CST to a fixed-size object must go
      through memory.  It's more efficient to force that here than
      to create temporary slots on the fly.
-     RTL expansion expectes TARGET_MEM_REF to always address actual memory.
+     RTL expansion expects TARGET_MEM_REF to always address actual memory.
      Also, force to stack non-BLKmode vars accessed through VIEW_CONVERT_EXPR
      to BLKmode type.  */
   else if (TREE_CODE (t) == TARGET_MEM_REF
@@ -7116,8 +7084,8 @@ pass_expand::execute (function *fun)
   crtl->init_stack_alignment ();
   fun->cfg->max_jumptable_ents = 0;
 
-  /* Resovle the function section.  Some targets, like ARM EABI rely on knowledge
-     of the function section at exapnsion time to predict distance of calls.  */
+  /* Resolve the function section.  Some targets, like ARM EABI rely on knowledge
+     of the function section at expansion time to predict distance of calls.  */
   resolve_unique_section (current_function_decl, 0, flag_function_sections);
 
   /* Expand the variables recorded during gimple lowering.  */
@@ -7278,13 +7246,15 @@ pass_expand::execute (function *fun)
       >= param_max_debug_marker_count)
     cfun->debug_nonbind_markers = false;
 
-  enable_ranger (fun);
+  if (optimize)
+    enable_ranger (fun);
   lab_rtx_for_bb = new hash_map<basic_block, rtx_code_label *>;
   head_end_for_bb.create (last_basic_block_for_fn (fun));
   FOR_BB_BETWEEN (bb, init_block->next_bb, EXIT_BLOCK_PTR_FOR_FN (fun),
 		  next_bb)
     bb = expand_gimple_basic_block (bb, var_ret_seq);
-  disable_ranger (fun);
+  if (optimize)
+    disable_ranger (fun);
   FOR_BB_BETWEEN (bb, init_block->next_bb, EXIT_BLOCK_PTR_FOR_FN (fun),
 		  next_bb)
     {
@@ -7348,7 +7318,7 @@ pass_expand::execute (function *fun)
       emit_insn_after (var_ret_seq, after);
     }
 
-  if (hwasan_sanitize_stack_p ())
+  if (hwassist_sanitize_stack_p ())
     hwasan_maybe_emit_frame_base_init ();
 
   /* Zap the tree EH table.  */

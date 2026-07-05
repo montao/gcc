@@ -1,5 +1,5 @@
 /* CORE-V extension definition file for RISC-V.
-   Copyright (C) 2025 Free Software Foundation, Inc.
+   Copyright (C) 2025-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -23,7 +23,7 @@ Format of DEFINE_RISCV_EXT, please refer to riscv-ext.def.  */
 
 DEFINE_RISCV_EXT(
   /* NAME */ xcvalu,
-  /* UPPERCAE_NAME */ XCVALU,
+  /* UPPERCASE_NAME */ XCVALU,
   /* FULL_NAME */ "Core-V miscellaneous ALU extension",
   /* DESC */ "",
   /* URL */ ,
@@ -36,8 +36,8 @@ DEFINE_RISCV_EXT(
 
 DEFINE_RISCV_EXT(
   /* NAME */ xcvbi,
-  /* UPPERCAE_NAME */ XCVBI,
-  /* FULL_NAME */ "xcvbi extension",
+  /* UPPERCASE_NAME */ XCVBI,
+  /* FULL_NAME */ "Core-V immediate branch extension",
   /* DESC */ "",
   /* URL */ ,
   /* DEP_EXTS */ ({}),
@@ -49,7 +49,7 @@ DEFINE_RISCV_EXT(
 
 DEFINE_RISCV_EXT(
   /* NAME */ xcvelw,
-  /* UPPERCAE_NAME */ XCVELW,
+  /* UPPERCASE_NAME */ XCVELW,
   /* FULL_NAME */ "Core-V event load word extension",
   /* DESC */ "",
   /* URL */ ,
@@ -62,7 +62,7 @@ DEFINE_RISCV_EXT(
 
 DEFINE_RISCV_EXT(
   /* NAME */ xcvmac,
-  /* UPPERCAE_NAME */ XCVMAC,
+  /* UPPERCASE_NAME */ XCVMAC,
   /* FULL_NAME */ "Core-V multiply-accumulate extension",
   /* DESC */ "",
   /* URL */ ,
@@ -75,8 +75,8 @@ DEFINE_RISCV_EXT(
 
 DEFINE_RISCV_EXT(
   /* NAME */ xcvsimd,
-  /* UPPERCAE_NAME */ XCVSIMD,
-  /* FULL_NAME */ "xcvsimd extension",
+  /* UPPERCASE_NAME */ XCVSIMD,
+  /* FULL_NAME */ "Core-V SIMD extension",
   /* DESC */ "",
   /* URL */ ,
   /* DEP_EXTS */ ({}),

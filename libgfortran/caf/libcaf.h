@@ -1,5 +1,5 @@
 /* Common declarations for all of GNU Fortran libcaf implementations.
-   Copyright (C) 2011-2025 Free Software Foundation, Inc.
+   Copyright (C) 2011-2026 Free Software Foundation, Inc.
    Contributed by Tobias Burnus <burnus@net-b.de>
 
 This file is part of the GNU Fortran Coarray Runtime Library (libcaf).
@@ -26,9 +26,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #ifndef LIBCAF_H
 #define LIBCAF_H
 
-#include <stdbool.h>
-#include <stddef.h>	/* For size_t.  */
-
 #include "libgfortran.h"
 
 /* Definitions of the Fortran 2008 standard; need to kept in sync with
@@ -53,7 +50,7 @@ typedef enum
   CAF_CURRENT_TEAM
 } caf_team_level_t;
 
-/* Describes what type of array we are registerring.  Keep in sync with
+/* Describes what type of array we are registering.  Keep in sync with
    gcc/fortran/trans.h.  */
 typedef enum caf_register_t
 {
@@ -175,12 +172,9 @@ void _gfortran_caf_event_post (caf_token_t, size_t, int, int *, char *, size_t);
 void _gfortran_caf_event_wait (caf_token_t, size_t, int, int *, char *, size_t);
 void _gfortran_caf_event_query (caf_token_t, size_t, int, int *, int *);
 
-void _gfortran_caf_failed_images (gfc_descriptor_t *,
-				  caf_team_t * __attribute__ ((unused)), int *);
-int _gfortran_caf_image_status (int, caf_team_t * __attribute__ ((unused)));
-void _gfortran_caf_stopped_images (gfc_descriptor_t *,
-				   caf_team_t * __attribute__ ((unused)),
-				   int *);
+void _gfortran_caf_failed_images (gfc_descriptor_t *, caf_team_t *, int *);
+int _gfortran_caf_image_status (int, caf_team_t *);
+void _gfortran_caf_stopped_images (gfc_descriptor_t *, caf_team_t *, int *);
 
 void _gfortran_caf_random_init (bool, bool);
 

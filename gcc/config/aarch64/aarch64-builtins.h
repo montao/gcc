@@ -1,5 +1,5 @@
 /* Builtins' description for AArch64 SIMD architecture.
-   Copyright (C) 2023-2025 Free Software Foundation, Inc.
+   Copyright (C) 2023-2026 Free Software Foundation, Inc.
    This file is part of GCC.
 
    GCC is free software; you can redistribute it and/or modify it
@@ -110,5 +110,6 @@ struct GTY(()) aarch64_simd_type_info_trees
 
 extern const aarch64_simd_type_info aarch64_simd_types[];
 extern aarch64_simd_type_info_trees aarch64_simd_types_trees[];
+extern tree aarch64_simd_tuple_types[ARM_NEON_H_TYPES_LAST][3];
 
 #endif

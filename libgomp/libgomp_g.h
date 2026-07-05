@@ -1,4 +1,4 @@
-/* Copyright (C) 2005-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2005-2026 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>.
 
    This file is part of the GNU Offloading and Multi Processing Library
@@ -33,10 +33,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* atomic.c */
+
+extern void GOMP_atomic_start (void);
+extern void GOMP_atomic_end (void);
+extern void GOMP_reduction_start (void);
+extern void GOMP_reduction_end (void);
+
 /* barrier.c */
 
 extern void GOMP_barrier (void);
+extern void GOMP_barrier_ext (int);
 extern bool GOMP_barrier_cancel (void);
+extern bool GOMP_barrier_cancel_ext (int);
 
 /* critical.c */
 
@@ -44,8 +53,6 @@ extern void GOMP_critical_start (void);
 extern void GOMP_critical_end (void);
 extern void GOMP_critical_name_start (void **);
 extern void GOMP_critical_name_end (void **);
-extern void GOMP_atomic_start (void);
-extern void GOMP_atomic_end (void);
 
 /* loop.c */
 
@@ -290,6 +297,8 @@ extern unsigned GOMP_parallel_reductions (void (*) (void *), void *, unsigned,
 					  unsigned);
 extern bool GOMP_cancel (int, bool);
 extern bool GOMP_cancellation_point (int);
+extern bool GOMP_has_masked_thread_num (int);
+extern __complex__ int GOMP_loop_static_worksharing (void);
 
 /* task.c */
 
@@ -357,16 +366,20 @@ extern void GOMP_target_enter_exit_data (int, size_t, void **, size_t *,
 					 void **);
 extern void GOMP_teams (unsigned int, unsigned int);
 extern bool GOMP_teams4 (unsigned int, unsigned int, unsigned int, bool);
-extern void *GOMP_target_map_indirect_ptr (void *);
 struct interop_obj_t;
 extern void GOMP_interop (int, int, struct interop_obj_t ***, const int *,
 			  const char **, int, struct interop_obj_t **, int,
 			  struct interop_obj_t ***, unsigned, void **);
 
+/* target-indirect.c */
+
+extern void *GOMP_target_map_indirect_ptr (void *);
+
 /* teams.c */
 
 extern void GOMP_teams_reg (void (*) (void *), void *, unsigned, unsigned,
 			    unsigned);
+extern __complex__ int GOMP_distribute_static_worksharing (void);
 
 /* allocator.c */
 

@@ -1,5 +1,5 @@
 /* Control flow functions for trees.
-   Copyright (C) 2001-2025 Free Software Foundation, Inc.
+   Copyright (C) 2001-2026 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@redhat.com>
 
 This file is part of GCC.
@@ -114,43 +114,6 @@ struct replace_decls_d
   tree to_context;
 };
 
-/* Hash table to store last discriminator assigned for each locus.  */
-struct locus_discrim_map
-{
-  int location_line;
-  int discriminator;
-};
-
-/* Hashtable helpers.  */
-
-struct locus_discrim_hasher : free_ptr_hash <locus_discrim_map>
-{
-  static inline hashval_t hash (const locus_discrim_map *);
-  static inline bool equal (const locus_discrim_map *,
-			    const locus_discrim_map *);
-};
-
-/* Trivial hash function for a location_t.  ITEM is a pointer to
-   a hash table entry that maps a location_t to a discriminator.  */
-
-inline hashval_t
-locus_discrim_hasher::hash (const locus_discrim_map *item)
-{
-  return item->location_line;
-}
-
-/* Equality function for the locus-to-discriminator map.  A and B
-   point to the two hash table entries to compare.  */
-
-inline bool
-locus_discrim_hasher::equal (const locus_discrim_map *a,
-			     const locus_discrim_map *b)
-{
-  return a->location_line == b->location_line;
-}
-
-static hash_table<locus_discrim_hasher> *discriminator_per_locus;
-
 /* Basic blocks and flowgraphs.  */
 static void make_blocks (gimple_seq);
 
@@ -168,7 +131,6 @@ static edge gimple_try_redirect_by_replacing_jump (edge, basic_block);
 static inline bool stmt_starts_bb_p (gimple *, gimple *);
 static bool gimple_verify_flow_info (void);
 static void gimple_make_forwarder_block (edge);
-static gimple *first_non_label_nondebug_stmt (basic_block);
 static bool verify_gimple_transaction (gtransaction *);
 static bool call_can_make_abnormal_goto (gimple *);
 
@@ -247,12 +209,9 @@ build_gimple_cfg (gimple_seq seq)
   group_case_labels ();
 
   /* Create the edges of the flowgraph.  */
-  discriminator_per_locus = new hash_table<locus_discrim_hasher> (13);
   make_edges ();
   assign_discriminators ();
   cleanup_dead_labels ();
-  delete discriminator_per_locus;
-  discriminator_per_locus = NULL;
 }
 
 /* Look for ANNOTATE calls with loop annotation kind in BB; if found, remove
@@ -1120,77 +1079,45 @@ gimple_find_sub_bbs (gimple_seq seq, gimple_stmt_iterator *gsi)
   return true;
 }
 
-/* Find the next available discriminator value for LOCUS.  The
-   discriminator distinguishes among several basic blocks that
-   share a common locus, allowing for more accurate sample-based
-   profiling.  */
-
-static int
-next_discriminator_for_locus (int line)
+/* Auto-profile needs discriminator to distinguish statements with same line
+   number (file name is ignored) which are in different basic block.  This
+   map keeps track of current discriminator for a given line number.  */
+struct discrim_entry
 {
-  struct locus_discrim_map item;
-  struct locus_discrim_map **slot;
+  /* ID of basic block we saw line number last time.  */
+  unsigned int bb_id;
+  /* Discriminator we used.  */
+  unsigned int discrim;
+};
 
-  item.location_line = line;
-  item.discriminator = 0;
-  slot = discriminator_per_locus->find_slot_with_hash (&item, line, INSERT);
-  gcc_assert (slot);
-  if (*slot == HTAB_EMPTY_ENTRY)
+/* Return updated LOC with discriminator for use in basic block BB_ID.
+   MAP keeps track of current values.  */
+
+location_t
+assign_discriminator (location_t loc, unsigned int bb_id,
+		      hash_map<int_hash <unsigned, -1U, -2U>,
+			       discrim_entry> &map)
+{
+  bool existed;
+  if ((unsigned) LOCATION_LINE (loc) >= -2U)
+    return loc;
+  discrim_entry &e
+    = map.get_or_insert ((unsigned) LOCATION_LINE (loc), &existed);
+  gcc_checking_assert (!has_discriminator (loc));
+  if (!existed)
     {
-      *slot = XNEW (struct locus_discrim_map);
-      gcc_assert (*slot);
-      (*slot)->location_line = line;
-      (*slot)->discriminator = 0;
+      e.bb_id = bb_id;
+      e.discrim = 0;
+      return loc;
     }
-  (*slot)->discriminator++;
-  return (*slot)->discriminator;
-}
-
-/* Return TRUE if LOCUS1 and LOCUS2 refer to the same source line.  */
-
-static bool
-same_line_p (location_t locus1, expanded_location *from, location_t locus2)
-{
-  expanded_location to;
-
-  if (locus1 == locus2)
-    return true;
-
-  to = expand_location (locus2);
-
-  if (from->line != to.line)
-    return false;
-  if (from->file == to.file)
-    return true;
-  return (from->file != NULL
-          && to.file != NULL
-          && filename_cmp (from->file, to.file) == 0);
-}
-
-/* Assign a unique discriminator value to all statements in block bb that
-   have the same line number as locus. */
-
-static void
-assign_discriminator (location_t locus, basic_block bb)
-{
-  gimple_stmt_iterator gsi;
-  int discriminator;
-
-  if (locus == UNKNOWN_LOCATION)
-    return;
-
-  expanded_location locus_e = expand_location (locus);
-
-  discriminator = next_discriminator_for_locus (locus_e.line);
-
-  for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+  if (e.bb_id != bb_id)
     {
-      gimple *stmt = gsi_stmt (gsi);
-      location_t stmt_locus = gimple_location (stmt);
-      if (same_line_p (locus, &locus_e, stmt_locus))
-	gimple_set_location (stmt,
-	    location_with_discriminator (stmt_locus, discriminator));
+      e.bb_id = bb_id;
+      e.discrim++;
     }
+  if (e.discrim)
+    return location_with_discriminator (loc, e.discrim);
+  return loc;
 }
 
 /* Assign discriminators to statement locations.  */
@@ -1198,92 +1125,65 @@ assign_discriminator (location_t locus, basic_block bb)
 static void
 assign_discriminators (void)
 {
+  hash_map<int_hash <unsigned, -1U, -2U>, discrim_entry> map (13);
+  unsigned int bb_id = 0;
   basic_block bb;
-
   FOR_EACH_BB_FN (bb, cfun)
     {
-      edge e;
-      edge_iterator ei;
-      gimple_stmt_iterator gsi;
-      location_t curr_locus = UNKNOWN_LOCATION;
-      expanded_location curr_locus_e = {};
-      int curr_discr = 0;
-
+      location_t prev_loc = UNKNOWN_LOCATION, prev_replacement = UNKNOWN_LOCATION;
       /* Traverse the basic block, if two function calls within a basic block
-	are mapped to the same line, assign a new discriminator because a call
-	stmt could be a split point of a basic block.  */
-      for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+	 are mapped to the same line, assign a new discriminator because a call
+	 stmt could be a split point of a basic block.  */
+      for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
+	   !gsi_end_p (gsi); gsi_next (&gsi))
 	{
 	  gimple *stmt = gsi_stmt (gsi);
-
-	  /* Don't allow debug stmts to affect discriminators, but
-	     allow them to take discriminators when they're on the
-	     same line as the preceding nondebug stmt.  */
-	  if (is_gimple_debug (stmt))
+	  location_t loc = gimple_location (stmt);
+	  if (loc == UNKNOWN_LOCATION)
+	    continue;
+	  if (loc == prev_loc)
+	    gimple_set_location (stmt, prev_replacement);
+	  else
 	    {
-	      if (curr_locus != UNKNOWN_LOCATION
-		  && same_line_p (curr_locus, &curr_locus_e,
-				  gimple_location (stmt)))
-		{
-		  location_t loc = gimple_location (stmt);
-		  location_t dloc = location_with_discriminator (loc,
-								 curr_discr);
-		  gimple_set_location (stmt, dloc);
-		}
-	      continue;
+	      prev_loc = loc;
+	      prev_replacement = assign_discriminator (loc, bb_id, map);
+	      gimple_set_location (stmt, prev_replacement);
 	    }
-	  if (curr_locus == UNKNOWN_LOCATION)
-	    {
-	      curr_locus = gimple_location (stmt);
-	      curr_locus_e = expand_location (curr_locus);
-	    }
-	  else if (!same_line_p (curr_locus, &curr_locus_e, gimple_location (stmt)))
-	    {
-	      curr_locus = gimple_location (stmt);
-	      curr_locus_e = expand_location (curr_locus);
-	      curr_discr = 0;
-	    }
-	  else if (curr_discr != 0)
-	    {
-	      location_t loc = gimple_location (stmt);
-	      location_t dloc = location_with_discriminator (loc, curr_discr);
-	      gimple_set_location (stmt, dloc);
-	    }
-	  /* Allocate a new discriminator for CALL stmt.  */
+	  /* Break basic blocks after each call.  This is required so each
+	     call site has unique discriminator.
+	     More correctly, we can break after each statement that can possibly
+	     terinate execution of the basic block, but for auto-profile this
+	     precision is probably not useful.  */
 	  if (gimple_code (stmt) == GIMPLE_CALL)
-	    curr_discr = next_discriminator_for_locus (curr_locus_e.line);
-	}
-
-      gimple *last = last_nondebug_stmt (bb);
-      location_t locus = last ? gimple_location (last) : UNKNOWN_LOCATION;
-      if (locus == UNKNOWN_LOCATION)
-	continue;
-
-      expanded_location locus_e = expand_location (locus);
-
-      FOR_EACH_EDGE (e, ei, bb->succs)
-	{
-	  gimple *first = first_non_label_nondebug_stmt (e->dest);
-	  gimple *last = last_nondebug_stmt (e->dest);
-
-	  gimple *stmt_on_same_line = NULL;
-	  if (first && same_line_p (locus, &locus_e,
-				     gimple_location (first)))
-	    stmt_on_same_line = first;
-	  else if (last && same_line_p (locus, &locus_e,
-					gimple_location (last)))
-	    stmt_on_same_line = last;
-
-	  if (stmt_on_same_line)
 	    {
-	      if (has_discriminator (gimple_location (stmt_on_same_line))
-		  && !has_discriminator (locus))
-		assign_discriminator (locus, bb);
-	      else
-		assign_discriminator (locus, e->dest);
+	      prev_loc = UNKNOWN_LOCATION;
+	      bb_id++;
 	    }
 	}
+      /* If basic block has multiple successors, consider every edge as a
+	 separate block.  */
+      if (!single_succ_p (bb))
+	bb_id++;
+      for (edge e : bb->succs)
+	{
+	  if (e->goto_locus != UNKNOWN_LOCATION)
+	    e->goto_locus = assign_discriminator (e->goto_locus, bb_id, map);
+	  for (gphi_iterator gpi = gsi_start_phis (bb);
+	       !gsi_end_p (gpi); gsi_next (&gpi))
+	    {
+	      gphi *phi = gpi.phi ();
+	      location_t phi_loc
+		= gimple_phi_arg_location_from_edge (phi, e);
+	      if (phi_loc == UNKNOWN_LOCATION)
+		continue;
+	      gimple_phi_arg_set_location
+		(phi, e->dest_idx, assign_discriminator (phi_loc, bb_id, map));
+	    }
+	   bb_id++;
+	}
+      bb_id++;
     }
+
 }
 
 /* Create the edges for a GIMPLE_COND starting at block BB.  */
@@ -1812,7 +1712,6 @@ group_case_labels_stmt (gswitch *stmt)
   int old_size = gimple_switch_num_labels (stmt);
   int i, next_index, new_size;
   basic_block default_bb = NULL;
-  hash_set<tree> *removed_labels = NULL;
 
   default_bb = gimple_switch_default_bb (cfun, stmt);
 
@@ -1828,12 +1727,9 @@ group_case_labels_stmt (gswitch *stmt)
       gcc_assert (base_case);
       base_bb = label_to_block (cfun, CASE_LABEL (base_case));
 
-      /* Discard cases that have the same destination as the default case or
-	 whose destination blocks have already been removed as unreachable.  */
+      /* Discard cases that have the same destination as the default case.  */
       if (base_bb == NULL
-	  || base_bb == default_bb
-	  || (removed_labels
-	      && removed_labels->contains (CASE_LABEL (base_case))))
+	  || base_bb == default_bb)
 	{
 	  i++;
 	  continue;
@@ -1856,8 +1752,6 @@ group_case_labels_stmt (gswitch *stmt)
 	  /* Merge the cases if they jump to the same place,
 	     and their ranges are consecutive.  */
 	  if (merge_bb == base_bb
-	      && (removed_labels == NULL
-		  || !removed_labels->contains (CASE_LABEL (merge_case)))
 	      && wi::to_wide (CASE_LOW (merge_case)) == bhp1)
 	    {
 	      base_high
@@ -1868,46 +1762,6 @@ group_case_labels_stmt (gswitch *stmt)
 	    }
 	  else
 	    break;
-	}
-
-      /* Discard cases that have an unreachable destination block.  */
-      if (EDGE_COUNT (base_bb->succs) == 0
-	  && gimple_seq_unreachable_p (bb_seq (base_bb))
-	  /* Don't optimize this if __builtin_unreachable () is the
-	     implicitly added one by the C++ FE too early, before
-	     -Wreturn-type can be diagnosed.  We'll optimize it later
-	     during switchconv pass or any other cfg cleanup.  */
-	  && (gimple_in_ssa_p (cfun)
-	      || (LOCATION_LOCUS (gimple_location (last_nondebug_stmt (base_bb)))
-		  != BUILTINS_LOCATION)))
-	{
-	  edge base_edge = find_edge (gimple_bb (stmt), base_bb);
-	  if (base_edge != NULL)
-	    {
-	      for (gimple_stmt_iterator gsi = gsi_start_bb (base_bb);
-		   !gsi_end_p (gsi); gsi_next (&gsi))
-		if (glabel *stmt = dyn_cast <glabel *> (gsi_stmt (gsi)))
-		  {
-		    if (FORCED_LABEL (gimple_label_label (stmt))
-			|| DECL_NONLOCAL (gimple_label_label (stmt)))
-		      {
-			/* Forced/non-local labels aren't going to be removed,
-			   but they will be moved to some neighbouring basic
-			   block. If some later case label refers to one of
-			   those labels, we should throw that case away rather
-			   than keeping it around and refering to some random
-			   other basic block without an edge to it.  */
-			if (removed_labels == NULL)
-			  removed_labels = new hash_set<tree>;
-			removed_labels->add (gimple_label_label (stmt));
-		      }
-		  }
-		else
-		  break;
-	      remove_edge_and_dominated_blocks (base_edge);
-	    }
-	  i = next_index;
-	  continue;
 	}
 
       if (new_size < i)
@@ -1922,7 +1776,6 @@ group_case_labels_stmt (gswitch *stmt)
   if (new_size < old_size)
     gimple_switch_set_num_labels (stmt, new_size);
 
-  delete removed_labels;
   return new_size < old_size;
 }
 
@@ -2088,14 +1941,16 @@ replace_uses_by (tree name, tree val)
 		if (op && TREE_CODE (op) == ADDR_EXPR)
 		  recompute_tree_invariant_for_addr_expr (op);
 	      }
+	  update_stmt (stmt);
 
 	  if (fold_stmt (&gsi))
-	    stmt = gsi_stmt (gsi);
+	    {
+	      stmt = gsi_stmt (gsi);
+	      update_stmt (stmt);
+	    }
 
 	  if (maybe_clean_or_replace_eh_stmt (orig_stmt, stmt))
 	    gimple_purge_dead_eh_edges (gimple_bb (stmt));
-
-	  update_stmt (stmt);
 	}
     }
 
@@ -2588,7 +2443,7 @@ find_case_label_for_value (const gswitch *switch_stmt, tree val)
 
       if (CASE_HIGH (t) == NULL)
 	{
-	  /* A singe-valued case label.  */
+	  /* A single-valued case label.  */
 	  if (cmp == 0)
 	    return t;
 	}
@@ -2889,7 +2744,7 @@ stmt_starts_bb_p (gimple *stmt, gimple *prev_stmt)
 	  && gimple_code (prev_stmt) != GIMPLE_LABEL
 	  && (gimple_code (prev_stmt) != GIMPLE_CALL
 	      || ! gimple_call_internal_p (prev_stmt, IFN_PHI)))
-	/* PHI nodes start a new block unless preceeded by a label
+	/* PHI nodes start a new block unless preceded by a label
 	   or another PHI.  */
 	return true;
     }
@@ -2946,16 +2801,6 @@ first_stmt (basic_block bb)
       stmt = NULL;
     }
   return stmt;
-}
-
-/* Return the first non-label/non-debug statement in basic block BB.  */
-
-static gimple *
-first_non_label_nondebug_stmt (basic_block bb)
-{
-  gimple_stmt_iterator i;
-  i = gsi_start_nondebug_after_labels_bb (bb);
-  return !gsi_end_p (i) ? gsi_stmt (i) : NULL;
 }
 
 /* Return the last statement in basic block BB.  */
@@ -3574,6 +3419,14 @@ verify_gimple_call (gcall *stmt)
 	  }
     }
 
+  /* IFN_VARING is not allowed to be present after the completion of any pass
+     as it should have been replaced.  */
+  if (gimple_call_internal_p (stmt, IFN_VARYING))
+    {
+      error ("%<.VARYING%> calls should have been replaced and are not allowed "
+	     "outside of the pass that introduced them");
+      return true;
+    }
   /* ???  The C frontend passes unpromoted arguments in case it
      didn't see a function declaration before the call.  So for now
      leave the call arguments mostly unverified.  Once we gimplify
@@ -4623,6 +4476,14 @@ verify_gimple_assign_single (gassign *stmt)
       return true;
     }
 
+  /* LHS can't be a constant or an address expression. */
+  if (CONSTANT_CLASS_P (lhs)|| TREE_CODE (lhs) == ADDR_EXPR)
+    {
+      error ("invalid LHS (%qs) for assignment: %qs",
+	     get_tree_code_name (TREE_CODE (lhs)), code_name);
+      return true;
+    }
+
   if (gimple_clobber_p (stmt)
       && !(DECL_P (lhs) || TREE_CODE (lhs) == MEM_REF))
     {
@@ -4745,6 +4606,11 @@ verify_gimple_assign_single (gassign *stmt)
 
 	  if (CONSTRUCTOR_NELTS (rhs1) == 0)
 	    return res;
+	  if (!is_gimple_reg (lhs))
+	    {
+	      error ("non-register as LHS with vector constructor");
+	      return true;
+	    }
 	  /* For vector CONSTRUCTORs we require that either it is empty
 	     CONSTRUCTOR, or it is a CONSTRUCTOR of smaller vector elements
 	     (then the element count must be correct to cover the whole
@@ -4883,6 +4749,7 @@ verify_gimple_return (greturn *stmt)
 {
   tree op = gimple_return_retval (stmt);
   tree restype = TREE_TYPE (TREE_TYPE (cfun->decl));
+  tree resdecl = DECL_RESULT (cfun->decl);
 
   /* We cannot test for present return values as we do not fix up missing
      return values from the original source.  */
@@ -4897,12 +4764,7 @@ verify_gimple_return (greturn *stmt)
       return true;
     }
 
-  if ((TREE_CODE (op) == RESULT_DECL
-       && DECL_BY_REFERENCE (op))
-      || (TREE_CODE (op) == SSA_NAME
-	  && SSA_NAME_VAR (op)
-	  && TREE_CODE (SSA_NAME_VAR (op)) == RESULT_DECL
-	  && DECL_BY_REFERENCE (SSA_NAME_VAR (op))))
+  if (resdecl && DECL_BY_REFERENCE (resdecl))
     op = TREE_TYPE (op);
 
   if (!useless_type_conversion_p (restype, TREE_TYPE (op)))
@@ -6513,7 +6375,7 @@ gimple_split_block_before_cond_jump (basic_block bb)
 static bool
 gimple_can_duplicate_bb_p (const_basic_block bb)
 {
-  gimple *last = last_nondebug_stmt (CONST_CAST_BB (bb));
+  gimple *last = last_nondebug_stmt (const_cast<basic_block> (bb));
 
   /* Do checks that can only fail for the last stmt, to minimize the work in the
      stmt loop.  */
@@ -6538,7 +6400,7 @@ gimple_can_duplicate_bb_p (const_basic_block bb)
       return false;
   }
 
-  for (gimple_stmt_iterator gsi = gsi_start_bb (CONST_CAST_BB (bb));
+  for (gimple_stmt_iterator gsi = gsi_start_bb (const_cast<basic_block> (bb));
        !gsi_end_p (gsi); gsi_next (&gsi))
     {
       gimple *g = gsi_stmt (gsi);
@@ -6892,10 +6754,12 @@ bb_part_of_region_p (basic_block bb, basic_block* bbs, unsigned n_region)
 
 
 /* For each PHI in BB, copy the argument associated with SRC_E to TGT_E.
-   Assuming the argument exists, just does not have a value.  */
+   Assuming the argument exists, just does not have a value.
+   If USE_MAP is true, then use the redirect edge var map of TGT_E
+   for the new arguments; clearing the map afterwards.  */
 
 void
-copy_phi_arg_into_existing_phi (edge src_e, edge tgt_e)
+copy_phi_arg_into_existing_phi (edge src_e, edge tgt_e, bool use_map)
 {
   int src_idx = src_e->dest_idx;
   int tgt_idx = tgt_e->dest_idx;
@@ -6911,9 +6775,36 @@ copy_phi_arg_into_existing_phi (edge src_e, edge tgt_e)
       tree val = gimple_phi_arg_def (src_phi, src_idx);
       location_t locus = gimple_phi_arg_location (src_phi, src_idx);
 
+      if (use_map && TREE_CODE (val) == SSA_NAME)
+	{
+	  /* If DEF is one of the results of PHI nodes removed during
+	     redirection, replace it with the PHI argument that used
+	     to be on E.  */
+	  vec<edge_var_map> *head = redirect_edge_var_map_vector (tgt_e);
+	  size_t length = head ? head->length () : 0;
+	  for (size_t i = 0; i < length; i++)
+	    {
+	      edge_var_map *vm = &(*head)[i];
+	      tree old_arg = redirect_edge_var_map_result (vm);
+	      tree new_arg = redirect_edge_var_map_def (vm);
+
+	      if (val == old_arg)
+		{
+		  val = new_arg;
+		  location_t locus1 = redirect_edge_var_map_location (vm);
+		  /* Don't remove the location if we remap one does not have one.  */
+		  if (locus1 != UNKNOWN_LOCATION)
+		    locus = locus1;
+		  break;
+		}
+	    }
+	}
+
       SET_PHI_ARG_DEF (dest_phi, tgt_idx, val);
       gimple_phi_arg_set_location (dest_phi, tgt_idx, locus);
     }
+  if (use_map)
+    redirect_edge_var_map_clear (tgt_e);
 }
 
 /* Duplicates REGION consisting of N_REGION blocks.  The new blocks
@@ -7269,7 +7160,7 @@ move_stmt_op (tree *tp, int *walk_subtrees, void *data)
 }
 
 /* Helper for move_stmt_r.  Given an EH region number for the source
-   function, map that to the duplicate EH regio number in the dest.  */
+   function, map that to the duplicate EH region number in the dest.  */
 
 static int
 move_stmt_eh_region_nr (int old_nr, struct move_stmt_d *p)
@@ -8292,7 +8183,7 @@ dump_default_def (FILE *file, tree def, int spc, dump_flags_t flags)
 static void
 print_no_sanitize_attr_value (FILE *file, tree value)
 {
-  unsigned int flags = tree_to_uhwi (value);
+  sanitize_code_type flags = tree_to_sanitize_code_type (value);
   bool first = true;
   for (int i = 0; sanitizer_opts[i].name != NULL; ++i)
     {
@@ -8485,7 +8376,7 @@ dump_function_to_file (tree fndecl, FILE *file, dump_flags_t flags)
 	  {
 	    if (!SSA_NAME_VAR (name)
 		/* SSA name with decls without a name still get
-		   dumped as _N, list those explicitely as well even
+		   dumped as _N, list those explicitly as well even
 		   though we've dumped the decl declaration as D.xxx
 		   above.  */
 		|| !SSA_NAME_IDENTIFIER (name))
@@ -9429,11 +9320,12 @@ gimple_account_profile_record (basic_block bb,
     }
 }
 
-struct cfg_hooks gimple_cfg_hooks = {
-  "gimple",
+const struct cfg_hooks gimple_cfg_hooks = {
+  IR_GIMPLE,
   gimple_verify_flow_info,
   gimple_dump_bb,		/* dump_bb  */
   gimple_dump_bb_for_graph,	/* dump_bb_for_graph  */
+  gimple_dump_bb_as_sarif_properties,
   create_bb,			/* create_basic_block  */
   gimple_redirect_edge_and_branch, /* redirect_edge_and_branch  */
   gimple_redirect_edge_and_branch_force, /* redirect_edge_and_branch_force  */
@@ -9961,6 +9853,8 @@ do_warn_unused_result (gimple_seq seq)
 	    break;
 	  if (gimple_call_internal_p (g))
 	    break;
+	  if (warning_suppressed_p (g, OPT_Wunused_result))
+	    break;
 
 	  /* This is a naked call, as opposed to a GIMPLE_CALL with an
 	     LHS.  All calls whose value is ignored should be
@@ -10241,6 +10135,295 @@ gimple_opt_pass *
 make_pass_fixup_cfg (gcc::context *ctxt)
 {
   return new pass_fixup_cfg (ctxt);
+}
+
+
+/* Sort PHI argument values for make_forwarders_with_degenerate_phis.  */
+
+static int
+sort_phi_args (const void *a_, const void *b_)
+{
+  auto *a = (const std::pair<edge, hashval_t> *) a_;
+  auto *b = (const std::pair<edge, hashval_t> *) b_;
+  hashval_t ha = a->second;
+  hashval_t hb = b->second;
+  if (ha < hb)
+    return -1;
+  else if (ha > hb)
+    return 1;
+  else if (a->first->dest_idx < b->first->dest_idx)
+    return -1;
+  else if (a->first->dest_idx > b->first->dest_idx)
+    return 1;
+  else
+    return 0;
+}
+
+/* Returns true if edge E comes from a possible ifconvertable branch.
+   That is:
+   ```
+   BB0:
+   if (a) goto BB1; else goto BB2;
+   BB1:
+   BB2:
+   ```
+   Returns true for the edge from BB0->BB2 or BB1->BB2.
+   This function assumes we only have one middle block.
+   And the middle block is empty. */
+
+static bool
+ifconvertable_edge (edge e)
+{
+  basic_block bb2 = e->dest;
+  basic_block bb0 = e->src;
+  basic_block bb1 = nullptr, rbb1;
+  if (e->src == e->dest)
+    return false;
+  if (EDGE_COUNT (bb0->succs) > 2)
+    return false;
+  if (single_succ_p (bb0))
+    {
+      if (!single_pred_p (bb0))
+	return false;
+      /* The middle block can only be empty,
+	 otherwise the phis will be
+	 different anyways. */
+      if (!empty_block_p (bb0))
+	return false;
+      bb1 = bb0;
+      bb0 = single_pred (bb0);
+      if (EDGE_COUNT (bb0->succs) != 2)
+	return false;
+    }
+
+  /* If convertibles are only for conditionals. */
+  if (!is_a<gcond*>(*gsi_last_nondebug_bb (bb0)))
+    return false;
+
+  /* Find the other basic block.  */
+  if (EDGE_SUCC (bb0, 0)->dest == bb2)
+    rbb1 = EDGE_SUCC (bb0, 1)->dest;
+  else if (EDGE_SUCC (bb0, 1)->dest == bb2)
+    rbb1 = EDGE_SUCC (bb0, 0)->dest;
+  else
+    return false;
+
+  /* If we already know bb1, then just test it. */
+  if (bb1)
+    return rbb1 == bb1;
+
+  if (!single_succ_p (rbb1) || !single_pred_p (rbb1))
+    return false;
+  /* The middle block can only be empty,
+     otherwise the phis will be
+     different anyways. */
+  if (!empty_block_p (rbb1))
+    return false;
+
+  return single_succ (rbb1) == bb2;
+}
+
+/* Look for a non-virtual PHIs and make a forwarder block when all PHIs
+   have the same argument on a set of edges.  This is to not consider
+   control dependences of individual edges for same values but only for
+   the common set.  Returns true if changed the CFG.  */
+
+bool
+make_forwarders_with_degenerate_phis (function *fn, bool skip_ifcvtable)
+{
+  bool didsomething = false;
+
+  basic_block bb;
+  FOR_EACH_BB_FN (bb, fn)
+    {
+      /* Only PHIs with three or more arguments have opportunities.  */
+      if (EDGE_COUNT (bb->preds) < 3)
+	continue;
+      /* Do not touch loop headers or blocks with abnormal predecessors.
+	 ???  This is to avoid creating valid loops here, see PR103458.
+	 We might want to improve things to either explicitly add those
+	 loops or at least consider blocks with no backedges.  */
+      if (bb->loop_father->header == bb
+	  || bb_has_abnormal_pred (bb))
+	continue;
+
+      /* Take one PHI node as template to look for identical
+	 arguments.  Build a vector of candidates forming sets
+	 of argument edges with equal values.  Note optimality
+	 depends on the particular choice of the template PHI
+	 since equal arguments are unordered leaving other PHIs
+	 with more than one set of equal arguments within this
+	 argument range unsorted.  We'd have to break ties by
+	 looking at other PHI nodes.  */
+      gphi_iterator gsi = gsi_start_nonvirtual_phis (bb);
+      if (gsi_end_p (gsi))
+	continue;
+      gphi *phi = gsi.phi ();
+      auto_vec<std::pair<edge, hashval_t>, 8> args;
+      bool need_resort = false;
+      for (unsigned i = 0; i < gimple_phi_num_args (phi); ++i)
+	{
+	  edge e = gimple_phi_arg_edge (phi, i);
+	  /* Skip abnormal edges since we cannot redirect them.  */
+	  if (e->flags & EDGE_ABNORMAL)
+	    continue;
+	  /* Skip loop exit edges when we are in loop-closed SSA form
+	     since the forwarder we'd create does not have a PHI node.  */
+	  if (loops_state_satisfies_p (LOOP_CLOSED_SSA)
+	      && loop_exit_edge_p (e->src->loop_father, e))
+	    continue;
+
+	  /* Skip ifconvertable edges when asked as we want the
+	     copy/constant on that edge still when going out of ssa.
+	     FIXME: phiopt should produce COND_EXPR but there
+	     are regressions with that.  */
+	  if (skip_ifcvtable && ifconvertable_edge (e))
+	    continue;
+
+	  tree arg = gimple_phi_arg_def (phi, i);
+	  if (!CONSTANT_CLASS_P (arg) && TREE_CODE (arg) != SSA_NAME)
+	    need_resort = true;
+	  args.safe_push (std::make_pair (e, iterative_hash_expr (arg, 0)));
+	}
+      if (args.length () < 2)
+	continue;
+      args.qsort (sort_phi_args);
+      /* The above sorting can be different between -g and -g0, as e.g. decls
+	 can have different uids (-g could have bigger gaps in between them).
+	 So, only use that to determine which args are equal, then change
+	 second from hash value to smallest dest_idx of the edges which have
+	 equal argument and sort again.  If all the phi arguments are
+	 constants or SSA_NAME, there is no need for the second sort, the hash
+	 values are stable in that case.  */
+      hashval_t hash = args[0].second;
+      args[0].second = args[0].first->dest_idx;
+      bool any_equal = false;
+      for (unsigned i = 1; i < args.length (); ++i)
+	if (hash == args[i].second
+	    && operand_equal_p (PHI_ARG_DEF_FROM_EDGE (phi, args[i - 1].first),
+				PHI_ARG_DEF_FROM_EDGE (phi, args[i].first)))
+	  {
+	    args[i].second = args[i - 1].second;
+	    any_equal = true;
+	  }
+	else
+	  {
+	    hash = args[i].second;
+	    args[i].second = args[i].first->dest_idx;
+	  }
+      if (!any_equal)
+	continue;
+      if (need_resort)
+	args.qsort (sort_phi_args);
+
+      /* From the candidates vector now verify true candidates for
+	 forwarders and create them.  */
+      gphi *vphi = get_virtual_phi (bb);
+      unsigned start = 0;
+      while (start < args.length () - 1)
+	{
+	  unsigned i;
+	  for (i = start + 1; i < args.length (); ++i)
+	    if (args[start].second != args[i].second)
+	      break;
+	  /* args[start]..args[i-1] are equal.  */
+	  if (start != i - 1)
+	    {
+	      /* Check all PHI nodes for argument equality
+	         except for vops.  */
+	      bool equal = true;
+	      gphi_iterator gsi2 = gsi;
+	      gsi_next (&gsi2);
+	      for (; !gsi_end_p (gsi2); gsi_next (&gsi2))
+		{
+		  gphi *phi2 = gsi2.phi ();
+		  if (virtual_operand_p (gimple_phi_result (phi2)))
+		    continue;
+		  tree start_arg
+		    = PHI_ARG_DEF_FROM_EDGE (phi2, args[start].first);
+		  for (unsigned j = start + 1; j < i; ++j)
+		    {
+		      if (!operand_equal_p (start_arg,
+					    PHI_ARG_DEF_FROM_EDGE
+					      (phi2, args[j].first)))
+			{
+			  /* Another PHI might have a shorter set of
+			     equivalent args.  Go for that.  */
+			  i = j;
+			  if (j == start + 1)
+			    equal = false;
+			  break;
+			}
+		    }
+		  if (!equal)
+		    break;
+		}
+	      if (equal)
+		{
+		  /* If we are asked to forward all edges the block
+		     has all degenerate PHIs.  Do nothing in that case.  */
+		  if (start == 0
+		      && i == args.length ()
+		      && args.length () == gimple_phi_num_args (phi))
+		    break;
+		  /* Instead of using make_forwarder_block we are
+		     rolling our own variant knowing that the forwarder
+		     does not need PHI nodes apart from eventually
+		     a virtual one.  */
+		  auto_vec<tree, 8> vphi_args;
+		  if (vphi)
+		    {
+		      vphi_args.reserve_exact (i - start);
+		      for (unsigned j = start; j < i; ++j)
+			vphi_args.quick_push
+			  (PHI_ARG_DEF_FROM_EDGE (vphi, args[j].first));
+		    }
+		  free_dominance_info (fn, CDI_DOMINATORS);
+		  if (dump_file && (dump_flags & TDF_DETAILS))
+		    {
+		      fprintf (dump_file, "New forwarder block for edge ");
+		      fprintf (dump_file, "%d -> %d.\n",
+			       args[start].first->src->index,
+			       args[start].first->dest->index);
+		    }
+		  basic_block forwarder = split_edge (args[start].first);
+		  profile_count count = forwarder->count;
+		  bool irr = false;
+		  for (unsigned j = start + 1; j < i; ++j)
+		    {
+		      edge e = args[j].first;
+		      if (e->flags & EDGE_IRREDUCIBLE_LOOP)
+			irr = true;
+		      redirect_edge_and_branch_force (e, forwarder);
+		      redirect_edge_var_map_clear (e);
+		      count += e->count ();
+		    }
+		  forwarder->count = count;
+		  if (irr)
+		    {
+		      forwarder->flags |= BB_IRREDUCIBLE_LOOP;
+		      single_succ_edge (forwarder)->flags
+			|= EDGE_IRREDUCIBLE_LOOP;
+		    }
+
+		  if (vphi)
+		    {
+		      tree def = copy_ssa_name (vphi_args[0]);
+		      gphi *vphi_copy = create_phi_node (def, forwarder);
+		      for (unsigned j = start; j < i; ++j)
+			add_phi_arg (vphi_copy, vphi_args[j - start],
+				     args[j].first, UNKNOWN_LOCATION);
+		      SET_PHI_ARG_DEF
+			(vphi, single_succ_edge (forwarder)->dest_idx, def);
+		    }
+		  didsomething = true;
+		}
+	    }
+	  /* Continue searching for more opportunities.  */
+	  start = i;
+	}
+    }
+  return didsomething;
 }
 
 /* Garbage collection support for edge_def.  */

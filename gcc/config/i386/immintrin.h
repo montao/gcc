@@ -1,4 +1,4 @@
-/* Copyright (C) 2008-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2026 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -134,10 +134,6 @@
 
 #include <amxavx512intrin.h>
 
-#include <amxtf32intrin.h>
-
-#include <amxtransposeintrin.h>
-
 #include <amxfp8intrin.h>
 
 #include <prfchwintrin.h>
@@ -161,4 +157,8 @@
 #include <movrsintrin.h>
 
 #include <amxmovrsintrin.h>
+
+#include <avx512bmmintrin.h>
+
+#include <avx512bmmvlintrin.h>
 #endif /* _IMMINTRIN_H_INCLUDED */

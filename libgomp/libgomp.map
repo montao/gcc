@@ -240,6 +240,29 @@ OMP_5.2 {
 	omp_in_explicit_task_;
 } OMP_5.1.1;
 
+OMP_6.0 {
+  global:
+	omp_control_tool;
+	omp_control_tool_;
+	omp_control_tool_8_;
+} OMP_5.2;
+
+OMP_6.1 {
+  global:
+	omp_get_device_distances;
+	omp_get_num_teams_dim;
+	omp_get_num_threads_dim;
+	omp_get_supported_active_league_dims;
+	omp_get_supported_active_league_dims_;
+	omp_get_supported_active_team_dims;
+	omp_get_supported_active_team_dims_;
+	omp_get_supported_teams_dim;
+	omp_get_supported_threads_dim;
+	omp_get_team_num_dim;
+	omp_get_thread_limit_dim;
+	omp_get_thread_num_dim;
+} OMP_6.0;
+
 GOMP_1.0 {
   global:
 	GOMP_atomic_end;
@@ -459,6 +482,17 @@ GOMP_6.0.1 {
 	omp_target_memset_async;
 } GOMP_6.0;
 
+GOMP_6.0.2 {
+  global:
+	GOMP_has_masked_thread_num;
+	GOMP_loop_static_worksharing;
+	GOMP_distribute_static_worksharing;
+	GOMP_barrier_ext;
+	GOMP_barrier_cancel_ext;
+	GOMP_reduction_start;
+	GOMP_reduction_end;
+} GOMP_6.0.1;
+
 OACC_2.0 {
   global:
 	acc_get_num_devices;
@@ -562,9 +596,6 @@ OACC_2.5 {
 	acc_copyout_finalize_64_h_;
 	acc_copyout_finalize_array_h_;
 	acc_copyout_finalize_async;
-	acc_copyout_finalize_async_32_h_;
-	acc_copyout_finalize_async_64_h_;
-	acc_copyout_finalize_async_array_h_;
 	acc_create_async;
 	acc_create_async_32_h_;
 	acc_create_async_64_h_;
@@ -578,9 +609,6 @@ OACC_2.5 {
 	acc_delete_finalize_64_h_;
 	acc_delete_finalize_array_h_;
 	acc_delete_finalize_async;
-	acc_delete_finalize_async_32_h_;
-	acc_delete_finalize_async_64_h_;
-	acc_delete_finalize_async_array_h_;
 	acc_memcpy_from_device_async;
 	acc_memcpy_to_device_async;
 	acc_update_device_async;
@@ -617,6 +645,12 @@ OACC_2.6 {
 
 OACC_2.6.1 {
   global:
+	acc_copyout_finalize_async_32_h_;
+	acc_copyout_finalize_async_64_h_;
+	acc_copyout_finalize_async_array_h_;
+	acc_delete_finalize_async_32_h_;
+	acc_delete_finalize_async_64_h_;
+	acc_delete_finalize_async_array_h_;
 	acc_memcpy_device;
 	acc_memcpy_device_async;
 } OACC_2.6;

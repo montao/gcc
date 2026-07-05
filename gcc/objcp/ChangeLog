@@ -1,3 +1,7 @@
+2026-06-25  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* Make-lang.in: Test in parallel with up to 6 instances.
+
 2025-06-12  Jakub Jelinek  <jakub@redhat.com>
 
 	* objcp-decl.h (TYPE_OBJC_INFO): Define to info.objc_info
@@ -694,7 +698,7 @@
 	* objcp-decl.h: Likewise.
 	* objcp-lang.c: Likewise.
 
-Copyright (C) 2005-2025 Free Software Foundation, Inc.
+Copyright (C) 2005-2026 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

@@ -1,4 +1,4 @@
-/* Copyright (C) 2018-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2018-2026 Free Software Foundation, Inc.
    Contributed by Jakub Jelinek <jakub@redhat.com>.
 
    This file is part of the GNU Offloading and Multi Processing Library
@@ -58,11 +58,31 @@ GOMP_teams_reg (void (*fn) (void *), void *data, unsigned int num_teams,
     }
 }
 
+/* For a distribute construct with static schedule, return the team ID and
+   number of teams packed into a single complex value.  */
+
+_Complex int
+GOMP_distribute_static_worksharing (void)
+{
+  struct gomp_thread *thr = gomp_thread ();
+  unsigned tid = thr->team_num;
+  unsigned nteams = thr->num_teams + 1;
+  return nteams + tid * 1I;
+}
+
 int
 omp_get_num_teams (void)
 {
   struct gomp_thread *thr = gomp_thread ();
   return thr->num_teams + 1;
+}
+
+int
+omp_get_num_teams_dim (int dim)
+{
+  if (dim == 0)
+    return omp_get_num_teams ();
+  return 1;
 }
 
 int
@@ -72,5 +92,15 @@ omp_get_team_num (void)
   return thr->team_num;
 }
 
+int
+omp_get_team_num_dim (int dim)
+{
+  if (dim == 0)
+    return omp_get_team_num ();
+  return 0;
+}
+
 ialias (omp_get_num_teams)
+ialias (omp_get_num_teams_dim)
 ialias (omp_get_team_num)
+ialias (omp_get_team_num_dim)

@@ -1,6 +1,6 @@
 ;; DFA-based pipeline description for MIPS P8700.
 ;;
-;; Copyright (C) 2025 Free Software Foundation, Inc.
+;; Copyright (C) 2025-2026 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -82,7 +82,7 @@
 (define_insn_reservation "mips_p8700_fpu_div" 17
   (and (eq_attr "tune" "mips_p8700")
        (eq_attr "type" "fdiv,fsqrt"))
-  "mips_p8700_fpu_long, mips_p8700_fpu_apu*17")
+  "mips_p8700_fpu_long, mips_p8700_fpu_apu*6")
 
 (define_insn_reservation "mips_p8700_fpu_fcvt" 4
   (and (eq_attr "tune" "mips_p8700")
@@ -163,5 +163,5 @@
    vgather,vcompress,vmov,vector,vandn,vbrev,vbrev8,vrev8,vclz,vctz,vcpop,vrol,vror,vwsll,
    vclmul,vclmulh,vghsh,vgmul,vaesef,vaesem,vaesdf,vaesdm,vaeskf1,vaeskf2,vaesz,
    vsha2ms,vsha2ch,vsha2cl,vsm4k,vsm4r,vsm3me,vsm3c,vfncvtbf16,vfwcvtbf16,vfwmaccbf16,
-   sf_vc,sf_vc_se"))
+   sf_vc,sf_vc_se,ghost"))
   "mips_p8700_dummies")

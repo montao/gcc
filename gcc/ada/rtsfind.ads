@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -292,6 +292,8 @@ package Rtsfind is
       System_Img_LLLU,
       System_Img_Uns,
       System_Img_WChar,
+      System_Interrupt_Names,
+      System_Interrupt_Types,
       System_Interrupts,
       System_Long_Long_Float_Expon,
       System_Machine_Code,
@@ -773,11 +775,19 @@ package Rtsfind is
      RE_Scaled_Divide64,                 -- System.Arith_64
      RE_Subtract_With_Ovflo_Check64,     -- System.Arith_64
 
+     RE_Uns_Add_With_Ovflo_Check64,      -- System.Arith_64
+     RE_Uns_Multiply_With_Ovflo_Check64, -- System.Arith_64
+     RE_Uns_Subtract_With_Ovflo_Check64, -- System.Arith_64
+
      RE_Add_With_Ovflo_Check128,         -- System.Arith_128
      RE_Double_Divide128,                -- System.Arith_128
      RE_Multiply_With_Ovflo_Check128,    -- System.Arith_128
      RE_Subtract_With_Ovflo_Check128,    -- System.Arith_128
      RE_Scaled_Divide128,                -- System.Arith_128
+
+     RE_Uns_Add_With_Ovflo_Check128,      -- System.Arith_128
+     RE_Uns_Multiply_With_Ovflo_Check128, -- System.Arith_128
+     RE_Uns_Subtract_With_Ovflo_Check128, -- System.Arith_128
 
      RE_Assert_Failure,                  -- System.Assertions
      RE_Raise_Assert_Failure,            -- System.Assertions
@@ -831,6 +841,8 @@ package Rtsfind is
      RE_Bignum_In_LLI_Range,             -- System.Bignums
      RE_To_Bignum,                       -- System.Bignums
      RE_From_Bignum,                     -- System.Bignums
+     RE_LLU_To_Bignum,                   -- System.Bignums
+     RE_LLU_From_Bignum,                 -- System.Bignums
 
      RE_Val_2,                           -- System.Bitfields
      RE_Copy_Bitfield,                   -- System.Bitfields
@@ -998,6 +1010,10 @@ package Rtsfind is
 
      RE_Image_Wide_Character,            -- System.Img_WChar
      RE_Image_Wide_Wide_Character,       -- System.Img_WChar
+
+     RE_Interrupt_Names,                 -- System.Interrupt_Names
+
+     RE_Preelab_Interrupt_ID,            -- System.Interrupt_Types
 
      RE_Bind_Interrupt_To_Entry,         -- System.Interrupts
      RE_Default_Interrupt_Priority,      -- System.Interrupts
@@ -1652,6 +1668,7 @@ package Rtsfind is
      RE_Put_Image_Long_Long_Long_Unsigned, -- System.Put_Images
      RE_Put_Image_Thin_Pointer,          -- System.Put_Images
      RE_Put_Image_Fat_Pointer,           -- System.Put_Images
+     RE_Put_Image_Extended_Access_Pointer, -- System.Put_Images
      RE_Put_Image_Access_Subp,           -- System.Put_Images
      RE_Put_Image_Access_Prot_Subp,      -- System.Put_Images
      RE_Put_Image_String,                -- System.Put_Images
@@ -1891,6 +1908,7 @@ package Rtsfind is
      RE_W_U24,                           -- System.Stream_Attributes
      RE_W_WC,                            -- System.Stream_Attributes
      RE_W_WWC,                           -- System.Stream_Attributes
+     RE_W_80IEEE,                        -- System.Stream_Attributes
 
      RE_Storage_Array_Input,             -- System.Strings.Stream_Ops
      RE_Storage_Array_Input_Blk_IO,      -- System.Strings.Stream_Ops
@@ -2421,11 +2439,19 @@ package Rtsfind is
      RE_Scaled_Divide64                  => System_Arith_64,
      RE_Subtract_With_Ovflo_Check64      => System_Arith_64,
 
+     RE_Uns_Add_With_Ovflo_Check64       => System_Arith_64,
+     RE_Uns_Multiply_With_Ovflo_Check64  => System_Arith_64,
+     RE_Uns_Subtract_With_Ovflo_Check64  => System_Arith_64,
+
      RE_Add_With_Ovflo_Check128          => System_Arith_128,
      RE_Double_Divide128                 => System_Arith_128,
      RE_Multiply_With_Ovflo_Check128     => System_Arith_128,
      RE_Subtract_With_Ovflo_Check128     => System_Arith_128,
      RE_Scaled_Divide128                 => System_Arith_128,
+
+     RE_Uns_Add_With_Ovflo_Check128      => System_Arith_128,
+     RE_Uns_Multiply_With_Ovflo_Check128 => System_Arith_128,
+     RE_Uns_Subtract_With_Ovflo_Check128 => System_Arith_128,
 
      RE_Assert_Failure                   => System_Assertions,
      RE_Raise_Assert_Failure             => System_Assertions,
@@ -2479,6 +2505,8 @@ package Rtsfind is
      RE_Bignum_In_LLI_Range              => System_Bignums,
      RE_To_Bignum                        => System_Bignums,
      RE_From_Bignum                      => System_Bignums,
+     RE_LLU_To_Bignum                    => System_Bignums,
+     RE_LLU_From_Bignum                  => System_Bignums,
 
      RE_Val_2                            => System_Bitfields,
      RE_Copy_Bitfield                    => System_Bitfields,
@@ -2654,6 +2682,10 @@ package Rtsfind is
 
      RE_Image_Wide_Character             => System_Img_WChar,
      RE_Image_Wide_Wide_Character        => System_Img_WChar,
+
+     RE_Interrupt_Names                  => System_Interrupt_Names,
+
+     RE_Preelab_Interrupt_ID             => System_Interrupt_Types,
 
      RE_Bind_Interrupt_To_Entry          => System_Interrupts,
      RE_Default_Interrupt_Priority       => System_Interrupts,
@@ -3425,6 +3457,7 @@ package Rtsfind is
      RE_Put_Image_Long_Long_Long_Unsigned => System_Put_Images,
      RE_Put_Image_Thin_Pointer           => System_Put_Images,
      RE_Put_Image_Fat_Pointer            => System_Put_Images,
+     RE_Put_Image_Extended_Access_Pointer => System_Put_Images,
      RE_Put_Image_Access_Subp            => System_Put_Images,
      RE_Put_Image_Access_Prot_Subp       => System_Put_Images,
      RE_Put_Image_String                 => System_Put_Images,
@@ -3547,6 +3580,7 @@ package Rtsfind is
      RE_W_U24                            => System_Stream_Attributes,
      RE_W_WC                             => System_Stream_Attributes,
      RE_W_WWC                            => System_Stream_Attributes,
+     RE_W_80IEEE                         => System_Stream_Attributes,
 
      RE_Storage_Array_Input              => System_Strings_Stream_Ops,
      RE_Storage_Array_Input_Blk_IO       => System_Strings_Stream_Ops,

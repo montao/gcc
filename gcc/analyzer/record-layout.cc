@@ -1,5 +1,5 @@
 /* Implementation of class record_layout.
-   Copyright (C) 2022-2025 Free Software Foundation, Inc.
+   Copyright (C) 2022-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -86,7 +86,7 @@ record_layout::get_item_at (bit_offset_t offset) const
   FOR_EACH_VEC_ELT (m_items, i, it)
     if (it->contains_p (offset))
       return it;
-  return NULL;
+  return nullptr;
 }
 
 /* Subroutine of ctor.  Add padding item to NEXT_OFFSET if necessary.  */

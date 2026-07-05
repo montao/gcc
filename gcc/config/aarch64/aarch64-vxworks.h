@@ -1,6 +1,6 @@
 /* Definitions of target machine for GNU compiler.  Vxworks Aarch 64bit
    version.
-   Copyright (C) 2018-2025 Free Software Foundation, Inc.
+   Copyright (C) 2018-2026 Free Software Foundation, Inc.
    Contributed by Douglas B Rupp
 
 This file is part of GCC.
@@ -23,7 +23,8 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_OVERRIDE_OPTIONS VXWORKS_OVERRIDE_OPTIONS
 
 #undef LINK_SPEC
-#define LINK_SPEC VXWORKS_LINK_SPEC
+#define LINK_SPEC VXWORKS_LINK_SPEC \
+ AARCH64_ERRATA_LINK_SPEC
 
 #undef LIB_SPEC
 #define LIB_SPEC VXWORKS_LIB_SPEC
@@ -38,7 +39,10 @@ along with GCC; see the file COPYING3.  If not see
 #define CPP_SPEC VXWORKS_ADDITIONAL_CPP_SPEC
 
 #undef CC1_SPEC
-#define CC1_SPEC VXWORKS_CC1_SPEC
+#define CC1_SPEC VXWORKS_CC1_SPEC AARCH64_ERRATA_COMPILE_SPEC
+
+#undef CC1PLUS_SPEC
+#define CC1PLUS_SPEC VXWORKS_CC1_SPEC AARCH64_ERRATA_COMPILE_SPEC
 
 #undef FUNCTION_PROFILER
 #define FUNCTION_PROFILER VXWORKS_FUNCTION_PROFILER

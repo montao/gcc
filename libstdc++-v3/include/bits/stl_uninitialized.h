@@ -1,6 +1,6 @@
 // Raw memory manipulators -*- C++ -*-
 
-// Copyright (C) 2001-2025 Free Software Foundation, Inc.
+// Copyright (C) 2001-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -236,6 +236,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
   /**
    *  @brief Copies the range [first,last) into result.
    *  @param  __first  An input iterator.
@@ -274,7 +275,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #if __cplusplus >= 201103L
       using _Dest = decltype(std::__niter_base(__result));
-      using _Src = decltype(std::__niter_base(__first));
+      using _Src = decltype(std::__miter_base(std::__niter_base(__first)));
       using _ValT = typename iterator_traits<_ForwardIterator>::value_type;
 
 #if __glibcxx_raw_memory_algorithms >= 202411L // >= C++26
@@ -291,7 +292,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    {
 	      using _ValT = typename remove_pointer<_Src>::type;
 	      __builtin_memcpy(std::__niter_base(__result),
-			       std::__niter_base(__first),
+			       std::__miter_base(std::__niter_base(__first)),
 			       __n * sizeof(_ValT));
 	      __result += __n;
 	    }
@@ -377,7 +378,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			  std::__niter_base(__last),
 			  __x);
 	  else
-	    std::__do_uninit_copy(__first, __last, __x);
+	    std::__do_uninit_fill(__first, __last, __x);
 	}
 
       // Overload for pointers.
@@ -402,11 +403,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @param  __first  A forward iterator.
    *  @param  __last   A forward iterator.
    *  @param  __x      The source value.
-   *  @return   Nothing.
    *
    *  Like std::fill, but does not require an initialized output range.
   */
-  template<typename _ForwardIterator, typename _Tp>
+  template<typename _ForwardIterator,
+	   typename _Tp _GLIBCXX26_ALGO_DEF_VAL_T(_ForwardIterator)>
     _GLIBCXX26_CONSTEXPR
     inline void
     uninitialized_fill(_ForwardIterator __first, _ForwardIterator __last,
@@ -427,6 +428,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #if __cplusplus >= 201103L
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
 #if __glibcxx_raw_memory_algorithms >= 202411L // >= C++26
       if consteval {
 	return std::__do_uninit_fill(__first, __last, __x);
@@ -529,6 +531,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
    // _GLIBCXX_RESOLVE_LIB_DEFECTS
    // DR 1339. uninitialized_fill_n should return the end of its range
   /**
@@ -540,7 +543,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *
    *  Like std::fill_n, but does not require an initialized output range.
   */
-  template<typename _ForwardIterator, typename _Size, typename _Tp>
+  template<typename _ForwardIterator, typename _Size,
+	   typename _Tp _GLIBCXX26_ALGO_DEF_VAL_T(_ForwardIterator)>
     _GLIBCXX26_CONSTEXPR
     inline _ForwardIterator
     uninitialized_fill_n(_ForwardIterator __first, _Size __n, const _Tp& __x)
@@ -657,6 +661,33 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return std::uninitialized_copy(__first, __last, __result);
 #endif
     }
+#endif
+
+#if __cplusplus >= 201103L
+  template<typename _ITp, typename _IRef, typename _IPtr, typename _OTp,
+	   typename _Tp>
+    _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*>
+    __uninitialized_copy_a(
+      _GLIBCXX_STD_C::_Deque_iterator<_ITp, _IRef, _IPtr> __first,
+      _GLIBCXX_STD_C::_Deque_iterator<_ITp, _IRef, _IPtr> __last,
+      _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*> __result,
+      allocator<_Tp>&);
+
+  template<typename _Iter, typename _OTp, typename _Tp>
+    __enable_if_t<__is_random_access_iter<_Iter>::value,
+		  _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*>>
+    __uninitialized_copy_a(_Iter __first, _Iter __last,
+      _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*> __result,
+      allocator<_Tp>&);
+
+  template<typename _ITp, typename _IRef, typename _IPtr, typename _OTp,
+	   typename _Tp>
+    _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*>
+    __uninitialized_move_a(
+      _GLIBCXX_STD_C::_Deque_iterator<_ITp, _IRef, _IPtr> __first,
+      _GLIBCXX_STD_C::_Deque_iterator<_ITp, _IRef, _IPtr> __last,
+      _GLIBCXX_STD_C::_Deque_iterator<_OTp, _OTp&, _OTp*> __result,
+      allocator<_Tp>&);
 #endif
 
   template<typename _InputIterator, typename _ForwardIterator,
@@ -922,11 +953,17 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // __uninitialized_default
   // Fills [first, last) with value-initialized value_types.
   template<typename _ForwardIterator>
-    _GLIBCXX26_CONSTEXPR
+    _GLIBCXX20_CONSTEXPR
     inline void
     __uninitialized_default(_ForwardIterator __first,
 			    _ForwardIterator __last)
     {
+#ifdef __cpp_lib_is_constant_evaluated
+      if (std::is_constant_evaluated())
+	return __uninitialized_default_1<false>::
+		 __uninit_default(__first, __last);
+#endif
+
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType;
       // trivial types can have deleted assignment
@@ -1168,7 +1205,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     uninitialized_copy_n(_InputIterator __first, _Size __n,
 			 _ForwardIterator __result)
     { return std::__uninitialized_copy_n(__first, __n, __result,
-					 std::__iterator_category(__first)); }
+					 std::__iter_concept_or_category(__first)); }
 
   /// @cond undocumented
   template<typename _InputIterator, typename _Size, typename _ForwardIterator>
@@ -1179,7 +1216,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       return
 	std::__uninitialized_copy_n_pair(__first, __n, __result,
-					 std::__iterator_category(__first));
+					 std::__iter_concept_or_category(__first));
     }
   /// @endcond
 #endif
@@ -1259,9 +1296,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     uninitialized_move(_InputIterator __first, _InputIterator __last,
 		       _ForwardIterator __result)
     {
-      return std::uninitialized_copy
-	(_GLIBCXX_MAKE_MOVE_ITERATOR(__first),
-	 _GLIBCXX_MAKE_MOVE_ITERATOR(__last), __result);
+      return std::uninitialized_copy(std::make_move_iterator(__first),
+				     std::make_move_iterator(__last),
+				     __result);
     }
 
   /**
@@ -1278,9 +1315,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     uninitialized_move_n(_InputIterator __first, _Size __count,
 			 _ForwardIterator __result)
     {
-      auto __res = std::__uninitialized_copy_n_pair
-	(_GLIBCXX_MAKE_MOVE_ITERATOR(__first),
-	 __count, __result);
+      auto __res
+	= std::__uninitialized_copy_n_pair(std::make_move_iterator(__first),
+					   __count, __result);
       return {__res.first.base(), __res.second};
     }
 #endif // __glibcxx_raw_memory_algorithms

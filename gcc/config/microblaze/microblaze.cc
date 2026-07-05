@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on Xilinx MicroBlaze.
-   Copyright (C) 2009-2025 Free Software Foundation, Inc.
+   Copyright (C) 2009-2026 Free Software Foundation, Inc.
 
    Contributed by Michael Eager <eager@eagercon.com>.
 
@@ -149,7 +149,7 @@ struct GTY(()) microblaze_frame_info {
 
 /* Global variables for machine-dependent things.  */
 
-/* Toggle which pipleline interface to use.  */
+/* Toggle which pipeline interface to use.  */
 static GTY(()) int microblaze_sched_use_dfa = 0;
 
 /* Threshold for data being put into the small data/bss area, instead
@@ -1299,6 +1299,34 @@ microblaze_expand_block_move (rtx dest, rtx src, rtx length, rtx align_rtx)
   return false;
 }
 
+/* Compute memory address *aligned_mem and corresponding shift value (*shift)
+   from a QImode memory reference MEM */
+void
+microblaze_subword_address (rtx mem, rtx *aligned_mem, rtx *shift)
+{
+  /* Align the memory address to a word.  */
+  rtx addr = force_reg (Pmode, XEXP (mem, 0));
+
+  rtx addr_mask = gen_int_mode (-4, Pmode);
+
+  rtx aligned_addr = gen_reg_rtx (Pmode);
+
+  emit_move_insn (aligned_addr,  gen_rtx_AND (Pmode, addr, addr_mask));
+
+  *aligned_mem = change_address (mem, SImode, aligned_addr);
+
+  /* Calculate the shift amount.  */
+  emit_move_insn (*shift, gen_rtx_AND (SImode, addr, gen_int_mode (3, SImode)));
+
+  if (TARGET_LITTLE_ENDIAN == 0) {
+    emit_move_insn (*shift,
+		    gen_rtx_MINUS (SImode, gen_int_mode (3, SImode), *shift));
+  }
+
+  emit_move_insn (*shift, gen_rtx_ASHIFT (SImode, *shift,
+					  gen_int_mode (3, SImode)));
+}
+
 static bool
 microblaze_rtx_costs (rtx x, machine_mode mode, int outer_code ATTRIBUTE_UNUSED,
 		      int opno ATTRIBUTE_UNUSED, int *total,
@@ -2119,7 +2147,8 @@ compute_frame_size (HOST_WIDE_INT size)
   HOST_WIDE_INT var_size;	/* # bytes that local variables take up.  */
   HOST_WIDE_INT args_size;	/* # bytes that outgoing arguments take up.  */
   int link_debug_size;		/* # bytes for link register.  */
-  HOST_WIDE_INT gp_reg_size;	/* # bytes needed to store calle-saved gp regs.  */
+  HOST_WIDE_INT gp_reg_size;	/* # bytes needed to store callee-saved gp
+				   regs.  */
   long mask;			/* mask of saved gp registers.  */
 
   interrupt_handler =

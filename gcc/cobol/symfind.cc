@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -48,7 +48,7 @@ extern int yydebug;
 static bool
 is_data_field( symbol_elem_t& e ) {
   if( e.type != SymField ) return false;
-  const auto f = cbl_field_of(&e);
+  const cbl_field_t *f = cbl_field_of(&e);
   if( f->name[0] == '\0' ) return false;
   if( is_filler(f) ) return false;
 
@@ -93,25 +93,25 @@ typedef std::map <field_key_t, std::list<size_t> > field_keymap_t;
 static field_keymap_t symbol_map2;
 
 /*
- * As each field is added to the symbol table, add its name and index
- * to the name map.  Initially the type is FldInvalid.  Those are
- * removed by symbols_update();
+ * As each field is added to the symbol table, add its name and index to the
+ * name map.  Initially the type is FldInvalid.  Those are removed by
+ * symbols_update().  Typedefs are excluded; they do not represent data items.
  */
 void
 update_symbol_map2( const symbol_elem_t *e ) {
   auto field = cbl_field_of(e);
 
-  if( ! field->is_typedef() ) {
-    switch( field->type ) {
-    case FldForward:
-    case FldLiteralN:
-      return;
-    case FldLiteralA:
-      if( ! field->is_key_name() ) return;
-      break;
-    default:
-      break;
-    }
+  if( field->is_typedef() ) return;
+
+  switch( field->type ) {
+  case FldForward:
+  case FldLiteralN:
+    return;
+  case FldLiteralA:
+    if( ! field->is_key_name() ) return;
+    break;
+  default:
+    break;
   }
 
   field_key_t fk( e->program, field );
@@ -129,7 +129,7 @@ finalize_symbol_map2() {
   for( auto& elem : symbol_map2 ) {
     auto& fields( elem.second );
     fields.remove_if( []( auto isym ) {
-			const auto f = cbl_field_of(symbol_at(isym));
+			const cbl_field_t *f = cbl_field_of(symbol_at(isym));
 			return f->type == FldInvalid;
 		      } );
     if( fields.empty() ) empties.insert(elem.first);
@@ -205,6 +205,7 @@ field_structure( symbol_elem_t& sym ) {
   if( !is_data_field(sym) ) return none;
 
   cbl_field_t *field = cbl_field_of(&sym);
+  assert(field->type != FldForward); // eliminated by is_data_field
 
   symbol_map_t::key_type key( sym.program, field->name, field->parent );
   symbol_map_t::value_type elem( key, std::vector<size_t>() );
@@ -230,16 +231,6 @@ field_structure( symbol_elem_t& sym ) {
   }
 
   return elem;
-}
-
-void erase_symbol_map_fwds( size_t beg ) {
-  for( auto p = symbols_begin(beg); p < symbols_end(); p++ ) {
-    if( p->type != SymField ) continue;
-    const auto& field(*cbl_field_of(p));
-    if( field.type == FldForward ) {
-      symbol_map.erase( sym_name_t(p->program, field.name, field.parent) );
-    }
-  }
 }
 
 void
@@ -316,9 +307,9 @@ public:
       if( p != item.second.end() ) {
         // Preserve symbol's index at front of ancestor list.
         symbol_map_t::mapped_type shorter(1 + ancestors->size());
-        auto p = shorter.begin();
-        *p = item.second.front();
-        shorter.insert( ++p, ancestors->begin(), ancestors->end() );
+        auto p_l = shorter.begin();
+        *p_l = item.second.front();
+        shorter.insert( ++p_l, ancestors->begin(), ancestors->end() );
         return make_pair(item.first, shorter);
       }
     }
@@ -341,7 +332,7 @@ class in_scope {
   size_t program;
 
   static size_t prog_of( size_t program ) {
-    const auto L = cbl_label_of(symbol_at(program));
+    const cbl_label_t *L = cbl_label_of(symbol_at(program));
     return L->parent;
   }
 
@@ -430,7 +421,7 @@ symbol_match2( size_t program,
   auto plist = symbol_map2.find(key);
   if( plist != symbol_map2.end() ) {
     for( auto candidate : plist->second ) {
-      const auto e = symbol_at(candidate);
+      const symbol_elem_t *e = symbol_at(candidate);
       if( name_has_names( e, names, local ) ) {
         fields.push_back( symbol_index(e) );
       }
@@ -504,7 +495,7 @@ symbol_match( size_t program, const std::list<const char *>& names ) {
     }
     auto inserted = output.insert(*p);
     if( ! inserted.second ) {
-      yyerror("%s is not a unique reference", key.name);
+      error_msg_direct("%s is not a unique reference", key.name);
     }
   }
   return output;
@@ -532,6 +523,7 @@ symbol_find( size_t program, std::list<const char *> names ) {
                   std::inserter(qualified, qualified.begin()),
                   [i01]( auto item ) {
                     const std::vector<size_t>& ancestors(item.second);
+                    assert(!ancestors.empty());
                     return ancestors.back() == i01;
                   } );
     items = qualified;
@@ -539,13 +531,13 @@ symbol_find( size_t program, std::list<const char *> names ) {
 
   auto unique = items.size() == 1;
 
-  if( !unique ) {
+  if( ! unique ) {
     if( items.empty() ) {
       return std::pair<symbol_elem_t *, bool>(NULL, false);
     }
     if( yydebug ) {
       dbgmsg( "%s:%d: '%s' has " HOST_SIZE_T_PRINT_UNSIGNED " possible matches",
-             __func__, __LINE__, names.back(), (fmt_size_t)items.size() );
+              __func__, __LINE__, names.back(), (fmt_size_t)items.size() );
       std::for_each( items.begin(), items.end(), dump_symbol_map_value1 );
     }
   }

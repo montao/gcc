@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE (__ARM_FEATURE_SVE intrinsics)
-   Copyright (C) 2020-2025 Free Software Foundation, Inc.
+   Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -20,7 +20,7 @@
 #ifndef GCC_AARCH64_SVE_BUILTINS_SVE2_H
 #define GCC_AARCH64_SVE_BUILTINS_SVE2_H
 
-namespace aarch64_sve
+namespace aarch64_acle
 {
   namespace functions
   {
@@ -64,6 +64,8 @@ namespace aarch64_sve
     extern const function_base *const svcvt1;
     extern const function_base *const svcvt2;
     extern const function_base *const svcvtl;
+    extern const function_base *const svcvtl1;
+    extern const function_base *const svcvtl2;
     extern const function_base *const svcvtlt;
     extern const function_base *const svcvtlt1;
     extern const function_base *const svcvtlt2;
@@ -78,11 +80,13 @@ namespace aarch64_sve
     extern const function_base *const sveorqv;
     extern const function_base *const sveortb;
     extern const function_base *const svextq;
+    extern const function_base *const svfirstp;
     extern const function_base *const svhadd;
     extern const function_base *const svhistcnt;
     extern const function_base *const svhistseg;
     extern const function_base *const svhsub;
     extern const function_base *const svhsubr;
+    extern const function_base *const svlastp;
     extern const function_base *const svld1q_gather;
     extern const function_base *const svld1udq;
     extern const function_base *const svld1uwq;
@@ -194,6 +198,10 @@ namespace aarch64_sve
     extern const function_base *const svrax1;
     extern const function_base *const svrevd;
     extern const function_base *const svrhadd;
+    extern const function_base *const svrint32x;
+    extern const function_base *const svrint32z;
+    extern const function_base *const svrint64x;
+    extern const function_base *const svrint64z;
     extern const function_base *const svrshl;
     extern const function_base *const svrshr;
     extern const function_base *const svrshrnb;

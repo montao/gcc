@@ -1,5 +1,5 @@
 /* Speculation tracking and mitigation (e.g. CVE 2017-5753) for AArch64.
-   Copyright (C) 2018-2025 Free Software Foundation, Inc.
+   Copyright (C) 2018-2026 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -148,7 +148,7 @@
    mutually exclusive gates, with the normal pass being chosen wherever
    possible.  */
 
-/* Generate a code sequence to clobber SP if speculating incorreclty.  */
+/* Generate a code sequence to clobber SP if speculating incorrectly.  */
 static rtx_insn *
 aarch64_speculation_clobber_sp ()
 {

@@ -1,5 +1,5 @@
 /* Vector API for GNU compiler.
-   Copyright (C) 2004-2025 Free Software Foundation, Inc.
+   Copyright (C) 2004-2026 Free Software Foundation, Inc.
    Contributed by Nathan Sidwell <nathan@codesourcery.com>
    Re-implemented in C++ by Diego Novillo <dnovillo@google.com>
 
@@ -985,7 +985,7 @@ vec<T, A, vl_embed>::iterate (unsigned ix, T **ptr) const
 {
   if (ix < m_vecpfx.m_num)
     {
-      *ptr = CONST_CAST (T *, &address ()[ix]);
+      *ptr = const_cast<T *> (&address ()[ix]);
       return true;
     }
   else
@@ -1670,7 +1670,7 @@ public:
   {
     m_auto.embedded_init (N, 0, 1);
     /* ???  Instead of initializing m_vec from &m_auto directly use an
-       expression that avoids refering to a specific member of 'this'
+       expression that avoids referring to a specific member of 'this'
        to derail the -Wstringop-overflow diagnostic code, avoiding
        the impression that data accesses are supposed to be to the
        m_auto member storage.  */
@@ -2494,5 +2494,55 @@ make_array_slice (T *base, unsigned int size)
 #if (GCC_VERSION >= 3000)
 # pragma GCC poison m_vec m_vecpfx m_vecdata
 #endif
+
+/* string_slice inherits from array_slice, specifically to refer to a substring
+   of a character array.
+   It includes some string like helpers.  */
+class string_slice : public array_slice<const char>
+{
+public:
+  string_slice () : array_slice<const char> () {}
+  string_slice (const char *str) : array_slice (str, strlen (str)) {}
+  explicit string_slice (const char *str, size_t len)
+    : array_slice (str, len) {}
+  explicit string_slice (const char *start, const char *end)
+    : array_slice (start, end - start) {}
+
+  friend bool operator== (const string_slice &lhs, const string_slice &rhs)
+  {
+    if (!lhs.is_valid () || !rhs.is_valid ())
+      return false;
+    if (lhs.size () != rhs.size ())
+      return false;
+    /* Case where either is a NULL pointer and therefore, as both are valid,
+       both are empty slices with length 0.  */
+    if (lhs.size () == 0)
+      return true;
+    return memcmp (lhs.begin (), rhs.begin (), lhs.size ()) == 0;
+  }
+
+  friend bool operator!= (const string_slice &lhs, const string_slice &rhs)
+  {
+    return !(lhs == rhs);
+  }
+
+  /* Returns an invalid string_slice.  */
+  static string_slice invalid ()
+  {
+    return string_slice (nullptr, ~0U);
+  }
+
+  /* tokenize is used to split a string by some deliminator into
+     string_slice's.  Similarly to the posix strtok_r.but without modifying the
+     input string, and returning all tokens which may be empty in the case
+     of an empty input string of consecutive deliminators.  */
+  static string_slice tokenize (string_slice *str, string_slice delims);
+
+  /* Removes white space from the front and back of the string_slice.  */
+  string_slice strip ();
+
+  /* Compares two string_slices in lexographical ordering.  */
+  static int strcmp (string_slice str1, string_slice str2);
+};
 
 #endif // GCC_VEC_H

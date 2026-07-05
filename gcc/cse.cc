@@ -1,5 +1,5 @@
 /* Common subexpression elimination for GNU compiler.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -23,6 +23,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "backend.h"
 #include "target.h"
 #include "rtl.h"
+#include "stmt.h"
 #include "tree.h"
 #include "cfghooks.h"
 #include "df.h"
@@ -2846,6 +2847,24 @@ canon_reg (rtx x, rtx_insn *insn)
     case ADDR_DIFF_VEC:
       return x;
 
+    case SUBREG:
+      {
+	rtx inner = canon_reg (SUBREG_REG (x), insn);
+	if (inner != SUBREG_REG (x))
+	  {
+	    rtx newx = simplify_subreg (GET_MODE (x), inner,
+					GET_MODE (SUBREG_REG (x)),
+					SUBREG_BYTE (x));
+	    if (newx)
+	      return newx;
+
+	    if (validate_subreg (GET_MODE (x), GET_MODE (inner),
+				 inner, SUBREG_BYTE (x)))
+	      validate_change (insn, &SUBREG_REG (x), inner, 1);
+	  }
+	return x;
+      }
+
     case REG:
       {
 	int first;
@@ -4144,7 +4163,7 @@ struct set
   /* Nonzero if the SET_SRC contains something
      whose value cannot be predicted and understood.  */
   unsigned int src_volatile : 1;
-  /* Nonzero if RTL is an artifical set that has been created to describe
+  /* Nonzero if RTL is an artificial set that has been created to describe
      part of an insn's effect.  Zero means that RTL appears directly in
      the insn pattern.  */
   unsigned int is_fake_set : 1;
@@ -4243,7 +4262,7 @@ try_back_substitute_reg (rtx set, rtx_insn *insn)
 }
 
 /* Add an entry containing RTL X into SETS.  IS_FAKE_SET is true if X is
-   an artifical set that has been created to describe part of an insn's
+   an artificial set that has been created to describe part of an insn's
    effect.  */
 static inline void
 add_to_set (vec<struct set> *sets, rtx x, bool is_fake_set)
@@ -4297,8 +4316,11 @@ find_sets_in_insn (rtx_insn *insn, vec<struct set> *psets)
 		 used to tell CSE how to get to a particular constant.  */
 	      rtx y = simplify_gen_vec_select (SET_DEST (x), i);
 	      gcc_assert (y);
-	      rtx set = gen_rtx_SET (y, CONST_VECTOR_ELT (src, i));
-	      add_to_set (psets, set, true);
+	      if (!REG_P (y))
+		{
+		  rtx set = gen_rtx_SET (y, CONST_VECTOR_ELT (src, i));
+		  add_to_set (psets, set, true);
+		}
 	    }
 	}
       else
@@ -4956,6 +4978,34 @@ cse_insn (rtx_insn *insn)
 		    break;
 		}
 	    }
+	}
+
+      /* If SRC_EQV is a CONST_INT, try looking up some related
+	 constants (logical and arithmetic negation).  Those may
+	 ultimately be cheaper to re-use.  */
+      if (GET_CODE (src) != CONST_INT
+	  && GET_CODE (src) != REG
+	  && GET_CODE (src) != SUBREG
+	  && src_const
+	  && GET_CODE (src_const) == CONST_INT)
+	{
+	  rtx trial_rtx = GEN_INT (~UINTVAL (src_const));
+	  struct table_elt *tmp = lookup (trial_rtx, HASH (trial_rtx, mode), mode);
+	  rtx_code code = NOT;
+	  if (!tmp)
+	    {
+	      trial_rtx = GEN_INT (-UINTVAL (src_const));
+	      tmp = lookup (trial_rtx, HASH (trial_rtx, mode), mode);
+	      code = NEG;
+	    }
+
+	  if (tmp)
+	    {
+	      src_related = gen_rtx_fmt_e (code, mode, tmp->first_same_value->exp);
+	      src_eqv_here = src_related;
+	      src_related_is_const_anchor = true;
+	    }
+
 	}
 
       /* See if a MEM has already been loaded with a widening operation;
@@ -6217,6 +6267,35 @@ invalidate_from_sets_and_clobbers (rtx_insn *insn)
 	    invalidate (SET_DEST (y), VOIDmode);
 	}
     }
+
+  /* Any single register constraint may introduce a conflict, if the associated
+     hard register is live.  For example:
+
+     r100=%1
+     r101=42
+     r102=exp(r101)
+
+     If the first operand r101 of exp is constrained to hard register %1, then
+     r100 cannot be trivially substituted by %1 in the following since %1 got
+     clobbered.  Such conflicts may stem from single register classes as well
+     as hard register constraints.  Since prior RA we do not know which
+     alternative will be chosen, be conservative and consider any such hard
+     register from any alternative as a potential clobber.  */
+  extract_insn (insn);
+  for (int nop = recog_data.n_operands - 1; nop >= 0; --nop)
+    {
+      int c;
+      const char *p = recog_data.constraints[nop];
+      for (; (c = *p); p += CONSTRAINT_LEN (c, p))
+	if (c == ',')
+	  ;
+	else if (c == '{')
+	  {
+	    int regno = decode_hard_reg_constraint (p);
+	    machine_mode mode = recog_data.operand_mode[nop];
+	    invalidate_reg (gen_rtx_REG (mode, regno));
+	  }
+    }
 }
 
 static rtx cse_process_note (rtx);
@@ -6292,7 +6371,7 @@ cse_process_note (rtx x)
 
 static bool
 cse_find_path (basic_block first_bb, struct cse_basic_block_data *data,
-	       int follow_jumps)
+	       bool follow_jumps)
 {
   basic_block bb;
   edge e;
@@ -6967,7 +7046,7 @@ count_stores (rtx x, const_rtx set ATTRIBUTE_UNUSED, void *data)
 
 /* Return if DEBUG_INSN pattern PAT needs to be reset because some dead
    pseudo doesn't have a replacement.  COUNTS[X] is zero if register X
-   is dead and REPLACEMENTS[X] is null if it has no replacemenet.
+   is dead and REPLACEMENTS[X] is null if it has no replacement.
    Set *SEEN_REPL to true if we see a dead register that does have
    a replacement.  */
 

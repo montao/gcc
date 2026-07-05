@@ -1,7 +1,7 @@
 /* Generate pattern matching and transform code shared between
    GENERIC and GIMPLE folding code from match-and-simplify description.
 
-   Copyright (C) 2014-2025 Free Software Foundation, Inc.
+   Copyright (C) 2014-2026 Free Software Foundation, Inc.
    Contributed by Richard Biener <rguenther@suse.de>
    and Prathamesh Kulkarni  <bilbotheelffriend@gmail.com>
 
@@ -999,7 +999,7 @@ choose_output (const vec<FILE *> &parts)
    definition files.  */
 
 #define DEFTREECODE(SYM, STRING, TYPE, NARGS)   SYM,
-enum tree_code {
+enum tree_code : unsigned {
 #include "tree.def"
 MAX_TREE_CODES
 };
@@ -1268,6 +1268,7 @@ commutative_op (id_base *id, bool compares_are_commutative = false)
       case CFN_FNMS:
       case CFN_ADD_OVERFLOW:
       case CFN_MUL_OVERFLOW:
+      case CFN_SAT_ADD:
 	return 0;
 
       case CFN_COND_ADD:
@@ -1520,7 +1521,7 @@ public:
   /* The operator and its operands.  */
   id_base *operation;
   vec<operand *> ops;
-  /* An explicitely specified type - used exclusively for conversions.  */
+  /* An explicitly specified type - used exclusively for conversions.  */
   const char *expr_type;
   /* Whether the operation is to be applied commutatively.  This is
      later lowered to two separate patterns.  */
@@ -3184,7 +3185,7 @@ capture_info::walk_c_expr (c_expr *e)
    code generation.  */
 static char *fail_label;
 
-/* Code generation off the decision tree and the refered AST nodes.  */
+/* Code generation off the decision tree and the referred AST nodes.  */
 
 bool
 is_conversion (id_base *op)
@@ -3417,7 +3418,7 @@ expr::gen_transform (FILE *f, int indent, const char *dest, bool gimple,
 	      indent += 4;
 	    }
 	  /* ???  Building a stmt can fail for various reasons here, seq being
-	     NULL or the stmt referencing SSA names occuring in abnormal PHIs.
+	     NULL or the stmt referencing SSA names occurring in abnormal PHIs.
 	     So if we fail here we should continue matching other patterns.  */
 	  fprintf_indent (f, indent, "gimple_match_op tem_op "
 			  "(res_op->cond.any_else (), %s, %s", opr_name, type);
@@ -5435,6 +5436,7 @@ parser::parse_expr ()
       && !(token->flags & PREV_WHITE))
     {
       eat_token (CPP_NOT);
+      token = peek ();
       e->force_leaf = true;
     }
 
@@ -5447,6 +5449,7 @@ parser::parse_expr ()
 	fatal_at (token, "modifier %<^%> can only act on operation %<COND_EXPR%>");
 
       eat_token (CPP_XOR);
+      token = peek ();
       e->match_phi = true;
     }
 
@@ -6272,7 +6275,7 @@ usage ()
   fprintf (stderr, usage, progname, progname);
 }
 
-/* Write out the correct include to the match-head fle containing the helper
+/* Write out the correct include to the match-head file containing the helper
    files.  */
 
 static void

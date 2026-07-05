@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright (C) 2020-2025 Free Software Foundation, Inc.
+# Copyright (C) 2020-2026 Free Software Foundation, Inc.
 #
 # This file is part of GCC.
 #
@@ -389,6 +389,7 @@ def main():
     if args.input == '-':
         args.input = None
     if args.directory:
+        global root
         root = args.directory
 
     data = open(args.input, newline='\n') if args.input else sys.stdin

@@ -1,6 +1,6 @@
 /* Process the ObjC-specific declarations and variables for
    the Objective-C++ compiler.
-   Copyright (C) 2005-2025 Free Software Foundation, Inc.
+   Copyright (C) 2005-2026 Free Software Foundation, Inc.
    Contributed by Ziemowit Laski  <zlaski@apple.com>
 
 This file is part of GCC.
@@ -44,7 +44,7 @@ extern tree objcp_end_compound_stmt (tree, int);
 #define finish_function() \
 	objcp_finish_function ()
 #define finish_decl(decl, loc, init, origtype, asmspec) \
-	cp_finish_decl (decl, init, false, asmspec, 0)
+ cp_finish_decl (decl, init, (init && really_constant_p (init)), asmspec, 0)
 #define xref_tag(code, name) \
 	objcp_xref_tag (code, name)
 #define comptypes(type1, type2) \

@@ -100,17 +100,22 @@ target_triplet = @target@
 @ARCH_X86_64_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@am__append_4 = $(addsuffix _16_1_.lo,$(SIZEOBJS)) \
 @ARCH_X86_64_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@		       $(addsuffix _16_2_.lo,$(SIZEOBJS))
 
-@ARCH_AARCH64_LINUX_TRUE@@PARTIAL_VXWORKS_FALSE@am__append_5 = atomic_16.S
+@ARCH_LOONGARCH_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@am__append_5 = $(addsuffix _16_1_.lo,$(SIZEOBJS))
+@ARCH_AARCH64_LINUX_TRUE@@PARTIAL_VXWORKS_FALSE@am__append_6 = atomic_16.S
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/../config/acx.m4 \
+	$(top_srcdir)/../config/clang-plugin.m4 \
 	$(top_srcdir)/../config/depstand.m4 \
+	$(top_srcdir)/../config/gcc-plugin.m4 \
+	$(top_srcdir)/../config/gthr.m4 \
 	$(top_srcdir)/../config/lead-dot.m4 \
 	$(top_srcdir)/../config/lthostflags.m4 \
 	$(top_srcdir)/../config/multi.m4 \
 	$(top_srcdir)/../config/override.m4 \
 	$(top_srcdir)/../config/stdint.m4 \
 	$(top_srcdir)/../config/toolexeclibdir.m4 \
+	$(top_srcdir)/../config/visibility.m4 \
 	$(top_srcdir)/../config/warnings.m4 \
 	$(top_srcdir)/../ltoptions.m4 $(top_srcdir)/../ltsugar.m4 \
 	$(top_srcdir)/../ltversion.m4 $(top_srcdir)/../lt~obsolete.m4 \
@@ -309,6 +314,7 @@ LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIPO = @LIPO@
+LLVM_CONFIG = @LLVM_CONFIG@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
 MAINT = @MAINT@
@@ -429,13 +435,13 @@ libatomic_version_info = -version-info $(libtool_VERSION)
 @ENABLE_DARWIN_AT_RPATH_TRUE@	-Wc,-nodefaultrpaths \
 @ENABLE_DARWIN_AT_RPATH_TRUE@	-Wl,-rpath,@loader_path
 libatomic_la_LDFLAGS = $(libatomic_version_info) $(libatomic_version_script) \
-	$(lt_host_flags) $(libatomic_darwin_rpath)
+	-Wc,-fno-link-libatomic $(lt_host_flags) $(libatomic_darwin_rpath)
 
 @PARTIAL_VXWORKS_FALSE@libatomic_la_SOURCES = gload.c gstore.c gcas.c \
 @PARTIAL_VXWORKS_FALSE@	gexch.c glfree.c lock.c init.c fenv.c \
-@PARTIAL_VXWORKS_FALSE@	fence.c flag.c $(am__append_5)
+@PARTIAL_VXWORKS_FALSE@	fence.c flag.c $(am__append_6)
 @PARTIAL_VXWORKS_TRUE@libatomic_la_SOURCES = fenv.c fence.c flag.c \
-@PARTIAL_VXWORKS_TRUE@	$(am__append_5)
+@PARTIAL_VXWORKS_TRUE@	$(am__append_6)
 @PARTIAL_VXWORKS_FALSE@SIZEOBJS = load store cas exch fadd fsub fand fior fxor fnand tas
 @PARTIAL_VXWORKS_FALSE@EXTRA_libatomic_la_SOURCES = $(addsuffix _n.c,$(SIZEOBJS))
 @PARTIAL_VXWORKS_FALSE@libatomic_la_DEPENDENCIES = $(libatomic_la_LIBADD) $(libatomic_version_dep)
@@ -446,7 +452,7 @@ libatomic_la_LDFLAGS = $(libatomic_version_info) $(libatomic_version_script) \
 @PARTIAL_VXWORKS_FALSE@PAT_N = $(word 2,$(PAT_SPLIT))
 @PARTIAL_VXWORKS_FALSE@PAT_S = $(word 3,$(PAT_SPLIT))
 @PARTIAL_VXWORKS_FALSE@IFUNC_DEF = -DIFUNC_ALT=$(PAT_S)
-@PARTIAL_VXWORKS_FALSE@IFUNC_OPT = $(word $(PAT_S),$(IFUNC_OPTIONS))
+@PARTIAL_VXWORKS_FALSE@IFUNC_OPT = $(subst |,$(space),$(word $(PAT_S),$(IFUNC_OPTIONS)))
 @PARTIAL_VXWORKS_FALSE@@AMDEP_TRUE@M_DEPS = -MT $@ -MD -MP -MF $(DEPDIR)/$(@F).Ppo
 @PARTIAL_VXWORKS_FALSE@@AMDEP_FALSE@M_DEPS = 
 @PARTIAL_VXWORKS_FALSE@M_SIZE = -DN=$(PAT_N)
@@ -464,13 +470,23 @@ libatomic_la_LDFLAGS = $(libatomic_version_info) $(libatomic_version_script) \
 @PARTIAL_VXWORKS_FALSE@	s,$(SIZES),$(addsuffix \
 @PARTIAL_VXWORKS_FALSE@	_$(s)_.lo,$(SIZEOBJS))) $(am__append_1) \
 @PARTIAL_VXWORKS_FALSE@	$(am__append_2) $(am__append_3) \
-@PARTIAL_VXWORKS_FALSE@	$(am__append_4)
+@PARTIAL_VXWORKS_FALSE@	$(am__append_4) $(am__append_5)
 @ARCH_AARCH64_LINUX_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@IFUNC_OPTIONS = -march=armv8-a+lse
 @ARCH_ARM_LINUX_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@IFUNC_OPTIONS = -march=armv7-a+fp -DHAVE_KERNEL64
 @ARCH_I386_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@IFUNC_OPTIONS = -march=i586
+@ARCH_LOONGARCH_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@IFUNC_OPTIONS = -mlsx|-mscq
 @ARCH_X86_64_TRUE@@HAVE_IFUNC_TRUE@@PARTIAL_VXWORKS_FALSE@IFUNC_OPTIONS = -mcx16 -mcx16
 libatomic_convenience_la_SOURCES = $(libatomic_la_SOURCES)
 libatomic_convenience_la_LIBADD = $(libatomic_la_LIBADD)
+
+# Copy built libatomic library to $build/gcc so it's easier to locate,
+# similar to libgcc.
+#
+# FIXME: libtool --mode=install also ends up copying libatomic.la in $gcc_objdir,
+# which (somehow) ends up adding $gcc_objdir to RPATH for libraries that get
+# built after libatomic, which makes RPATH insecure. Removing libatomic.la
+# from $gcc_objdir seems to fix the issue.
+gcc_objdir = `pwd`/$(MULTIBUILDTOP)../../gcc/
 MULTISRCTOP = 
 MULTIBUILDTOP = 
 MULTIDIRS = 
@@ -821,7 +837,7 @@ info: info-recursive
 
 info-am:
 
-install-data-am:
+@LIBAT_BUILD_ASNEEDED_SOLINK_FALSE@install-data-am:
 
 install-dvi: install-dvi-recursive
 
@@ -914,6 +930,30 @@ vpath % $(strip $(search_path))
 # makefile fragments to avoid broken *.Ppo getting included into the Makefile
 # when it is reloaded during the build of all-multi.
 all-multi: $(libatomic_la_LIBADD)
+all-local: stmp-libatomic
+stmp-libatomic: libatomic.la
+	$(LIBTOOL) --mode=install $(INSTALL_DATA) libatomic.la $(gcc_objdir)$(MULTISUBDIR)/
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	cd $(gcc_objdir)$(MULTISUBDIR) || exit 1; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	if test -f libatomic.so; then (echo "/* GNU ld script"; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	 echo "   Add DT_NEEDED entry for -latomic only if needed.  */"; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	 echo "INPUT ( AS_NEEDED ( -latomic ) )" \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	) > libatomic_asneeded.so; fi; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	if test -f libatomic.a; then rm -f libatomic_asneeded.a; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	$(LN_S) libatomic.a libatomic_asneeded.a; fi
+	rm $(gcc_objdir)$(MULTISUBDIR)/libatomic.la
+	touch $@
+
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@install-data-am: install-asneeded
+
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@install-asneeded: install-toolexeclibLTLIBRARIES
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	$(MKDIR_P) "$(DESTDIR)$(toolexeclibdir)" || exit 1; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	cd "$(DESTDIR)$(toolexeclibdir)" || exit 1; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	if test -f libatomic.so; then (echo "/* GNU ld script"; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	 echo "   Add DT_NEEDED entry for -latomic only if needed.  */"; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	 echo "INPUT ( AS_NEEDED ( -latomic ) )" \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	) > libatomic_asneeded.so; fi; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	if test -f libatomic.a; then rm -f libatomic_asneeded.a; \
+@LIBAT_BUILD_ASNEEDED_SOLINK_TRUE@	$(LN_S) libatomic.a libatomic_asneeded.a; fi
 
 # target overrides
 -include $(tmake_file)

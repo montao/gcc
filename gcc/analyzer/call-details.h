@@ -1,5 +1,5 @@
 /* Helper class for handling a call with specific arguments.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -20,6 +20,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #ifndef GCC_ANALYZER_CALL_DETAILS_H
 #define GCC_ANALYZER_CALL_DETAILS_H
+
+#include "pending-diagnostic.h"
 
 namespace ana {
 

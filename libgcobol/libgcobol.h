@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -39,43 +39,58 @@
     Some are also called between source code modules in libgcobol, hence the
     need here for declarations. */
 
+// The runtime might be on a little-endian machine, and it might be on a
+// big-endian machine, most notably the IBM S390 series.
+
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+# define COBOL_BIG_ENDIAN 1
+# define COBOL_LITTLE_ENDIAN 0
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+# define COBOL_BIG_ENDIAN 0
+# define COBOL_LITTLE_ENDIAN 1
+
+#elif defined(__BIG_ENDIAN__) || defined(_BIG_ENDIAN)
+# define COBOL_BIG_ENDIAN 1
+# define COBOL_LITTLE_ENDIAN 0
+#elif defined(__LITTLE_ENDIAN__) || defined(_LITTLE_ENDIAN)
+# define COBOL_BIG_ENDIAN 0
+# define COBOL_LITTLE_ENDIAN 1
+
+//#else
+cppcheck-suppress preprocessorErrorDirective
+# error "Unknown byte order" 
+#endif
+
 extern void __gg__mabort();
 
-
-// The unnecessary abort() that follows is necessary to make cppcheck be 
+// The unnecessary abort() that follows is necessary to make cppcheck be
 // aware that massert() actually terminates processing after a failed
 // malloc().
 #define massert(p) if(!p){__gg__mabort();abort();}
-
-// This was part of an exercise to make cppcheck shut up about invalid
-// pointer type conversions.
-// It was also to avoid having reinterpret_cast<> all over the place.
-// So, instead of                 reinterpret_cast<char *>(VALUE)
-// I sometimes use                PTRCAST(char, VALUE)
-#define PTRCAST(TYPE, VALUE) static_cast<TYPE *>(static_cast<void *>(VALUE))
 
 extern "C" __int128 __gg__power_of_ten(int n);
 
 extern "C" __int128 __gg__dirty_to_binary_source( const char *dirty,
                                                   int length,
                                                   int *rdigits);
-extern "C" __int128 __gg__dirty_to_binary_internal( const char *dirty,
-                                                    int length,
-                                                    int *rdigits);
+extern "C" __int128 __gg__dirty_to_binary(const char *dirty,
+                                          cbl_encoding_t encoding,
+                                          int length,
+                                          int *rdigits);
 extern "C" __int128 __gg__binary_value_from_field(  int *rdigits,
                                                     cblc_field_t *var);
 
-extern "C" int __gg__compare_2( cblc_field_t *left_side,
-                                unsigned char   *left_location,
-                                size_t  left_length,
-                                int     left_attr,
-                                int     left_flags,
-                                cblc_field_t *right_side,
-                                unsigned char   *right_location,
-                                size_t  right_length,
-                                int     right_attr,
-                                int     right_flags,
-                                int     second_time_through);
+extern "C" int __gg__compare_2( cblc_field_t  *left_side,
+                                unsigned char *left_location,
+                                size_t         left_length,
+                                uint64_t       left_attr,
+                                int            left_flags,
+                                cblc_field_t  *right_side,
+                                unsigned char *right_location,
+                                size_t         right_length,
+                                uint64_t       right_attr,
+                                int            right_flags,
+                                int            second_time_through);
 extern "C" void __gg__int128_to_field(cblc_field_t   *tgt,
                                       __int128        value,
                                       int             source_rdigits,
@@ -102,7 +117,7 @@ extern "C" void __gg__double_to_target( cblc_field_t *tgt,
                                         cbl_round_t rounded);
 extern "C" char __gg__get_decimal_separator();
 extern "C" char __gg__get_decimal_point();
-extern "C" char * __gg__get_default_currency_string();
+extern "C" const char * __gg__get_default_currency_string();
 
 struct cbl_timespec
   {
@@ -123,7 +138,6 @@ extern "C" void __gg__realloc_if_necessary( char **dest,
                                             size_t *dest_size,
                                             size_t new_size);
 extern "C" void __gg__set_exception_file(const cblc_file_t *file);
-extern "C" void __gg__internal_to_console_in_place(char *loc, size_t length);
 extern "C" __int128 __gg__binary_value_from_qualified_field(int     *rdigits,
                                                             const cblc_field_t *var,
                                                             size_t     offset,
@@ -135,5 +149,22 @@ extern "C"  __int128 __gg__integer_from_qualified_field(cblc_field_t *var,
                                                         size_t var_offset,
                                                         size_t var_size);
 void __gg__abort(const char *msg);
+
+int __gg__fc_char(const cblc_field_t *field);
+
+const unsigned short *__gg__current_collation();
+
+// Warning:  field_from_string uses charmap_t, so you can't safely feed it
+// the results of __gg__iconverter without copying them.
+extern "C"
+void __gg__field_from_string( cblc_field_t *field,
+                              size_t field_o,
+                              size_t field_s,
+                        const char *string,
+                              size_t string_length);
+extern "C"
+void *__gg__memdup(const void *p, size_t size);
+
+enum {width_of_utf32 = 4};
 
 #endif

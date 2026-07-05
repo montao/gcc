@@ -1,5 +1,5 @@
 /* Helper code for graphviz output.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -250,6 +250,9 @@ enum class compass_pt
  /* "_" clashes with intl macro */
 };
 
+bool
+get_compass_pt_from_string (const char *str, enum compass_pt &out);
+
 /* port : ':' ID [ ':' compass_pt ]
         | ':' compass_pt
 */
@@ -309,6 +312,16 @@ struct node_id : public ast_node
   {
     if (other.m_port)
       m_port = std::make_unique<port> (*other.m_port);
+  }
+
+  node_id &operator= (const node_id &other)
+  {
+    m_id = other.m_id;
+    if (other.m_port)
+      m_port = std::make_unique<port> (*other.m_port);
+    else
+      m_port = nullptr;
+    return *this;
   }
 
   void print (writer &w) const final override;

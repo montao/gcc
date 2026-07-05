@@ -1,5 +1,5 @@
 # Makefile.rtl for GNU Ada Compiler (GNAT).
-#   Copyright (C) 2003-2025, Free Software Foundation, Inc.
+#   Copyright (C) 2003-2026, Free Software Foundation, Inc.
 
 #This file is part of GCC.
 
@@ -56,6 +56,8 @@ GNATRTL_TASKING_OBJS= \
   s-inmaop$(objext) \
   s-interr$(objext) \
   s-intman$(objext) \
+  s-intnam$(objext) \
+  s-inttyp$(objext) \
   s-mudido$(objext) \
   s-osinte$(objext) \
   s-proinf$(objext) \
@@ -110,6 +112,7 @@ GNATRTL_NONTASKING_OBJS= \
   a-cbdlli$(objext) \
   a-cbhama$(objext) \
   a-cbhase$(objext) \
+  a-cbinho$(objext) \
   a-cbmutr$(objext) \
   a-cborma$(objext) \
   a-cborse$(objext) \
@@ -415,6 +418,7 @@ GNATRTL_NONTASKING_OBJS= \
   g-busorg$(objext) \
   g-byorma$(objext) \
   g-bytswa$(objext) \
+  g-c_time$(objext) \
   g-calend$(objext) \
   g-casuti$(objext) \
   g-catiio$(objext) \
@@ -535,6 +539,7 @@ GNATRTL_NONTASKING_OBJS= \
   s-boarop$(objext) \
   s-boustr$(objext) \
   s-bytswa$(objext) \
+  s-c_time$(objext) \
   s-carsi8$(objext) \
   s-carun8$(objext) \
   s-casi16$(objext) \
@@ -544,6 +549,7 @@ GNATRTL_NONTASKING_OBJS= \
   s-caun16$(objext) \
   s-caun32$(objext) \
   s-caun64$(objext) \
+  s-cautns$(objext) \
   s-chepoo$(objext) \
   s-commun$(objext) \
   s-conca2$(objext) \
@@ -1417,7 +1423,6 @@ ifeq ($(strip $(filter-out arm% aarch64 linux-android%,$(target_cpu) $(target_os
   s-inmaop.adb<libgnarl/s-inmaop__posix.adb \
   s-intman.adb<libgnarl/s-intman__android.adb \
   s-osinte.ads<libgnarl/s-osinte__android.ads \
-  s-osinte.adb<libgnarl/s-osinte__android.adb \
   s-oslock.ads<libgnat/s-oslock__posix.ads \
   s-osprim.adb<libgnat/s-osprim__posix.adb \
   s-parame.adb<libgnat/s-parame__aarch64-linux.adb \
@@ -1530,7 +1535,7 @@ ifeq ($(strip $(filter-out sparc% sun solaris%,$(target_cpu) $(target_vendor) $(
   s-osinte.adb<libgnarl/s-osinte__solaris.adb \
   s-osinte.ads<libgnarl/s-osinte__solaris.ads \
   s-oslock.ads<libgnat/s-oslock__solaris.ads \
-  s-osprim.adb<libgnat/s-osprim__solaris.adb \
+  s-osprim.adb<libgnat/s-osprim__unix.adb \
   s-taprop.adb<libgnarl/s-taprop__solaris.adb \
   s-tasinf.adb<libgnarl/s-tasinf__solaris.adb \
   s-tasinf.ads<libgnarl/s-tasinf__solaris.ads \
@@ -1579,7 +1584,7 @@ ifeq ($(strip $(filter-out %86 %x86_64 solaris2%,$(target_cpu) $(target_os))),)
   s-osinte.adb<libgnarl/s-osinte__solaris.adb \
   s-osinte.ads<libgnarl/s-osinte__solaris.ads \
   s-oslock.ads<libgnat/s-oslock__solaris.ads \
-  s-osprim.adb<libgnat/s-osprim__solaris.adb \
+  s-osprim.adb<libgnat/s-osprim__unix.adb \
   s-taprop.adb<libgnarl/s-taprop__solaris.adb \
   s-tasinf.adb<libgnarl/s-tasinf__solaris.adb \
   s-tasinf.ads<libgnarl/s-tasinf__solaris.ads \
@@ -1853,6 +1858,7 @@ ifeq ($(strip $(filter-out %aarch64 freebsd%,$(target_cpu) $(target_os))),)
     LIBGNAT_TARGET_PAIRS += \
     s-intman.adb<libgnarl/s-intman__cheribsd.adb \
     s-osinte.ads<libgnarl/s-osinte__cheribsd.ads \
+    s-tsgsba.adb<libgnarl/s-tsgsba__cheri.adb \
     s-secsta.adb<libgnat/s-secsta__cheri.adb
 
     EXTRA_GNATRTL_NONTASKING_OBJS += i-cheri.o i-cheri-exceptions.o
@@ -2032,6 +2038,7 @@ ifeq ($(strip $(filter-out s390% linux%,$(target_cpu) $(target_os))),)
   EXTRA_GNATRTL_TASKING_OBJS=s-linux.o
   EH_MECHANISM=-gcc
   THREADSLIB = -lpthread
+  MISCLIB = -ldl
   GNATLIB_SHARED = gnatlib-shared-dual
   LIBRARY_VERSION := $(LIB_VERSION)
 endif
@@ -2144,7 +2151,6 @@ ifeq ($(strip $(filter-out lynxos178%,$(target_os))),)
 
   ifeq ($(strip $(filter-out lynxos178e,$(target_os))),)
     LIBGNAT_TARGET_PAIRS += \
-    s-parame.ads<libgnat/s-parame__posix2008.ads \
     s-osinte.ads<libgnarl/s-osinte__lynxos178e.ads \
     s-osprim.adb<libgnat/s-osprim__posix2008.adb \
     s-tracon.adb<hie/s-tracon__ppc-eabi.adb
@@ -2171,7 +2177,6 @@ ifeq ($(strip $(filter-out rtems%,$(target_os))),)
   s-oslock.ads<libgnat/s-oslock__posix.ads \
   s-osprim.adb<libgnat/s-osprim__rtems.adb \
   s-parame.adb<libgnat/s-parame__rtems.adb \
-  s-parame.ads<libgnat/s-parame__posix2008.ads \
   s-taprop.adb<libgnarl/s-taprop__rtems.adb \
   s-taspri.ads<libgnarl/s-taspri__posix.ads \
   s-tpopsp.adb<libgnarl/s-tpopsp__tls.adb \
@@ -2259,6 +2264,7 @@ ifeq ($(strip $(filter-out cygwin% mingw32% pe,$(target_os))),)
   endif
   LIBGNAT_TARGET_PAIRS += \
   a-dirval.adb<libgnat/a-dirval__mingw.adb \
+  s-crtl.adb<libgnat/s-crtl__mingw.adb \
   s-gloloc.adb<libgnat/s-gloloc__mingw.adb \
   s-inmaop.adb<libgnarl/s-inmaop__dummy.adb \
   s-taspri.ads<libgnarl/s-taspri__mingw.ads \
@@ -2526,6 +2532,7 @@ ifeq ($(strip $(filter-out arm% linux-gnueabi%,$(target_cpu) $(target_os))),)
   EXTRA_GNATRTL_TASKING_OBJS=s-linux.o
   EH_MECHANISM=-arm
   THREADSLIB = -lpthread
+  MISCLIB = -ldl
   GNATLIB_SHARED = gnatlib-shared-dual
   GMEM_LIB = gmemlib
   LIBRARY_VERSION := $(LIB_VERSION)
@@ -2939,13 +2946,11 @@ ifeq ($(strip $(filter-out %x32 linux%,$(target_cpu) $(target_os))),)
   a-synbar.ads<libgnarl/a-synbar__posix.ads \
   s-inmaop.adb<libgnarl/s-inmaop__posix.adb \
   s-intman.adb<libgnarl/s-intman__posix.adb \
-  s-linux.ads<libgnarl/s-linux__x32.ads \
   s-mudido.adb<libgnarl/s-mudido__affinity.adb \
   s-osinte.ads<libgnarl/s-osinte__linux.ads \
-  s-osinte.adb<libgnarl/s-osinte__x32.adb \
+  s-osinte.adb<libgnarl/s-osinte__posix.adb \
   s-oslock.ads<libgnat/s-oslock__posix.ads \
-  s-osprim.adb<libgnat/s-osprim__x32.adb \
-  s-parame.ads<libgnat/s-parame__posix2008.ads \
+  s-osprim.adb<libgnat/s-osprim__posix.adb \
   s-taprop.adb<libgnarl/s-taprop__linux.adb \
   s-tasinf.ads<libgnarl/s-tasinf__linux.ads \
   s-tasinf.adb<libgnarl/s-tasinf__linux.adb \
@@ -2967,6 +2972,7 @@ ifeq ($(strip $(filter-out %x32 linux%,$(target_cpu) $(target_os))),)
   EXTRA_GNATRTL_TASKING_OBJS=s-linux.o a-exetim.o
   EH_MECHANISM=-gcc
   THREADSLIB=-lpthread -lrt
+  MISCLIB = -ldl
   GNATLIB_SHARED=gnatlib-shared-dual
   GMEM_LIB = gmemlib
   LIBRARY_VERSION := $(LIB_VERSION)
@@ -3036,7 +3042,7 @@ ifeq ($(strip $(filter-out darwin%,$(target_os))),)
     s-inmaop.adb<libgnarl/s-inmaop__posix.adb \
     s-osinte.adb<libgnarl/s-osinte__darwin.adb \
     s-osinte.ads<libgnarl/s-osinte__darwin.ads \
-    s-oslock.ads<libgnat/s-oslock__posix.ads \
+    s-oslock.ads<libgnat/s-oslock__darwin.ads \
     s-taprop.adb<libgnarl/s-taprop__posix.adb \
     s-taspri.ads<libgnarl/s-taspri__posix.ads \
     g-sercom.adb<libgnat/g-sercom__linux.adb \
@@ -3192,7 +3198,7 @@ LIBGNAT_TARGET_PAIRS += \
 # library.  LIBGNAT_OBJS is the list of object files for libgnat.
 # thread.c is special as put into GNATRTL_TASKING_OBJS
 LIBGNAT_OBJS = adadecode.o adaint.o argv.o aux-io.o 			\
-  cal.o cio.o cstreams.o ctrl_c.o					\
+  cio.o cstreams.o ctrl_c.o						\
   env.o errno.o exit.o expect.o final.o rtfinal.o rtinit.o		\
   init.o initialize.o locales.o mkdir.o					\
   raise.o seh_init.o socket.o sysdep.o					\
@@ -3365,6 +3371,8 @@ setup-rts: rts-err force
 	  if [ -f $(RTSDIR)/$$f ]; then echo $$f >> $(RTSDIR)/libgnarl.lst; fi \
 	done
 	@echo thread.c >> $(RTSDIR)/libgnarl.lst
+# s-intnam.ads is generated later, so hardcode it here
+	@echo s-intnam.ads >> $(RTSDIR)/libgnarl.lst
 	@for f in \
 	  $(foreach F,$(GNATRTL_NONTASKING_OBJS),$(subst $(objext),.ads,$(F))) \
 	  $(foreach F,$(GNATRTL_NONTASKING_OBJS),$(subst $(objext),.adb,$(F))); \
@@ -3397,11 +3405,16 @@ system.o: system.ads
 	  $(ADA_TARGET_PROPERTIES) \
 	  $(OUTPUT_OPTION)
 
-# Force no sibling call optimization on s-traceb.o so the number of stack
-# frames to be skipped when computing a call chain is not modified by
-# optimization. We don't want inlining, either.
+# Force no sibling call optimization on s-traceb.o and g-traceb.o so the
+# number of stack frames to be skipped when computing a call chain is not
+# modified by optimization. We don't want inlining, either.
 
 s-traceb.o: s-traceb.adb s-traceb.ads
+	$(ADAC) -c $(ALL_ADAFLAGS) $(FORCE_DEBUG_ADAFLAGS) \
+	  $(NO_INLINE_ADAFLAGS) $(NO_SIBLING_ADAFLAGS) $(ADA_INCLUDES) $< \
+	  $(OUTPUT_OPTION)
+
+g-traceb.o: g-traceb.adb g-traceb.ads
 	$(ADAC) -c $(ALL_ADAFLAGS) $(FORCE_DEBUG_ADAFLAGS) \
 	  $(NO_INLINE_ADAFLAGS) $(NO_SIBLING_ADAFLAGS) $(ADA_INCLUDES) $< \
 	  $(OUTPUT_OPTION)

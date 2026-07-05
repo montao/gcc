@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -38,7 +38,7 @@ test01()
 
   auto pred = std::greater{};
   auto proj = [] (int a) { return -a; };
-  for (int i = 0; i < 50; i++)
+  for (std::ptrdiff_t i = 0; i < 50; i++)
     {
       test_range<int, random_access_iterator_wrapper> rx(x);
       std::ranlux48_base g(i);

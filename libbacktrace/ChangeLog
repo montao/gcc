@@ -1,3 +1,60 @@
+2026-06-29  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	PR bootstrap/103459
+	* configure: Regenerate.
+	* configure.ac: Remove redundant AM_PROG_LIBTOOL.
+
+2026-06-27  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_unpack_seq_decode): Set table field for RLE
+	sequence.
+	* zstdtest.c (tests): Add rle-sequence-tables test.
+
+2026-06-27  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): Support a compressed block
+	that does not set the single segment flag.
+	* zstdtest.c (tests): Add tests without single segment.
+
+2026-06-02  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): Support a compressed block
+	with no sequences, only literals.
+
+2026-05-30  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* allocfail.sh: Fix typos.
+	* elf.c (elf_fetch_bits): Likewise.
+
+2026-05-04  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (elf_zstd_decompress_frame): New static function,
+	broken out of elf_zstd_decompress.
+	(elf_zstd_decompress): Call elf_zstd_decompress_frame in a loop.
+	* zstdtest.c (test_large): Compress the file in chunks.
+
+2025-12-29  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* configure: Regenerate.
+
+2025-11-06  Ian Lance Taylor  <iant@golang.org>
+
+	* elf.c (ELFMAGn): In #undef rename from ELF_MAGn.
+
+2025-11-03  Sam James  <sam@gentoo.org>
+
+	* configure: Regenerate.
+
+2025-10-02  H.J. Lu  <hjl.tools@gmail.com>
+
+	* Makefile.in: Regenerated.
+	* aclocal.m4: Likewise.
+	* configure: Likewise.
+
+2025-09-28  Ian Lance Taylor  <iant@golang.org>
+
+	* filetype.awk: Recognize PE bigobj objects at configure time.
+
 2025-04-10  John David Anglin  <danglin@gcc.gnu.org>
 
 	* fileline.c (hpux_get_executable_path): New.
@@ -2278,7 +2335,7 @@
 
 	* Initial implementation.
 
-Copyright (C) 2012-2025 Free Software Foundation, Inc.
+Copyright (C) 2012-2026 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

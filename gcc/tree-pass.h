@@ -1,5 +1,5 @@
 /* Definitions for describing one tree-ssa optimization pass.
-   Copyright (C) 2004-2025 Free Software Foundation, Inc.
+   Copyright (C) 2004-2026 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>
 
 This file is part of GCC.
@@ -447,7 +447,6 @@ extern gimple_opt_pass *make_pass_warn_access (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_warn_printf (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_warn_recursion (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_strlen (gcc::context *ctxt);
-extern gimple_opt_pass *make_pass_fold_builtins (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_post_ipa_warn (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_stdarg (gcc::context *ctxt);
 extern gimple_opt_pass *make_pass_early_warn_uninitialized (gcc::context *ctxt);
@@ -528,6 +527,8 @@ extern simple_ipa_opt_pass *make_pass_local_optimization_passes (gcc::context *c
 extern simple_ipa_opt_pass *make_pass_ipa_remove_symbols (gcc::context *ctxt);
 
 extern ipa_opt_pass_d *make_pass_analyzer (gcc::context *ctxt);
+extern ipa_opt_pass_d *make_pass_ipa_asm_lgen (gcc::context *ctxt);
+extern ipa_opt_pass_d *make_pass_ipa_asm_wpa (gcc::context *ctxt);
 extern ipa_opt_pass_d *make_pass_ipa_whole_program_visibility (gcc::context
 							       *ctxt);
 extern simple_ipa_opt_pass *make_pass_ipa_increase_alignment (gcc::context
@@ -625,6 +626,7 @@ extern rtl_opt_pass *make_pass_value_profile_transformations (gcc::context
 							      *ctxt);
 extern rtl_opt_pass *make_pass_postreload_cse (gcc::context *ctxt);
 extern rtl_opt_pass *make_pass_late_combine (gcc::context *ctxt);
+extern rtl_opt_pass *make_pass_dep_fusion (gcc::context *ctxt);
 extern rtl_opt_pass *make_pass_gcse2 (gcc::context *ctxt);
 extern rtl_opt_pass *make_pass_split_after_reload (gcc::context *ctxt);
 extern rtl_opt_pass *make_pass_thread_prologue_and_epilogue (gcc::context

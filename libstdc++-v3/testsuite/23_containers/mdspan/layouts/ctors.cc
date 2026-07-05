@@ -1,6 +1,7 @@
 // { dg-do run { target c++23 } }
 #include <mdspan>
 
+#include "../layout_traits.h"
 #include <cstdint>
 #include <testsuite_hooks.h>
 
@@ -27,7 +28,6 @@ template<typename Mapping, typename OMapping>
 	VERIFY(std::cmp_equal(m.stride(i), other.stride(i)));
   }
 
-
 template<typename To, typename From>
   constexpr void
   verify_convertible(From from)
@@ -40,7 +40,10 @@ template<typename To, typename From>
   constexpr void
   verify_nothrow_convertible(From from)
   {
-    static_assert(std::is_nothrow_constructible_v<To, From>);
+    if constexpr (is_padded_layout<typename To::layout_type>)
+      static_assert(std::is_constructible_v<To, From>);
+    else
+      static_assert(std::is_nothrow_constructible_v<To, From>);
     verify_convertible<To>(from);
   }
 
@@ -57,7 +60,10 @@ template<typename To, typename From>
   constexpr void
   verify_nothrow_constructible(From from)
   {
-    static_assert(std::is_nothrow_constructible_v<To, From>);
+    if constexpr (is_padded_layout<typename To::layout_type>)
+      static_assert(std::is_constructible_v<To, From>);
+    else
+      static_assert(std::is_nothrow_constructible_v<To, From>);
     verify_constructible<To>(from);
   }
 
@@ -198,6 +204,16 @@ namespace from_same_layout
 {
   template<typename Layout, typename Extents, typename OExtents>
     constexpr void
+    verify_convertible(OExtents exts)
+    {
+      using Mapping = typename Layout::mapping<Extents>;
+      using OMapping = typename Layout::mapping<OExtents>;
+
+      ::verify_convertible<Mapping>(OMapping(exts));
+    }
+
+  template<typename Layout, typename Extents, typename OExtents>
+    constexpr void
     verify_nothrow_convertible(OExtents exts)
     {
       using Mapping = typename Layout::mapping<Extents>;
@@ -247,8 +263,12 @@ namespace from_same_layout
       verify_nothrow_constructible<Layout, std::extents<int, 1, 2>>(
 	std::extents<int, dyn, 2>{1});
 
-      verify_nothrow_convertible<Layout, std::extents<int, dyn, 2>>(
-	std::extents<int, 1, 2>{});
+      if constexpr (!is_padded_layout<Layout>)
+	verify_nothrow_convertible<Layout, std::extents<int, dyn, 2>>(
+	  std::extents<int, 1, 2>{});
+      else
+	verify_nothrow_constructible<Layout, std::extents<int, dyn, 2>>(
+	  std::extents<int, 1, 2>{});
       return true;
     }
 
@@ -321,6 +341,67 @@ namespace from_left_or_right
     }
 }
 
+// checks: convertibility of rank == 0 mappings.
+namespace from_rank0
+{
+  template<typename SLayout, typename OLayout, typename SExtents,
+	   typename OExtents>
+    constexpr void
+    verify_ctor()
+    {
+      using SMapping = typename SLayout::mapping<SExtents>;
+      using OMapping = typename OLayout::mapping<OExtents>;
+
+      constexpr bool expected = std::is_convertible_v<OExtents, SExtents>;
+      if constexpr (expected)
+	verify_nothrow_convertible<SMapping>(OMapping{});
+      else
+	verify_nothrow_constructible<SMapping>(OMapping{});
+    }
+
+  template<typename Layout, typename OLayout>
+    constexpr void
+    test_rank0_convertibility()
+    {
+      using E1 = std::extents<int>;
+      using E2 = std::extents<unsigned int>;
+
+      verify_ctor<Layout, OLayout, E1, E2>();
+      verify_ctor<Layout, OLayout, E2, E1>();
+
+      verify_ctor<Layout, OLayout, E2, E2>();
+      verify_ctor<Layout, OLayout, E1, E1>();
+    }
+
+  constexpr void
+  test_all()
+  {
+    auto run = []<typename Layout>(Layout)
+      {
+	test_rank0_convertibility<Layout, std::layout_left>();
+	test_rank0_convertibility<Layout, std::layout_right>();
+	test_rank0_convertibility<Layout, std::layout_stride>();
+      };
+
+    auto run_all = [run]()
+      {
+	run(std::layout_left{});
+	run(std::layout_right{});
+	run(std::layout_stride{});
+#if __cplusplus >  202302L
+	run(std::layout_left_padded<0>{});
+	run(std::layout_left_padded<1>{});
+	run(std::layout_left_padded<6>{});
+	run(std::layout_left_padded<dyn>{});
+#endif
+	return true;
+      };
+
+    run_all();
+    static_assert(run_all());
+  }
+}
+
 // ctor: mapping(layout_stride::mapping<OExtents>)
 namespace from_stride
 {
@@ -381,8 +462,7 @@ namespace from_stride
       verify_nothrow_convertible<Layout, std::extents<unsigned int>>(
 	std::extents<int>{});
 
-      // Rank ==  0 doesn't check IndexType for convertibility.
-      verify_nothrow_convertible<Layout, std::extents<int>>(
+      verify_nothrow_constructible<Layout, std::extents<int>>(
 	std::extents<unsigned int>{});
 
       verify_nothrow_constructible<Layout, std::extents<int, 3>>(
@@ -424,13 +504,29 @@ template<typename Layout>
     from_stride::test_all<Layout>();
   }
 
+template<template<size_t> typename Layout>
+  constexpr void
+  test_padded_all()
+  {
+    test_all<Layout<0>>();
+    test_all<Layout<1>>();
+    test_all<Layout<2>>();
+    test_all<Layout<dyn>>();
+  }
+
 int
 main()
 {
   test_all<std::layout_left>();
   test_all<std::layout_right>();
+#if __cplusplus > 202302L
+  test_padded_all<std::layout_left_padded>();
+  test_padded_all<std::layout_right_padded>();
+#endif
 
   from_left_or_right::test_all<std::layout_left, std::layout_right>();
   from_left_or_right::test_all<std::layout_right, std::layout_left>();
+
+  from_rank0::test_all();
   return 0;
 }

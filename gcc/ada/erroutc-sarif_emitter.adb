@@ -2,11 +2,11 @@
 --                                                                          --
 --                         GNAT COMPILER COMPONENTS                         --
 --                                                                          --
---              D I A G N O S T I C S . S A R I F _ E M I T T E R           --
+--                 E R R O U T C . S A R I F _ E M I T T E R                --
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,14 +23,15 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with JSON_Utils; use JSON_Utils;
-with GNAT.Lists; use GNAT.Lists;
-with Gnatvsn;    use Gnatvsn;
-with Lib;        use Lib;
-with Namet;      use Namet;
-with Osint;      use Osint;
-with Output;     use Output;
-with Sinput;     use Sinput;
+with Errid.Diagnostic_Repository; use Errid.Diagnostic_Repository;
+with Errid.Restriction_Repository; use Errid.Restriction_Repository;
+with Errid.Switch_Repository;     use Errid.Switch_Repository;
+with JSON_Utils;                  use JSON_Utils;
+with Gnatvsn;                     use Gnatvsn;
+with Lib;                         use Lib;
+with Namet;                       use Namet;
+with Output;                      use Output;
+with Sinput;                      use Sinput;
 with System.OS_Lib;
 
 package body Erroutc.SARIF_Emitter is
@@ -50,6 +51,7 @@ package body Erroutc.SARIF_Emitter is
    N_ID                    : constant String := "id";
    N_INSERTED_CONTENT      : constant String := "insertedContent";
    N_INVOCATIONS           : constant String := "invocations";
+   N_KINDS                 : constant String := "kinds";
    N_LOCATIONS             : constant String := "locations";
    N_LEVEL                 : constant String := "level";
    N_MESSAGE               : constant String := "message";
@@ -58,6 +60,7 @@ package body Erroutc.SARIF_Emitter is
    N_PHYSICAL_LOCATION     : constant String := "physicalLocation";
    N_REGION                : constant String := "region";
    N_RELATED_LOCATIONS     : constant String := "relatedLocations";
+   N_RELATIONSHIPS         : constant String := "relationships";
    N_REPLACEMENTS          : constant String := "replacements";
    N_RESULTS               : constant String := "results";
    N_RULES                 : constant String := "rules";
@@ -66,6 +69,7 @@ package body Erroutc.SARIF_Emitter is
    N_SCHEMA                : constant String := "$schema";
    N_START_COLUMN          : constant String := "startColumn";
    N_START_LINE            : constant String := "startLine";
+   N_TARGET                : constant String := "target";
    N_TEXT                  : constant String := "text";
    N_TOOL                  : constant String := "tool";
    N_URI                   : constant String := "uri";
@@ -76,7 +80,7 @@ package body Erroutc.SARIF_Emitter is
 
    SARIF_Version : constant String := "2.1.0";
    pragma Style_Checks ("M100");
-   SARIF_Schema : constant String :=
+   SARIF_Schema  : constant String :=
      "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json";
    pragma Style_Checks ("M79");
 
@@ -88,16 +92,6 @@ package body Erroutc.SARIF_Emitter is
    --  Cached value of the current directory that is used in the URI_Base_Id
    --  and it is also the path that all other Uri attributes will be created
    --  relative to.
-
-   procedure Destroy (Elem : in out Error_Msg_Object) is null;
-   pragma Inline (Destroy);
-   package Error_Msg_Lists is new Doubly_Linked_Lists
-     (Element_Type    => Error_Msg_Object,
-      "="             => "=",
-      Destroy_Element => Destroy,
-      Check_Tampering => False);
-
-   subtype Error_Msg_List is Error_Msg_Lists.Doubly_Linked_List;
 
    procedure Destroy (Elem : in out Edit_Type);
 
@@ -143,9 +137,6 @@ package body Erroutc.SARIF_Emitter is
    function Get_Artifact_Changes (Fix : Fix_Type) return Artifact_Change_List;
    --  Group edits of a Fix into Artifact_Changes that organize the edits by
    --  file name.
-
-   function Get_Unique_Rules return Error_Msg_List;
-   --  Get a list of diagnostics that have unique Diagnostic Id-s.
 
    procedure Print_Replacement (Replacement : Edit_Type);
    --  Print a replacement node
@@ -293,6 +284,16 @@ package body Erroutc.SARIF_Emitter is
    --  the GNAT span definition and we amend the endColumn value so that it
    --  matches the SARIF definition.
 
+   procedure Print_Relationship (Target : String; Kind : String);
+   --  {
+   --     "target": {
+   --        "id": <Target>
+   --     },
+   --     "kinds": [
+   --        <kind>
+   --     ]
+   --  }
+
    procedure Print_Result (E_Msg : Error_Msg_Object);
    --   {
    --     "ruleId": <Diag.Id>,
@@ -312,7 +313,7 @@ package body Erroutc.SARIF_Emitter is
    --     <Result (Diag)>
    --   ]
 
-   procedure Print_Rule (E : Error_Msg_Object);
+   procedure Print_Rule (E : Diagnostic_Id);
    --  Print a rule node that consists of the following attributes:
    --  * ruleId
    --  * name
@@ -322,7 +323,27 @@ package body Erroutc.SARIF_Emitter is
    --    "name": <Human_Id(Diag)>
    --  },
 
-   procedure Print_Rules;
+   procedure Print_Rule (S : Switch_Id);
+   --  Print a rule node that consists of the following attributes:
+   --  * ruleId
+   --  * name
+   --
+   --  {
+   --    "id": <Switch.Id>,
+   --    "name": <Human_Id(S)>
+   --  },
+
+   procedure Print_Rule (R : Restriction_Id);
+   --  Print a rule node that consists of the following attributes:
+   --  * ruleId
+   --  * name
+   --
+   --  {
+   --    "id": <Restroction_Id>,
+   --    "name": <Restroction_Id>_Restriction
+   --  },
+
+   procedure Print_Rules (Self : SARIF_Printer);
    --  Print a rules node that consists of multiple rule nodes.
    --  Rules are considered to be a set of unique diagnostics with the unique
    --  id-s.
@@ -331,7 +352,7 @@ package body Erroutc.SARIF_Emitter is
    --     <Rule (Diag)>
    --   ]
 
-   procedure Print_Runs;
+   procedure Print_Runs (Self : SARIF_Printer);
    --  Print a runs node that can consist of multiple run nodes.
    --  However for our report it consists of a single run that consists of
    --  * a tool node
@@ -342,7 +363,7 @@ package body Erroutc.SARIF_Emitter is
    --     "results": [<Results (Diags)>]
    --   }
 
-   procedure Print_Tool;
+   procedure Print_Tool (Self : SARIF_Printer);
    --  Print a tool node that consists of
    --  * a driver node that consists of:
    --    * name
@@ -365,6 +386,25 @@ package body Erroutc.SARIF_Emitter is
    begin
       Edit_Lists.Destroy (Elem.Replacements);
    end Destroy;
+
+   ----------
+   -- Free --
+   ----------
+
+   procedure Free (Self : in out SARIF_Printer) is
+   begin
+      if Diagnostic_Id_Lists.Present (Self.Diagnostics) then
+         Diagnostic_Id_Lists.Destroy (Self.Diagnostics);
+      end if;
+
+      if Restriction_Id_Lists.Present (Self.Restrictions) then
+         Restriction_Id_Lists.Destroy (Self.Restrictions);
+      end if;
+
+      if Switch_Id_Lists.Present (Self.Switches) then
+         Switch_Id_Lists.Destroy (Self.Switches);
+      end if;
+   end Free;
 
    --------------------------
    -- Get_Artifact_Changes --
@@ -425,54 +465,6 @@ package body Erroutc.SARIF_Emitter is
 
       return Changes;
    end Get_Artifact_Changes;
-
-   ----------------------
-   -- Get_Unique_Rules --
-   ----------------------
-
-   function Get_Unique_Rules return Error_Msg_List is
-      use Error_Msg_Lists;
-
-      procedure Insert (Rules : Error_Msg_List; E : Error_Msg_Object);
-
-      ------------
-      -- Insert --
-      ------------
-
-      procedure Insert (Rules : Error_Msg_List; E : Error_Msg_Object) is
-         It : Iterator := Iterate (Rules);
-         R  : Error_Msg_Object;
-      begin
-         while Has_Next (It) loop
-            Next (It, R);
-
-            if R.Id = E.Id then
-               return;
-            elsif R.Id > E.Id then
-               Insert_Before (Rules, R, E);
-               return;
-            end if;
-         end loop;
-
-         Append (Rules, E);
-      end Insert;
-
-      Unique_Rules : constant Error_Msg_List := Create;
-
-      E : Error_Msg_Id;
-
-      --  Start of processing for Get_Unique_Rules
-
-   begin
-      E := First_Error_Msg;
-      while E /= No_Error_Msg loop
-         Insert (Unique_Rules, Errors.Table (E));
-
-         Next_Error_Msg (E);
-      end loop;
-
-      return Unique_Rules;
-   end Get_Unique_Rules;
 
    ---------------------------
    -- Print_Artifact_Change --
@@ -759,7 +751,7 @@ package body Erroutc.SARIF_Emitter is
 
       --  Print executionSuccessful
 
-      Write_Boolean_Attribute (N_EXECUTION_SUCCESSFUL, not Compilation_Errors);
+      Write_Boolean_Attribute (N_EXECUTION_SUCCESSFUL, Exit_Code = E_Success);
 
       End_Block;
       NL_And_Indent;
@@ -778,9 +770,8 @@ package body Erroutc.SARIF_Emitter is
      (Start_Line : Int;
       Start_Col  : Int;
       End_Line   : Int;
-       End_Col   : Int;
-      Name       : String := N_REGION)
-   is
+      End_Col    : Int;
+      Name       : String := N_REGION) is
 
    begin
       Write_Str ("""" & Name & """" & ": " & "{");
@@ -1034,6 +1025,47 @@ package body Erroutc.SARIF_Emitter is
       Write_Char (']');
    end Print_Related_Locations;
 
+   ------------------------
+   -- Print_Relationship --
+   ------------------------
+
+   procedure Print_Relationship (Target : String; Kind : String) is
+   begin
+      Write_Char ('{');
+      Begin_Block;
+      NL_And_Indent;
+
+      Write_Str ("""" & N_TARGET & """" & ": " & "{");
+      Begin_Block;
+
+      NL_And_Indent;
+      Write_String_Attribute (N_ID, Target);
+
+      End_Block;
+      NL_And_Indent;
+      Write_Char ('}');
+
+      Write_Char (',');
+      NL_And_Indent;
+
+      Write_Str ("""" & N_KINDS & """" & ": " & "[");
+      Begin_Block;
+
+      NL_And_Indent;
+      Write_Char ('"');
+      Write_JSON_Escaped_String (Kind);
+      Write_Char ('"');
+
+      End_Block;
+      NL_And_Indent;
+      Write_Char (']');
+
+      End_Block;
+      NL_And_Indent;
+
+      Write_Char ('}');
+   end Print_Relationship;
+
    ------------------
    -- Print_Result --
    ------------------
@@ -1047,7 +1079,7 @@ package body Erroutc.SARIF_Emitter is
 
       --  Print ruleId
 
-      Write_String_Attribute (N_RULE_ID, "[" & To_String (E_Msg.Id) & "]");
+      Write_String_Attribute (N_RULE_ID, To_String (E_Msg.Id));
 
       Write_Char (',');
       NL_And_Indent;
@@ -1126,14 +1158,16 @@ package body Erroutc.SARIF_Emitter is
    -- Print_Rule --
    ----------------
 
-   procedure Print_Rule (E : Error_Msg_Object) is
-      Human_Id : constant String_Ptr := Get_Human_Id (E);
+   procedure Print_Rule (E : Diagnostic_Id) is
+      Human_Id : constant String_Ptr := Diagnostic_Entries (E).Human_Id;
+      Switch   : constant Switch_Id := Diagnostic_Entries (E).Switch;
+      Restrict : constant Restriction_Id := Diagnostic_Entries (E).Restriction;
    begin
       Write_Char ('{');
       Begin_Block;
       NL_And_Indent;
 
-      Write_String_Attribute (N_ID, "[" & To_String (E.Id) & "]");
+      Write_String_Attribute (N_ID, To_String (E));
       Write_Char (',');
       NL_And_Indent;
 
@@ -1141,6 +1175,115 @@ package body Erroutc.SARIF_Emitter is
          Write_String_Attribute (N_NAME, "Uncategorized_Diagnostic");
       else
          Write_String_Attribute (N_NAME, Human_Id.all);
+      end if;
+
+      if Switch /= No_Switch_Id then
+         Write_Char (',');
+         NL_And_Indent;
+
+         Write_Str ("""" & N_RELATIONSHIPS & """" & ": " & "[");
+         Begin_Block;
+
+         NL_And_Indent;
+         Print_Relationship (Switches (Switch).Short_Name.all, "superset");
+
+         End_Block;
+         NL_And_Indent;
+         Write_Char (']');
+
+      elsif Restrict /= Not_A_Restriction_Id then
+         Write_Char (',');
+         NL_And_Indent;
+
+         Write_Str ("""" & N_RELATIONSHIPS & """" & ": " & "[");
+         Begin_Block;
+
+         NL_And_Indent;
+         Print_Relationship (Restriction_Id'Image (Restrict), "superset");
+
+         End_Block;
+         NL_And_Indent;
+         Write_Char (']');
+      end if;
+
+      End_Block;
+      NL_And_Indent;
+      Write_Char ('}');
+   end Print_Rule;
+
+   procedure Print_Rule (S : Switch_Id) is
+      First : Boolean := True;
+   begin
+      pragma Assert (S /= No_Switch_Id);
+
+      Write_Char ('{');
+      Begin_Block;
+      NL_And_Indent;
+
+      Write_String_Attribute (N_ID, Switches (S).Short_Name.all);
+      Write_Char (',');
+      NL_And_Indent;
+
+      Write_String_Attribute (N_NAME, Switches (S).Human_Id.all);
+
+      if Switches (S).Diagnostics /= null then
+         Write_Char (',');
+         NL_And_Indent;
+
+         Write_Str ("""" & N_RELATIONSHIPS & """" & ": " & "[");
+         Begin_Block;
+         NL_And_Indent;
+
+         for D of Switches (S).Diagnostics.all loop
+            if First then
+               First := False;
+            else
+               Write_Char (',');
+            end if;
+            Print_Relationship (To_String (D), "subset");
+         end loop;
+
+         End_Block;
+         NL_And_Indent;
+         Write_Char (']');
+      end if;
+
+      End_Block;
+      NL_And_Indent;
+      Write_Char ('}');
+   end Print_Rule;
+
+   procedure Print_Rule (R : Restriction_Id) is
+      function Restriction_Name (R : Restriction_Id) return String
+      is (Restriction_Id'Image (R) & "_Restriction");
+
+   begin
+      pragma Assert (R /= Not_A_Restriction_Id);
+
+      Write_Char ('{');
+      Begin_Block;
+      NL_And_Indent;
+
+      Write_String_Attribute (N_ID, Restriction_Id'Image (R));
+      Write_Char (',');
+      NL_And_Indent;
+
+      Write_String_Attribute (N_NAME, Restriction_Name (R));
+
+      if Rest_To_Diag_Mappping (R) /= No_Diagnostic_Id then
+         Write_Char (',');
+         NL_And_Indent;
+
+         Write_Str ("""" & N_RELATIONSHIPS & """" & ": " & "[");
+         Begin_Block;
+         NL_And_Indent;
+
+         Print_Relationship
+           (Diagnostic_Id'Image (Rest_To_Diag_Mappping (R)), "subset");
+
+         End_Block;
+         NL_And_Indent;
+         Write_Char (']');
       end if;
 
       End_Block;
@@ -1152,19 +1295,24 @@ package body Erroutc.SARIF_Emitter is
    -- Print_Rules --
    -----------------
 
-   procedure Print_Rules is
-      use Error_Msg_Lists;
-      R     : Error_Msg_Object;
-      Rules : Error_Msg_List := Get_Unique_Rules;
-      It    : Iterator       := Iterate (Rules);
+   procedure Print_Rules (Self : SARIF_Printer) is
+      D       : Diagnostic_Id;
+      S       : Switch_Id;
+      R       : Restriction_Id;
+      Diag_It : Diagnostic_Id_Lists.Iterator :=
+        Diagnostic_Id_Lists.Iterate (Self.Diagnostics);
+      Rest_It   : Restriction_Id_Lists.Iterator :=
+        Restriction_Id_Lists.Iterate (Self.Restrictions);
+      Sw_It   : Switch_Id_Lists.Iterator :=
+        Switch_Id_Lists.Iterate (Self.Switches);
 
       First : Boolean := True;
    begin
       Write_Str ("""" & N_RULES & """" & ": " & "[");
       Begin_Block;
 
-      while Has_Next (It) loop
-         Next (It, R);
+      while Diagnostic_Id_Lists.Has_Next (Diag_It) loop
+         Diagnostic_Id_Lists.Next (Diag_It, D);
 
          if First then
             First := False;
@@ -1173,21 +1321,37 @@ package body Erroutc.SARIF_Emitter is
          end if;
 
          NL_And_Indent;
+         Print_Rule (D);
+      end loop;
+
+      while Switch_Id_Lists.Has_Next (Sw_It) loop
+         Switch_Id_Lists.Next (Sw_It, S);
+
+         Write_Char (',');
+
+         NL_And_Indent;
+         Print_Rule (S);
+      end loop;
+
+      while Restriction_Id_Lists.Has_Next (Rest_It) loop
+         Restriction_Id_Lists.Next (Rest_It, R);
+
+         Write_Char (',');
+
+         NL_And_Indent;
          Print_Rule (R);
       end loop;
 
       End_Block;
       NL_And_Indent;
       Write_Char (']');
-
-      Error_Msg_Lists.Destroy (Rules);
    end Print_Rules;
 
    ----------------
    -- Print_Tool --
    ----------------
 
-   procedure Print_Tool is
+   procedure Print_Tool (Self : SARIF_Printer) is
 
    begin
       Write_Str ("""" & N_TOOL & """" & ": " & "{");
@@ -1210,7 +1374,7 @@ package body Erroutc.SARIF_Emitter is
       Write_Char (',');
       NL_And_Indent;
 
-      Print_Rules;
+      Print_Rules (Self);
 
       --  End of tool.driver
 
@@ -1231,7 +1395,7 @@ package body Erroutc.SARIF_Emitter is
    -- Print_Runs --
    ----------------
 
-   procedure Print_Runs is
+   procedure Print_Runs (Self : SARIF_Printer) is
 
    begin
       Write_Str ("""" & N_RUNS & """" & ": " & "[");
@@ -1247,24 +1411,30 @@ package body Erroutc.SARIF_Emitter is
 
       --  A run consists of a tool
 
-      Print_Tool;
+      Print_Tool (Self);
 
-      Write_Char (',');
-      NL_And_Indent;
+      --  Print the Invocation and Results only in the Diagnostic_Report but
+      --  not during the Repository_Report.
 
-      --  A run consists of an invocation
-      Print_Invocations;
+      if Self.Report_Type = Diagnostic_Report then
 
-      Write_Char (',');
-      NL_And_Indent;
+         Write_Char (',');
+         NL_And_Indent;
 
-      Print_Original_Uri_Base_Ids;
-      Write_Char (',');
-      NL_And_Indent;
+         --  A run consists of an invocation
+         Print_Invocations;
 
-      --  A run consists of results
+         Write_Char (',');
+         NL_And_Indent;
 
-      Print_Results;
+         Print_Original_Uri_Base_Ids;
+         Write_Char (',');
+         NL_And_Indent;
+
+         --  A run consists of results
+
+         Print_Results;
+      end if;
 
       --  End of run
 
@@ -1285,7 +1455,7 @@ package body Erroutc.SARIF_Emitter is
    -- Print_SARIF_Report --
    ------------------------
 
-   procedure Print_SARIF_Report is
+   procedure Print_SARIF_Report (Self : SARIF_Printer) is
    begin
       Write_Char ('{');
       Begin_Block;
@@ -1299,7 +1469,7 @@ package body Erroutc.SARIF_Emitter is
       Write_Char (',');
       NL_And_Indent;
 
-      Print_Runs;
+      Print_Runs (Self);
 
       End_Block;
       NL_And_Indent;

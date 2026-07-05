@@ -1,5 +1,5 @@
 /* Local Register Allocator (LRA) intercommunication header file.
-   Copyright (C) 2010-2025 Free Software Foundation, Inc.
+   Copyright (C) 2010-2026 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -29,6 +29,26 @@ along with GCC; see the file COPYING3.	If not see
 #define LRA_MAX_INSN_RELOADS (MAX_RECOG_OPERANDS * 3)
 
 typedef struct lra_live_range *lra_live_range_t;
+
+struct dependent_filter
+{
+  int id;
+  machine_mode mode;
+  unsigned int partner_regno;
+  machine_mode partner_mode;
+  bool is_ref;
+};
+
+/* Cache entry of a dependent filter.  The same fields as above, just with
+   a hard-reg set of allowed hardregs.  */
+
+struct dependent_filter_entry : dependent_filter
+{
+  HARD_REG_SET allowed;
+};
+
+extern void lra_init_dependent_filter_cache (void);
+extern void lra_finish_dependent_filter_cache (void);
 
 /* The structure describes program points where a given pseudo lives.
    The live ranges can be used to find conflicts with other pseudos.
@@ -113,6 +133,8 @@ public:
   /* This member is set up in lra-lives.cc for subsequent
      assignments.  */
   lra_copy_t copies;
+  /* Dependent filters for this reg.  */
+  vec<dependent_filter> dependent_filters;
 };
 
 /* References to the common info about each register.  */
@@ -328,8 +350,9 @@ extern void lra_asm_insn_error (rtx_insn *insn);
 extern void lra_dump_insns (FILE *f);
 extern void lra_dump_insns_if_possible (const char *title);
 
-extern void lra_process_new_insns (rtx_insn *, rtx_insn *, rtx_insn *,
-				   const char *);
+extern void lra_process_new_insns (rtx_insn *insn, rtx_insn *before,
+				   rtx_insn *after, const char *title,
+				   bool fixup_reg_args_size = false);
 
 extern bool lra_substitute_pseudo (rtx *, int, rtx, bool, bool);
 extern bool lra_substitute_pseudo_within_insn (rtx_insn *, int, rtx, bool);
@@ -355,10 +378,14 @@ extern bitmap_head lra_inheritance_pseudos;
 extern bitmap_head lra_split_regs;
 extern bitmap_head lra_subreg_reload_pseudos;
 extern bitmap_head lra_optional_reload_pseudos;
+extern bitmap_head lra_postponed_insns;
 
 /* lra-constraints.cc: */
 
 extern void lra_init_equiv (void);
+extern void lra_pointer_equiv_set_add (rtx);
+extern bool lra_pointer_equiv_set_in (rtx);
+extern void lra_finish_equiv (void);
 extern int lra_constraint_offset (int, machine_mode);
 
 extern int lra_constraint_iter;

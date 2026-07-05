@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the DEC Alpha.
-   Copyright (C) 1992-2025 Free Software Foundation, Inc.
+   Copyright (C) 1992-2026 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
 This file is part of GCC.
@@ -6415,7 +6415,7 @@ alpha_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 
      This introduces sort of ABI incompatibility, but until _Float32 was
      introduced, C-family languages promoted 32-bit float variable arg to
-     a 64-bit double, and it was not allowed to pass float as a varible
+     a 64-bit double, and it was not allowed to pass float as a variable
      argument.  Passing _Complex float as a variable argument never
      worked on alpha.  Thus, we have no backward compatibility issues
      to worry about, and passing unpromoted _Float32 and _Complex float
@@ -6564,6 +6564,7 @@ alpha_build_builtin_va_list (void)
   DECL_CHAIN (base) = ofs;
 
   TYPE_FIELDS (record) = base;
+  TREE_PUBLIC (type_decl) = 1;
   layout_type (record);
 
   va_list_gpr_counter_field = ofs;
@@ -10098,7 +10099,7 @@ static void
 alpha_reorg (void)
 {
   /* Workaround for a linker error that triggers when an exception
-     handler immediatelly follows a sibcall or a noreturn function.
+     handler immediately follows a sibcall or a noreturn function.
 
 In the sibcall case:
 

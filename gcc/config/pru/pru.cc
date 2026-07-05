@@ -1,5 +1,5 @@
 /* Target machine subroutines for TI PRU.
-   Copyright (C) 2014-2025 Free Software Foundation, Inc.
+   Copyright (C) 2014-2026 Free Software Foundation, Inc.
    Dimitar Dimitrov <dimitar@dinux.eu>
 
    This file is part of GCC.
@@ -941,9 +941,18 @@ pru_init_libfuncs (void)
 
   /* Long long.  */
   set_optab_libfunc (ashr_optab, DImode, "__pruabi_asrll");
-  set_optab_libfunc (smul_optab, DImode, "__pruabi_mpyll");
   set_optab_libfunc (ashl_optab, DImode, "__pruabi_lslll");
   set_optab_libfunc (lshr_optab, DImode, "__pruabi_lsrll");
+
+  if (TARGET_OPT_MUL)
+    {
+      set_optab_libfunc (smul_optab, DImode, "__pruabi_mpyll");
+    }
+  else
+    {
+      set_optab_libfunc (smul_optab, DImode, "__pruabi_softmpyll");
+      set_optab_libfunc (smul_optab, SImode, "__pruabi_softmpyi");
+    }
 
   set_optab_libfunc (sdiv_optab, SImode, "__pruabi_divi");
   set_optab_libfunc (udiv_optab, SImode, "__pruabi_divu");
@@ -1428,7 +1437,7 @@ pru_valid_const_ubyte_offset (machine_mode mode, HOST_WIDE_INT offset)
 /* Recognize a CTABLE base address.  Return CTABLE entry index, or -1 if
    base was not found in the pragma-filled pru_ctable.  */
 int
-pru_get_ctable_exact_base_index (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_exact_base_index (HOST_WIDE_INT caddr)
 {
   unsigned int i;
 
@@ -1444,7 +1453,7 @@ pru_get_ctable_exact_base_index (unsigned HOST_WIDE_INT caddr)
 /* Check if the given address can be addressed via CTABLE_BASE + UBYTE_OFFS,
    and return the base CTABLE index if possible.  */
 int
-pru_get_ctable_base_index (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_base_index (HOST_WIDE_INT caddr)
 {
   unsigned int i;
 
@@ -1461,7 +1470,7 @@ pru_get_ctable_base_index (unsigned HOST_WIDE_INT caddr)
 
 /* Return the offset from some CTABLE base for this address.  */
 int
-pru_get_ctable_base_offset (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_base_offset (HOST_WIDE_INT caddr)
 {
   int i;
 
@@ -1525,6 +1534,23 @@ int pru_symref2ioregno (rtx op)
     return -1;
 }
 
+/* TARGET_ADDR_SPACE_LEGITIMIZE_ADDRESS has no arguments to help discern
+   which insn is using the address.  But PRU load/store instructions support
+   offsets, while call instructions do not.
+   So call this when expanding call patterns to revert the effect of
+   TARGET_ADDR_SPACE_LEGITIMIZE_ADDRESS.  */
+rtx
+pru_fixup_jump_address_operand (rtx op)
+{
+  if (MEM_P (op)
+      && GET_CODE (XEXP (op, 0)) == PLUS)
+    {
+      rtx tmpval = force_reg (SImode, XEXP (op, 0));
+      op = gen_rtx_MEM (SImode, tmpval);
+    }
+  return op;
+}
+
 /* Implement TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P.  */
 static bool
 pru_addr_space_legitimate_address_p (machine_mode mode, rtx operand,
@@ -1572,6 +1598,29 @@ pru_addr_space_legitimate_address_p (machine_mode mode, rtx operand,
       break;
     }
   return false;
+}
+
+/* Implement TARGET_ADDR_SPACE_LEGITIMIZE_ADDRESS.  */
+rtx
+pru_addr_space_legitimize_address (rtx x, rtx, machine_mode, addr_space_t)
+{
+  if (CONST_INT_P (x) && optimize > 0)
+    {
+      HOST_WIDE_INT mask, base, index;
+      rtx base_reg;
+
+      /* Load/store with UBYTE offset is practically free for PRU.
+	 If there two or more operations with addresses in the same UBYTE
+	 address range, they all will share the base constant load operation.
+	 Clearing the lower 8 bits is a good heuristic to
+	 choose a common constant base address.  */
+      mask = 0xff;
+      base = INTVAL (x) & ~mask;
+      index = INTVAL (x) & mask;
+      base_reg = force_reg (SImode, GEN_INT (base));
+      x = plus_constant (Pmode, base_reg, index);
+    }
+  return x;
 }
 
 /* Output assembly language related definitions.  */
@@ -2004,7 +2053,7 @@ pru_print_operand_address (FILE *file, machine_mode mode, rtx op)
 
     case CONST_INT:
       {
-	unsigned HOST_WIDE_INT caddr = INTVAL (op);
+	HOST_WIDE_INT caddr = INTVAL (op);
 	int base = pru_get_ctable_base_index (caddr);
 	int offs = pru_get_ctable_base_offset (caddr);
 	if (base < 0)
@@ -3236,6 +3285,10 @@ pru_unwind_word_mode (void)
 #undef TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
 #define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P \
   pru_addr_space_legitimate_address_p
+
+#undef TARGET_ADDR_SPACE_LEGITIMIZE_ADDRESS
+#define TARGET_ADDR_SPACE_LEGITIMIZE_ADDRESS \
+  pru_addr_space_legitimize_address
 
 #undef TARGET_INIT_LIBFUNCS
 #define TARGET_INIT_LIBFUNCS pru_init_libfuncs

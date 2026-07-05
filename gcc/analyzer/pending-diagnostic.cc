@@ -1,5 +1,5 @@
 /* Classes for analyzer diagnostics.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -20,7 +20,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "analyzer/common.h"
 
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
+#include "diagnostics/logging.h"
 #include "cpplib.h"
 #include "digraph.h"
 #include "ordered-hash-map.h"
@@ -57,6 +58,15 @@ interesting_t::add_region_creation (const region *reg)
   m_region_creation.safe_push (reg);
 }
 
+/* Mark the value read from REG as being interesting.  */
+
+void
+interesting_t::add_read_region (const region *reg, std::string debug_desc)
+{
+  gcc_assert (reg);
+  m_read_regions.push_back (diagnostic_state (std::move (debug_desc), reg));
+}
+
 void
 interesting_t::dump_to_pp (pretty_printer *pp, bool simple) const
 {
@@ -68,6 +78,14 @@ interesting_t::dump_to_pp (pretty_printer *pp, bool simple) const
       if (i > 0)
 	pp_string (pp, ", ");
       reg->dump_to_pp (pp, simple);
+    }
+  pp_string (pp, "], read regions: [");
+  for (i = 0; i < m_read_regions.size (); ++i)
+    {
+      auto &ann = m_read_regions[i];
+      if (i > 0)
+	pp_string (pp, ", ");
+      ann.dump_to_pp (pp);
     }
   pp_string (pp, "]}");
 }
@@ -88,15 +106,26 @@ diagnostic_emission_context::get_pending_diagnostic () const
 bool
 diagnostic_emission_context::warn (const char *gmsgid, ...)
 {
+  auto dc_logger = global_dc->get_logger ();
+  diagnostics::logging::log_function_params
+    (dc_logger, "ana::diagnostic_emission_context::warn")
+    .log_param_string ("gmsgid", gmsgid);
+  diagnostics::logging::auto_inc_depth depth_sentinel (dc_logger);
+
   const pending_diagnostic &pd = get_pending_diagnostic ();
   auto_diagnostic_group d;
   va_list ap;
   va_start (ap, gmsgid);
-  const bool result = emit_diagnostic_valist_meta (DK_WARNING,
+  const bool result = emit_diagnostic_valist_meta (diagnostics::kind::warning,
 						   &m_rich_loc, &m_metadata,
 						   pd.get_controlling_option (),
 						   gmsgid, &ap);
   va_end (ap);
+
+  if (dc_logger)
+    dc_logger->log_bool_return ("ana::diagnostic_emission_context::warn",
+				result);
+
   return result;
 }
 
@@ -106,11 +135,17 @@ diagnostic_emission_context::warn (const char *gmsgid, ...)
 void
 diagnostic_emission_context::inform (const char *gmsgid, ...)
 {
+  auto dc_logger = global_dc->get_logger ();
+  diagnostics::logging::log_function_params
+    (dc_logger, "ana::diagnostic_emission_context::inform")
+    .log_param_string ("gmsgid", gmsgid);
+  diagnostics::logging::auto_inc_depth depth_sentinel (dc_logger);
+
   const pending_diagnostic &pd = get_pending_diagnostic ();
   auto_diagnostic_group d;
   va_list ap;
   va_start (ap, gmsgid);
-  emit_diagnostic_valist_meta (DK_NOTE,
+  emit_diagnostic_valist_meta (diagnostics::kind::note,
 			       &m_rich_loc, &m_metadata,
 			       pd.get_controlling_option (),
 			       gmsgid, &ap);
@@ -171,7 +206,7 @@ pending_diagnostic::fixup_location (location_t loc, bool) const
       const line_map_macro *macro_map = linemap_check_macro (map);
       if (fixup_location_in_macro_p (macro_map->macro))
 	loc = linemap_resolve_location (line_table, loc,
-					LRK_MACRO_EXPANSION_POINT, NULL);
+					LRK_MACRO_EXPANSION_POINT, nullptr);
     }
   return loc;
 }
@@ -181,14 +216,21 @@ pending_diagnostic::fixup_location (location_t loc, bool) const
 
 void
 pending_diagnostic::add_function_entry_event (const exploded_edge &eedge,
-					      checker_path *emission_path)
+					      checker_path *emission_path,
+					      const state_transition_at_call *state_trans)
 {
   const exploded_node *dst_node = eedge.m_dest;
   const program_point &dst_point = dst_node->get_point ();
   const program_state &dst_state = dst_node->get_state ();
+
+  /* If we have STATE_TRANS with a specific param, put the event on
+     that parameter, otherwise put in on the function name.  */
+  auto loc_info {event_loc_info_for_function_entry (dst_point, state_trans)};
+
   emission_path->add_event
-    (std::make_unique<function_entry_event> (dst_point,
-					     dst_state));
+    (std::make_unique<function_entry_event> (loc_info,
+					     dst_state,
+					     state_trans));
 }
 
 /* Base implementation of pending_diagnostic::add_call_event.
@@ -196,19 +238,14 @@ pending_diagnostic::add_function_entry_event (const exploded_edge &eedge,
 
 void
 pending_diagnostic::add_call_event (const exploded_edge &eedge,
-				    checker_path *emission_path)
+				    const gcall &,
+				    checker_path &emission_path,
+				    const state_transition_at_call *state_trans)
 {
-  const exploded_node *src_node = eedge.m_src;
-  const program_point &src_point = src_node->get_point ();
-  const int src_stack_depth = src_point.get_stack_depth ();
-  const gimple *last_stmt = src_point.get_supernode ()->get_last_stmt ();
-  emission_path->add_event
+  emission_path.add_event
     (std::make_unique<call_event> (eedge,
-				   event_loc_info (last_stmt
-						   ? last_stmt->location
-						   : UNKNOWN_LOCATION,
-						   src_point.get_fndecl (),
-						   src_stack_depth)));
+				   event_loc_info (eedge.m_src),
+				   state_trans));
 }
 
 /* Base implementation of pending_diagnostic::add_region_creation_events.

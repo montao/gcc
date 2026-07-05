@@ -1,5 +1,5 @@
 /* Induction variable optimizations.
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -132,6 +132,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-vectorizer.h"
 #include "dbgcnt.h"
 #include "cfganal.h"
+#include "gimple-fold.h"
 
 /* For lang_hooks.types.type_for_mode.  */
 #include "langhooks.h"
@@ -147,7 +148,7 @@ along with GCC; see the file COPYING3.  If not see
    The average trip count is computed from profile data if it
    exists. */
 
-static inline HOST_WIDE_INT
+static inline unsigned HOST_WIDE_INT
 avg_loop_niter (class loop *loop)
 {
   HOST_WIDE_INT niter = estimated_stmt_executions_int (loop);
@@ -523,7 +524,7 @@ struct iv_inv_expr_ent
 {
   /* Tree expression of the entry.  */
   tree expr;
-  /* Unique indentifier.  */
+  /* Unique identifier.  */
   int id;
   /* Hash value.  */
   hashval_t hash;
@@ -868,7 +869,7 @@ dump_cand (FILE *file, struct iv_cand *cand)
 
   if (cand->var_before)
     {
-      fprintf (file, "  Var befor: ");
+      fprintf (file, "  Var before: ");
       print_generic_expr (file, cand->var_before, TDF_SLIM);
       fprintf (file, "\n");
     }
@@ -2577,7 +2578,7 @@ group_compare_offset (const void *a, const void *b)
    contains more than two uses with distinct addr_offsets.  Return
    false otherwise.  We want to split such groups because:
 
-     1) Small groups don't have much benefit and may interfer with
+     1) Small groups don't have much benefit and may interfere with
 	general candidate selection.
      2) Size for problem with only small groups is usually small and
 	general algorithm can handle it well.
@@ -2657,7 +2658,7 @@ split_address_groups (struct ivopts_data *data)
 	  struct iv_use *next = group->vuses[j];
 	  poly_int64 offset = next->addr_offset - use->addr_offset;
 
-	  /* Split group if aksed to, or the offset against the first
+	  /* Split group if asked to, or the offset against the first
 	     use can't fit in offset part of addressing mode.  IV uses
 	     having the same offset are still kept in one group.  */
 	  if (maybe_ne (offset, 0)
@@ -3199,6 +3200,12 @@ add_candidate_1 (struct ivopts_data *data, tree base, tree step, bool important,
 static bool
 allow_ip_end_pos_p (class loop *loop)
 {
+  /* Do not allow IP_END when creating the IV would need to split the
+     latch edge as that makes all IP_NORMAL invalid.  */
+  auto pos = gsi_last_bb (ip_end_pos (loop));
+  if (!gsi_end_p (pos) && stmt_ends_bb_p (*pos))
+    return false;
+
   if (!ip_normal_pos (loop))
     return true;
 
@@ -3990,7 +3997,7 @@ get_computation_aff_1 (struct ivopts_data *data, gimple *at, struct iv_use *use,
 	  inner_type = TREE_TYPE (inner_base);
 	  /* If candidate is added from a biv whose type is smaller than
 	     ctype, we know both candidate and the biv won't overflow.
-	     In this case, it's safe to skip the convertion in candidate.
+	     In this case, it's safe to skip the conversion in candidate.
 	     As an example, (unsigned short)((unsigned long)A) equals to
 	     (unsigned short)A, if A has a type no larger than short.  */
 	  if (TYPE_PRECISION (inner_type) <= TYPE_PRECISION (uutype))
@@ -4213,7 +4220,9 @@ adjust_setup_cost (struct ivopts_data *data, int64_t cost,
     return cost;
   else if (optimize_loop_for_speed_p (data->current_loop))
     {
-      int64_t niters = (int64_t) avg_loop_niter (data->current_loop);
+      uint64_t niters = avg_loop_niter (data->current_loop);
+      if (niters > (uint64_t) cost)
+	return (round_up_p && cost != 0) ? 1 : 0;
       return (cost + (round_up_p ? niters - 1 : 0)) / niters;
     }
   else
@@ -5373,6 +5382,11 @@ may_eliminate_iv (struct ivopts_data *data,
   aff_tree bnd;
   class tree_niter_desc *desc = NULL;
 
+  /* If the IV candidate involves undefs do not attempt to use it to
+     express a condition.  */
+  if (cand->involves_undefs)
+    return false;
+
   if (TREE_CODE (cand->iv->step) != INTEGER_CST)
     return false;
 
@@ -5769,7 +5783,7 @@ add_iv_candidate_for_doloop (struct ivopts_data *data)
 
   tree niter = niter_desc->niter;
   tree ntype = TREE_TYPE (niter);
-  gcc_assert (TREE_CODE (ntype) == INTEGER_TYPE);
+  gcc_assert (INTEGRAL_NB_TYPE_P (ntype));
 
   tree may_be_zero = niter_desc->may_be_zero;
   if (may_be_zero && integer_zerop (may_be_zero))
@@ -5801,6 +5815,15 @@ add_iv_candidate_for_doloop (struct ivopts_data *data)
     base = fold_build2 (PLUS_EXPR, ntype, unshare_expr (niter),
 			build_int_cst (ntype, 1));
 
+  /* For non integer types or non-mode precision types,
+     convert directly to an integer type. */
+  if (TREE_CODE (ntype) != INTEGER_TYPE
+      || !type_has_mode_precision_p (ntype))
+    {
+      ntype = lang_hooks.types.type_for_mode (TYPE_MODE (ntype),
+					      TYPE_UNSIGNED (ntype));
+      base = fold_convert (ntype, base);
+    }
 
   add_candidate (data, base, build_int_cst (ntype, -1), true, NULL, NULL, true);
 }
@@ -6603,7 +6626,7 @@ iv_ca_dump (struct ivopts_data *data, FILE *file, class iv_ca *ivs)
 /* Try changing candidate in IVS to CAND for each use.  Return cost of the
    new set, and store differences in DELTA.  Number of induction variables
    in the new set is stored to N_IVS. MIN_NCAND is a flag. When it is true
-   the function will try to find a solution with mimimal iv candidates.  */
+   the function will try to find a solution with minimal iv candidates.  */
 
 static comp_cost
 iv_ca_extend (struct ivopts_data *data, class iv_ca *ivs,
@@ -7219,12 +7242,7 @@ create_new_iv (struct ivopts_data *data, struct iv_cand *cand)
     case IP_END:
       incr_pos = gsi_last_bb (ip_end_pos (data->current_loop));
       after = true;
-      if (!gsi_end_p (incr_pos) && stmt_ends_bb_p (gsi_stmt (incr_pos)))
-	{
-	  edge e = find_edge (gsi_bb (incr_pos), data->current_loop->header);
-	  incr_pos = gsi_after_labels (split_edge (e));
-	  after = false;
-	}
+      gcc_assert (gsi_end_p (incr_pos) || !stmt_ends_bb_p (*incr_pos));
       break;
 
     case IP_AFTER_USE:
@@ -7250,7 +7268,24 @@ create_new_iv (struct ivopts_data *data, struct iv_cand *cand)
 
   base = unshare_expr (cand->iv->base);
 
-  create_iv (base, PLUS_EXPR, unshare_expr (cand->iv->step),
+  /* The step computation could invoke UB when the loop does not iterate.
+     Avoid inserting it on the preheader in its native form but rewrite
+     it to a well-defined form.  This also helps masking SCEV issues
+     which freely re-associates the IV computations when building up
+     CHRECs without much regard for signed overflow invoking UB.  */
+  gimple_seq stmts = NULL;
+  tree step = force_gimple_operand (unshare_expr (cand->iv->step), &stmts,
+				    true, NULL_TREE);
+  if (stmts)
+    {
+      for (auto gsi = gsi_start (stmts); !gsi_end_p (gsi); gsi_next (&gsi))
+	if (gimple_needing_rewrite_undefined (gsi_stmt (gsi)))
+	  rewrite_to_defined_unconditional (&gsi);
+      gsi_insert_seq_on_edge_immediate
+	(loop_preheader_edge (data->current_loop), stmts);
+    }
+
+  create_iv (base, PLUS_EXPR, step,
 	     cand->var_before, data->current_loop,
 	     &incr_pos, after, &cand->var_before, &cand->var_after);
 }
@@ -7277,7 +7312,7 @@ create_new_ivs (struct ivopts_data *data, class iv_ca *set)
       if (data->loop_loc != UNKNOWN_LOCATION)
 	fprintf (dump_file, " at %s:%d", LOCATION_FILE (data->loop_loc),
 		 LOCATION_LINE (data->loop_loc));
-      fprintf (dump_file, ", " HOST_WIDE_INT_PRINT_DEC " avg niters",
+      fprintf (dump_file, ", " HOST_WIDE_INT_PRINT_UNSIGNED " avg niters",
 	       avg_loop_niter (data->current_loop));
       fprintf (dump_file, ", %lu IVs:\n", bitmap_count_bits (set->cands));
       EXECUTE_IF_SET_IN_BITMAP (set->cands, 0, i, bi)
@@ -7604,11 +7639,10 @@ rewrite_use_address (struct ivopts_data *data,
   else
     {
       /* When we end up confused enough and have no suitable base but
-	 stuffed everything to index2 use a LEA for the address and
+	 stuffed everything to indexes use a LEA for the address and
 	 create a plain MEM_REF to avoid basing a memory reference
 	 on address zero which create_mem_ref_raw does as fallback.  */
       if (TREE_CODE (ref) == TARGET_MEM_REF
-	  && TMR_INDEX2 (ref) != NULL_TREE
 	  && integer_zerop (TREE_OPERAND (ref, 0)))
 	{
 	  ref = fold_build1 (ADDR_EXPR, TREE_TYPE (TREE_OPERAND (ref, 0)), ref);

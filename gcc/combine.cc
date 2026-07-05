@@ -1,5 +1,5 @@
 /* Optimize by combining instructions for GNU compiler.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -195,7 +195,7 @@ struct reg_stat_type {
      sign bits copies it was known to have when it was last set.  */
 
   unsigned HOST_WIDE_INT	last_set_nonzero_bits;
-  char				last_set_sign_bit_copies;
+  unsigned short		last_set_sign_bit_copies;
   ENUM_BITFIELD(machine_mode)	last_set_mode : MACHINE_MODE_BITSIZE;
 
   /* Set to true if references to register n in expressions should not be
@@ -216,7 +216,7 @@ struct reg_stat_type {
 
      If an entry is zero, it means that we don't know anything special.  */
 
-  unsigned char			sign_bit_copies;
+  unsigned short		sign_bit_copies;
 
   unsigned HOST_WIDE_INT	nonzero_bits;
 
@@ -2615,6 +2615,8 @@ try_combine (rtx_insn *i3, rtx_insn *i2, rtx_insn *i1, rtx_insn *i0,
 	    }
 	  else if (BINARY_P (src) && CONSTANT_P (XEXP (src, 1)))
 	    ngood++;
+	  else if (GET_CODE (src) == IF_THEN_ELSE)
+	    ngood++;
 	  else if (GET_CODE (src) == ASHIFT || GET_CODE (src) == ASHIFTRT
 		   || GET_CODE (src) == LSHIFTRT)
 	    nshift++;
@@ -4028,7 +4030,7 @@ try_combine (rtx_insn *i3, rtx_insn *i2, rtx_insn *i1, rtx_insn *i0,
 	       && !(GET_CODE (SET_DEST (set1)) == SUBREG
 		    && find_reg_note (i2, REG_DEAD,
 				      SUBREG_REG (SET_DEST (set1))))
-	       && SET_DEST (set1) != pc_rtx
+	       && !modified_between_p (SET_DEST (set1), i2, i3)
 	       && !reg_used_between_p (SET_DEST (set1), i2, i3)))
 	  /* If I3 is a jump, ensure that set0 is a jump so that
 	     we do not create invalid RTL.  */
@@ -4044,7 +4046,7 @@ try_combine (rtx_insn *i3, rtx_insn *i2, rtx_insn *i1, rtx_insn *i0,
 		    && !(GET_CODE (SET_DEST (set0)) == SUBREG
 			 && find_reg_note (i2, REG_DEAD,
 					   SUBREG_REG (SET_DEST (set0))))
-		    && SET_DEST (set0) != pc_rtx
+		    && !modified_between_p (SET_DEST (set0), i2, i3)
 		    && !reg_used_between_p (SET_DEST (set0), i2, i3)))
 	       /* If I3 is a jump, ensure that set1 is a jump so that
 		  we do not create invalid RTL.  */
@@ -7615,7 +7617,7 @@ make_extraction (machine_mode mode, rtx inner, HOST_WIDE_INT pos,
   if (GET_CODE (inner) == SUBREG
       && subreg_lowpart_p (inner)
       && (paradoxical_subreg_p (inner)
-	  /* If trying or potentionally trying to extract
+	  /* If trying or potentially trying to extract
 	     bits outside of is_mode, don't look through
 	     non-paradoxical SUBREGs.  See PR82192.  */
 	  || (pos_rtx == NULL_RTX
@@ -7664,7 +7666,7 @@ make_extraction (machine_mode mode, rtx inner, HOST_WIDE_INT pos,
 	}
     }
   else if (GET_CODE (inner) == TRUNCATE
-	   /* If trying or potentionally trying to extract
+	   /* If trying or potentially trying to extract
 	      bits outside of is_mode, don't look through
 	      TRUNCATE.  See PR82192.  */
 	   && pos_rtx == NULL_RTX
@@ -7929,7 +7931,7 @@ make_extraction (machine_mode mode, rtx inner, HOST_WIDE_INT pos,
      mode.  */
   else if (!MEM_P (inner))
     {
-      /* On the LHS, don't create paradoxical subregs implicitely truncating
+      /* On the LHS, don't create paradoxical subregs implicitly truncating
 	 the register unless TARGET_TRULY_NOOP_TRUNCATION.  */
       if (in_dest
 	  && !TRULY_NOOP_TRUNCATION_MODES_P (GET_MODE (inner),
@@ -8116,59 +8118,12 @@ make_compound_operation_int (scalar_int_mode mode, rtx *x_ptr,
       break;
 
     case PLUS:
-      lhs = XEXP (x, 0);
-      rhs = XEXP (x, 1);
-      lhs = make_compound_operation (lhs, next_code);
-      rhs = make_compound_operation (rhs, next_code);
-      if (GET_CODE (lhs) == MULT && GET_CODE (XEXP (lhs, 0)) == NEG)
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (XEXP (lhs, 0), 0),
-				     XEXP (lhs, 1));
-	  new_rtx = simplify_gen_binary (MINUS, mode, rhs, tem);
-	}
-      else if (GET_CODE (lhs) == MULT
-	       && (CONST_INT_P (XEXP (lhs, 1)) && INTVAL (XEXP (lhs, 1)) < 0))
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (lhs, 0),
-				     simplify_gen_unary (NEG, mode,
-							 XEXP (lhs, 1),
-							 mode));
-	  new_rtx = simplify_gen_binary (MINUS, mode, rhs, tem);
-	}
-      else
-	{
-	  SUBST (XEXP (x, 0), lhs);
-	  SUBST (XEXP (x, 1), rhs);
-	}
-      maybe_swap_commutative_operands (x);
-      return x;
-
     case MINUS:
-      lhs = XEXP (x, 0);
-      rhs = XEXP (x, 1);
-      lhs = make_compound_operation (lhs, next_code);
-      rhs = make_compound_operation (rhs, next_code);
-      if (GET_CODE (rhs) == MULT && GET_CODE (XEXP (rhs, 0)) == NEG)
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (XEXP (rhs, 0), 0),
-				     XEXP (rhs, 1));
-	  return simplify_gen_binary (PLUS, mode, tem, lhs);
-	}
-      else if (GET_CODE (rhs) == MULT
-	       && (CONST_INT_P (XEXP (rhs, 1)) && INTVAL (XEXP (rhs, 1)) < 0))
-	{
-	  tem = simplify_gen_binary (MULT, mode, XEXP (rhs, 0),
-				     simplify_gen_unary (NEG, mode,
-							 XEXP (rhs, 1),
-							 mode));
-	  return simplify_gen_binary (PLUS, mode, tem, lhs);
-	}
-      else
-	{
-	  SUBST (XEXP (x, 0), lhs);
-	  SUBST (XEXP (x, 1), rhs);
-	  return x;
-	}
+      lhs = make_compound_operation (XEXP (x, 0), next_code);
+      rhs = make_compound_operation (XEXP (x, 1), next_code);
+      if (lhs != XEXP (x, 0) || rhs != XEXP (x, 1))
+	return simplify_gen_binary (code, mode, lhs, rhs);
+      return x;
 
     case AND:
       /* If the second operand is not a constant, we can't do anything
@@ -8434,6 +8389,12 @@ make_compound_operation_int (scalar_int_mode mode, rtx *x_ptr,
 	  subreg_code = SET;
 
 	tem = make_compound_operation (inner, subreg_code);
+
+	/* TEM's code might be CLOBBER if combine_simplify_rtx
+	   could not transform a subexpression, e.g. a volatile MEM.
+	   simplify_subreg cannot be called with clobber, so bail out.  */
+	if (GET_CODE (tem) == CLOBBER)
+	  return NULL_RTX;
 
 	simplified
 	  = simplify_subreg (mode, tem, GET_MODE (inner), SUBREG_BYTE (x));
@@ -11570,12 +11531,42 @@ recog_for_combine_1 (rtx *pnewpat, rtx_insn *insn, rtx *pnotes,
       REG_NOTES (insn) = notes;
       INSN_CODE (insn) = insn_code_number;
 
-      /* Allow targets to reject combined insn.  */
-      if (!targetm.legitimate_combined_insn (insn))
+      /* Do not accept an insn if hard register constraints are used.  For
+	 example, assume that the first insn is combined into the last one:
+
+	 r100=...
+	 %5=...
+	 r101=exp(r100)
+
+	 If the resulting insn has an operand which is constrained to hard
+	 register %5, then this introduces a conflict since register %5 is live
+	 at this point.  Therefore, skip for now.  This is a sledge hammer
+	 approach.  Ideally we would skip based on the fact whether a
+	 combination crosses a hard register assignment and the corresponding
+	 hard register is also referred by a single register constraint of the
+	 resulting insn.  */
+      bool has_hard_reg_cstr = false;
+      extract_insn (insn);
+      for (int nop = recog_data.n_operands - 1; nop >= 0; --nop)
+	if (strchr (recog_data.constraints[nop], '{'))
+	  {
+	    has_hard_reg_cstr = true;
+	    break;
+	  }
+
+      /* Don't accept hard register constraints.  Allow targets to reject
+	 combined insn.  */
+      if (has_hard_reg_cstr || !targetm.legitimate_combined_insn (insn))
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    fputs ("Instruction not appropriate for target.",
-		   dump_file);
+	    {
+	      if (has_hard_reg_cstr)
+		fputs ("Instruction makes use of hard register constraints.",
+		       dump_file);
+	      else
+		fputs ("Instruction not appropriate for target.",
+		       dump_file);
+	    }
 
 	  /* Callers expect recog_for_combine to strip
 	     clobbers from the pattern on failure.  */
@@ -11759,7 +11750,8 @@ recog_for_combine (rtx *pnewpat, rtx_insn *insn, rtx *pnotes,
       rtx src = SET_SRC (pat);
       if (CONSTANT_P (src)
 	  && !CONST_INT_P (src)
-	  && crtl->uses_const_pool)
+	  && crtl->uses_const_pool
+	  && SET_DEST (pat) != pc_rtx)
 	{
 	  machine_mode mode = GET_MODE (src);
 	  if (mode == VOIDmode)
@@ -11855,7 +11847,8 @@ gen_lowpart_for_combine (machine_mode omode, rtx x)
       /* If we want to refer to something bigger than the original memref,
 	 generate a paradoxical subreg instead.  That will force a reload
 	 of the original memref X.  */
-      if (paradoxical_subreg_p (omode, imode))
+      if (paradoxical_subreg_p (omode, imode)
+	  && validate_subreg (omode, GET_MODE (x), x, 0))
 	return gen_rtx_SUBREG (omode, x, 0);
 
       poly_int64 offset = byte_lowpart_offset (omode, imode);
@@ -12613,7 +12606,7 @@ simplify_comparison (enum rtx_code code, rtx *pop0, rtx *pop1)
 
 	     The difficulty here is that we have predicates for A but not for
 	     (A - C1) so we need to check that C1 is within proper bounds so
-	     as to perturbate A as little as possible.  */
+	     as to perturb A as little as possible.  */
 
 	  if (mode_width <= HOST_BITS_PER_WIDE_INT
 	      && subreg_lowpart_p (op0)
@@ -13131,7 +13124,7 @@ simplify_comparison (enum rtx_code code, rtx *pop0, rtx *pop1)
     }
 
   /* Now make any compound operations involved in this comparison.  Then,
-     check for an outmost SUBREG on OP0 that is not doing anything or is
+     check for an outermost SUBREG on OP0 that is not doing anything or is
      paradoxical.  The latter transformation must only be performed when
      it is known that the "extra" bits will be the same in op0 and op1 or
      that they don't matter.  There are three cases to consider:
@@ -13779,7 +13772,7 @@ record_truncated_value (rtx x)
 }
 
 /* Callback for note_uses.  Find hardregs and subregs of pseudos and
-   the modes they are used in.  This can help truning TRUNCATEs into
+   the modes they are used in.  This can help turning TRUNCATEs into
    SUBREGs.  */
 
 static void
@@ -14460,7 +14453,7 @@ distribute_notes (rtx notes, rtx_insn *from_insn, rtx_insn *i3, rtx_insn *i2,
 	    /* The landing pad handling needs to be kept in sync with the
 	       prerequisite checking in try_combine.  */
 	    int lp_nr = INTVAL (XEXP (note, 0));
-	    /* A REG_EH_REGION note transfering control can only ever come
+	    /* A REG_EH_REGION note transferring control can only ever come
 	       from i3.  */
 	    if (lp_nr > 0)
 	      gcc_assert (from_insn == i3);
@@ -14919,7 +14912,7 @@ distribute_notes (rtx notes, rtx_insn *from_insn, rtx_insn *i3, rtx_insn *i2,
 		 that is unused, we must arrange for an appropriate REG_DEAD
 		 note to be added for it.  However, we can't just emit a USE
 		 and tag the note to it, since the register might actually
-		 be dead; so we recourse, and the recursive call then finds
+		 be dead; so we recurse, and the recursive call then finds
 		 the previous insn that used this register.  */
 
 	      if (place && REG_NREGS (XEXP (note, 0)) > 1)

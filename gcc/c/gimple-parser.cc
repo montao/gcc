@@ -1,5 +1,5 @@
 /* Parser for GIMPLE.
-   Copyright (C) 2016-2025 Free Software Foundation, Inc.
+   Copyright (C) 2016-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -356,28 +356,33 @@ c_parser_parse_gimple_body (c_parser *cparser, char *gimple_pass,
 	 update stmts.  */
       if (cdil == cdil_gimple_ssa)
 	{
-	  /* Create PHI nodes, they are parsed into __PHI internal calls.  */
+	  /* Create PHI nodes, they are parsed into __PHI internal calls
+	     and update SSA operands.  */
 	  FOR_EACH_BB_FN (bb, cfun)
-	    for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
-		 !gsi_end_p (gsi);)
-	      {
-		gimple *stmt = gsi_stmt (gsi);
-		if (!gimple_call_internal_p (stmt, IFN_PHI))
-		  break;
+	    {
+	      gimple_stmt_iterator gsi;
+	      for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi);)
+		{
+		  gimple *stmt = gsi_stmt (gsi);
+		  if (!gimple_call_internal_p (stmt, IFN_PHI))
+		    break;
 
-		gphi *phi = create_phi_node (gimple_call_lhs (stmt), bb);
-		for (unsigned i = 0; i < gimple_call_num_args (stmt); i += 2)
-		  {
-		    int srcidx = TREE_INT_CST_LOW (gimple_call_arg (stmt, i));
-		    edge e = find_edge (BASIC_BLOCK_FOR_FN (cfun, srcidx), bb);
-		    if (!e)
-		      c_parser_error (parser, "edge not found");
-		    else
-		      add_phi_arg (phi, gimple_call_arg (stmt, i + 1), e,
-				   UNKNOWN_LOCATION);
-		  }
-		gsi_remove (&gsi, true);
-	      }
+		  gphi *phi = create_phi_node (gimple_call_lhs (stmt), bb);
+		  for (unsigned i = 0; i < gimple_call_num_args (stmt); i += 2)
+		    {
+		      int srcidx = TREE_INT_CST_LOW (gimple_call_arg (stmt, i));
+		      edge e = find_edge (BASIC_BLOCK_FOR_FN (cfun, srcidx), bb);
+		      if (!e)
+			c_parser_error (parser, "edge not found");
+		      else
+			add_phi_arg (phi, gimple_call_arg (stmt, i + 1), e,
+				     UNKNOWN_LOCATION);
+		    }
+		  gsi_remove (&gsi, true);
+		}
+	      for (; !gsi_end_p (gsi); gsi_next (&gsi))
+		update_stmt (gsi_stmt (gsi));
+	    }
 	  /* Fill SSA name gaps, putting them on the freelist and diagnose
 	     SSA names without definition.  */
 	  for (unsigned i = 1; i < num_ssa_names; ++i)
@@ -447,7 +452,7 @@ c_parser_gimple_compound_statement (gimple_parser &parser, gimple_seq *seq)
   if (! c_parser_require (parser, CPP_OPEN_BRACE, "expected %<{%>"))
     return false;
 
-  /* A compund statement starts with optional declarations.  */
+  /* A compound statement starts with optional declarations.  */
   while (c_parser_next_tokens_start_declaration (parser))
     {
       c_parser_gimple_declaration (parser);
@@ -639,7 +644,8 @@ c_parser_gimple_compound_statement (gimple_parser &parser, gimple_seq *seq)
 		    {
 		      gimple_stmt_iterator gsi
 			= gsi_start_bb (parser.current_bb);
-		      gsi_insert_seq_after (&gsi, *seq, GSI_CONTINUE_LINKING);
+		      gsi_insert_seq_after_without_update (&gsi, *seq,
+							   GSI_CONTINUE_LINKING);
 		    }
 		  *seq = NULL;
 		}
@@ -735,7 +741,8 @@ expr_stmt:
       else
 	{
 	  gimple_stmt_iterator gsi = gsi_start_bb (parser.current_bb);
-	  gsi_insert_seq_after (&gsi, *seq, GSI_CONTINUE_LINKING);
+	  gsi_insert_seq_after_without_update (&gsi, *seq,
+					       GSI_CONTINUE_LINKING);
 	}
       *seq = NULL;
     }
@@ -1522,7 +1529,8 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 	    {
 	      /* __MEM '<' type-name [ ',' number ] '>'
 	               '(' [ '(' type-name ')' ] unary-expression
-		           [ '+' number ] ')'  */
+			   [ '+' number ]
+			   [ ',' number ':' number ] ')'  */
 	      location_t loc = c_parser_peek_token (parser)->location;
 	      c_parser_consume_token (parser);
 	      tree type = c_parser_gimple_typespec (parser);
@@ -1532,6 +1540,8 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 	      step.value = NULL_TREE;
 	      index.value = NULL_TREE;
 	      index2.value = NULL_TREE;
+	      unsigned short clique = 0;
+	      unsigned short base = 0;
 	      if (c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
 		{
 		  tree alias_type = NULL_TREE;
@@ -1613,6 +1623,27 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 				  "expected constant step for %<__MEM%> "
 				  "operand");
 		    }
+		  if (c_parser_next_token_is (parser, CPP_COMMA))
+		    {
+		      struct c_expr cl, ba;
+		      c_parser_consume_token (parser);
+		      cl = c_parser_gimple_postfix_expression (parser);
+		      if (c_parser_require (parser,
+					    CPP_COLON, "expected %<:%>"))
+			{
+			  ba = c_parser_gimple_postfix_expression (parser);
+			  if (!tree_fits_uhwi_p (cl.value)
+			      || !tree_fits_uhwi_p (ba.value)
+			      || compare_tree_int (cl.value,
+						   (clique = tree_to_uhwi
+								(cl.value)))
+			      || compare_tree_int (ba.value,
+						   (base = tree_to_uhwi
+								 (ba.value))))
+			    error_at (cl.get_start (),
+				      "invalid clique/base pair");
+			}
+		    }
 		  c_parser_skip_until_found (parser, CPP_CLOSE_PAREN,
 					     "expected %<)%>");
 		}
@@ -1628,6 +1659,12 @@ c_parser_gimple_postfix_expression (gimple_parser &parser)
 	      else
 		expr.value = build2_loc (loc, MEM_REF,
 					 type, ptr.value, alias_off.value);
+	      if (clique != 0)
+		{
+		  cfun->last_clique = MAX (cfun->last_clique, clique);
+		  MR_DEPENDENCE_CLIQUE (expr.value) = clique;
+		  MR_DEPENDENCE_BASE (expr.value) = base;
+		}
 	      break;
 	    }
 	  else if (strcmp (IDENTIFIER_POINTER (id), "__VIEW_CONVERT") == 0)
@@ -2445,7 +2482,7 @@ c_parser_gimple_if_stmt (gimple_parser &parser, gimple_seq *seq)
 
    gimple-case-statement:
      gimple-case-statement
-     gimple-label-statement : gimple-goto-statment
+     gimple-label-statement : gimple-goto-statement
 */
 
 static void

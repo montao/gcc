@@ -1,5 +1,5 @@
 /* Single-image implementation of GNU Fortran Coarray Library
-   Copyright (C) 2011-2025 Free Software Foundation, Inc.
+   Copyright (C) 2011-2026 Free Software Foundation, Inc.
    Contributed by Tobias Burnus <burnus@net-b.de>
 
 This file is part of the GNU Fortran Coarray Runtime Library (libcaf).
@@ -117,7 +117,7 @@ caf_runtime_error (const char *message, ...)
   exit (EXIT_FAILURE);
 }
 
-/* Error handling is similar everytime.  */
+/* Error handling is similar every time.  */
 static void
 caf_internal_error (const char *msg, int *stat, char *errmsg,
 		    size_t errmsg_len, ...)
@@ -129,7 +129,7 @@ caf_internal_error (const char *msg, int *stat, char *errmsg,
       *stat = 1;
       if (errmsg_len > 0)
 	{
-	  int len = snprintf (errmsg, errmsg_len, msg, args);
+	  int len = vsnprintf (errmsg, errmsg_len, msg, args);
 	  if (len >= 0 && errmsg_len > (size_t) len)
 	    memset (&errmsg[len], ' ', errmsg_len - len);
 	}
@@ -313,7 +313,7 @@ _gfortran_caf_deregister (caf_token_t *token, caf_deregister_t type, int *stat,
 	    ;
 	  if (!ca)
 	    caf_runtime_error (
-	      "Coarray token to be freeed is not in current team %d", type);
+	      "Coarray token to be freed is not in current team %d", type);
 	  /* Unhook found coarray_allocated node from list...  */
 	  pca->next = ca->next;
 	}

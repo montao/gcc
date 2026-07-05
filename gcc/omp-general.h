@@ -1,7 +1,7 @@
-/* General types and functions that are uselful for processing of OpenMP,
-   OpenACC and similar directivers at various stages of compilation.
+/* General types and functions that are useful for processing of OpenMP,
+   OpenACC and similar directives at various stages of compilation.
 
-   Copyright (C) 2005-2025 Free Software Foundation, Inc.
+   Copyright (C) 2005-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -189,7 +189,7 @@ extern void omp_adjust_for_condition (location_t loc, enum tree_code *cond_code,
 extern tree omp_get_for_step_from_incr (location_t loc, tree incr);
 extern void omp_extract_for_data (gomp_for *for_stmt, struct omp_for_data *fd,
 				  struct omp_for_data_loop *loops);
-extern gimple *omp_build_barrier (tree lhs);
+extern gimple *omp_build_barrier (tree lhs, int kind);
 extern tree find_combined_omp_for (tree *, int *, void *);
 extern poly_uint64 omp_max_vf (bool);
 extern int omp_max_simt_vf (void);
@@ -200,9 +200,14 @@ enum omp_ctx_directive
     OMP_CTX_METADIRECTIVE };
 extern tree omp_check_context_selector (location_t loc, tree ctx,
 					enum omp_ctx_directive directive);
+extern tree omp_mangle_variant_name (tree base_id, tree ctx, const char *sep);
+extern bool omp_check_for_duplicate_variant (location_t loc,
+					     tree base_decl, tree ctx);
 extern void omp_mark_declare_variant (location_t loc, tree variant,
 				      tree construct);
-extern int omp_context_selector_matches (tree, tree, bool);
+extern int omp_context_selector_matches (tree, tree, bool, bool = false);
+extern tree omp_merge_context_selectors (location_t, tree, tree,
+					 enum omp_ctx_directive);
 extern tree resolve_omp_target_device_matches (tree node);
 extern tree omp_get_context_selector (tree, enum omp_tss_code,
 				      enum omp_ts_code);
@@ -411,5 +416,7 @@ extern bool omp_parse_expr (vec<omp_addr_token *> &, tree);
 
 extern tree omp_loop_number_of_iterations (tree, int, tree * = NULL);
 extern void omp_maybe_apply_loop_xforms (tree *, tree);
+
+extern tree omp_remove_duplicate_maps (tree, bool);
 
 #endif /* GCC_OMP_GENERAL_H */

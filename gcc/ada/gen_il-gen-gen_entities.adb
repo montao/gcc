@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2020-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 2020-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -54,6 +54,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Associated_Entity, Node_Id),
         Sm (Can_Never_Be_Null, Flag),
         Sm (Checks_May_Be_Suppressed, Flag),
+        Sm (Declared_In_Package_Body, Flag),
         Sm (Debug_Info_Off, Flag),
         Sm (Default_Expressions_Processed, Flag),
         Sm (Delay_Cleanups, Flag),
@@ -63,6 +64,8 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (First_Rep_Item, Node_Id),
         Sm (Freeze_Node, Node_Id),
         Sm (From_Limited_With, Flag),
+        Sm (Ghost_Assertion_Level, Node_Id),
+        Sm (Has_Activation_Chain_Entity, Flag),
         Sm (Has_Aliased_Components, Flag, Impl_Base_Type_Only),
         Sm (Has_Alignment_Clause, Flag),
         Sm (Has_All_Calls_Remote, Flag),
@@ -77,7 +80,6 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Has_Delayed_Aspects, Flag),
         Sm (Has_Delayed_Freeze, Flag),
         Sm (Has_Delayed_Rep_Aspects, Flag),
-        Sm (Has_Exit, Flag),
         Sm (Has_Forward_Instantiation, Flag),
         Sm (Has_Fully_Qualified_Name, Flag),
         Sm (Has_Gigi_Rep_Item, Flag),
@@ -115,7 +117,9 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Has_Yield_Aspect, Flag),
         Sm (Homonym, Node_Id),
         Sm (Incomplete_View, Node_Id),
-        Sm (In_Package_Body, Flag),
+        Sm (In_Package_Body,
+           Flag,
+           Pre_Set => "Ekind (N) in E_Package | E_Generic_Package"),
         Sm (In_Private_Part, Flag),
         Sm (In_Use, Flag),
         Sm (Is_Ada_2005_Only, Flag),
@@ -137,6 +141,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Constructor, Flag),
         Sm (Is_Controlled_Active, Flag, Base_Type_Only),
         Sm (Is_CPP_Class, Flag),
+        Sm (Is_CPP_Constructor, Flag),
         Sm (Is_Descendant_Of_Address, Flag),
         Sm (Is_Discrim_SO_Function, Flag),
         Sm (Is_Discriminant_Check_Function, Flag),
@@ -159,6 +164,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Ignored_Ghost_Entity, Flag),
         Sm (Is_Immediately_Visible, Flag),
         Sm (Is_Implementation_Defined, Flag),
+        Sm (Is_Implicit_Ghost, Flag),
         Sm (Is_Imported, Flag),
         Sm (Is_Independent, Flag),
         Sm (Is_Inlined, Flag),
@@ -171,12 +177,11 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Known_Non_Null, Flag),
         Sm (Is_Known_Null, Flag),
         Sm (Is_Known_Valid, Flag),
-        Sm (Is_Limited_Composite, Flag),
         Sm (Is_Limited_Interface, Flag),
         Sm (Is_Limited_Record, Flag),
+        Sm (Is_Link_Once, Flag),
         Sm (Is_Loop_Parameter, Flag),
         Sm (Is_Obsolescent, Flag),
-        Sm (Is_Package_Body_Entity, Flag),
         Sm (Is_Packed, Flag, Impl_Base_Type_Only),
         Sm (Is_Packed_Array_Impl_Type, Flag),
         Sm (Is_Not_Self_Hidden, Flag),
@@ -201,7 +206,6 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Unchecked_Union, Flag, Impl_Base_Type_Only),
         Sm (Is_Underlying_Full_View, Flag),
         Sm (Is_Underlying_Record_View, Flag, Base_Type_Only),
-        Sm (Is_Unimplemented, Flag),
         Sm (Is_Uplevel_Referenced_Entity, Flag),
         Sm (Is_Visible_Formal, Flag),
         Sm (Is_Visible_Lib_Unit, Flag),
@@ -345,7 +349,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Contract, Node_Id),
         Sm (Discriminal_Link, Node_Id),
         Sm (Encapsulating_State, Node_Id),
-        Sm (Extra_Accessibility, Node_Id),
+        Sm (Extra_Accessibility_Of_Object, Node_Id),
         Sm (Initialization_Statements, Node_Id),
         Sm (Is_Elaboration_Checks_OK_Id, Flag),
         Sm (Is_Elaboration_Warnings_OK_Id, Flag),
@@ -399,7 +403,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Alignment, Unat),
         Sm (Default_Value, Node_Id),
         Sm (Entry_Component, Node_Id),
-        Sm (Extra_Accessibility, Node_Id),
+        Sm (Extra_Accessibility_Of_Object, Node_Id),
         Sm (Extra_Constrained, Node_Id),
         Sm (Extra_Formal, Node_Id),
         Sm (Has_Initial_Value, Flag),
@@ -454,11 +458,10 @@ begin -- Gen_IL.Gen.Gen_Entities
             Pre => "Ekind (Base_Type (N)) in Access_Subprogram_Kind"),
         Sm (Class_Wide_Equivalent_Type, Node_Id),
         Sm (Class_Wide_Type, Node_Id),
-        Sm (Constructor_List, Elist_Id),
-        Sm (Constructor_Name, Node_Id),
         Sm (Contract, Node_Id),
         Sm (Current_Use_Clause, Node_Id),
         Sm (Derived_Type_Link, Node_Id),
+        Sm (Destructor, Node_Id),
         Sm (Direct_Primitive_Operations, Elist_Id),
         Sm (Predicates_Ignored, Flag),
         Sm (Esize, Uint),
@@ -468,6 +471,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Full_View, Node_Id),
         Sm (Has_Completion_In_Body, Flag),
         Sm (Has_Constrained_Partial_View, Flag, Base_Type_Only),
+        Sm (Has_Destructor, Flag, Base_Type_Only),
         Sm (Has_Discriminants, Flag),
         Sm (Has_Dispatch_Table, Flag,
             Pre => "Is_Tagged_Type (N)"),
@@ -496,6 +500,8 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Has_Static_Predicate, Flag),
         Sm (Has_Static_Predicate_Aspect, Flag),
         Sm (Has_Unknown_Discriminants, Flag),
+        Sm (Has_Unsigned_Base_Range_Aspect, Flag,
+            Pre => "Is_Type (N)"),
         Sm (Interface_Name, Node_Id),
         Sm (Is_Abstract_Type, Flag),
         Sm (Is_Actual_Subtype, Flag),
@@ -503,6 +509,8 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Fixed_Lower_Bound_Array_Subtype, Flag),
         Sm (Is_Fixed_Lower_Bound_Index_Subtype, Flag),
         Sm (Is_Generic_Actual_Type, Flag),
+        Sm (Is_Implicit_Full_View, Flag),
+        Sm (Is_Limited_Composite, Flag),
         Sm (Is_Mutably_Tagged_Type, Flag),
         Sm (Is_Non_Static_Subtype, Flag),
         Sm (Is_Private_Composite, Flag),
@@ -546,11 +554,11 @@ begin -- Gen_IL.Gen.Gen_Entities
        (Sm (First_Literal, Node_Id),
         Sm (Has_Enumeration_Rep_Clause, Flag),
         Sm (Has_Pragma_Ordered, Flag, Impl_Base_Type_Only),
-        Sm (Lit_Indexes, Node_Id),
-        Sm (Lit_Strings, Node_Id),
+        Sm (Lit_Hash, Node_Id, Root_Type_Only),
+        Sm (Lit_Indexes, Node_Id, Root_Type_Only),
+        Sm (Lit_Strings, Node_Id, Root_Type_Only),
         Sm (Nonzero_Is_True, Flag, Base_Type_Only,
-            Pre => "Root_Type (N) = Standard_Boolean"),
-        Sm (Lit_Hash, Node_Id, Root_Type_Only)));
+            Pre => "Root_Type (N) = Standard_Boolean")));
 
    Cc (E_Enumeration_Type, Enumeration_Kind,
        --  Enumeration types, created by an enumeration type declaration
@@ -624,7 +632,8 @@ begin -- Gen_IL.Gen.Gen_Entities
        --  first named subtype).
 
    Ab (Float_Kind, Real_Kind,
-       (Sm (Digits_Value, Upos)));
+       (Sm (Digits_Value, Upos),
+        Sm (Is_IEEE_Extended_Precision, Flag)));
 
    Cc (E_Floating_Point_Type, Float_Kind);
        --  Floating point type, used for the anonymous base type of the
@@ -640,13 +649,12 @@ begin -- Gen_IL.Gen.Gen_Entities
        (Sm (Associated_Storage_Pool, Node_Id, Root_Type_Only),
         Sm (Directly_Designated_Type, Node_Id),
         Sm (Finalization_Collection, Node_Id, Root_Type_Only),
-        Sm (Has_Pragma_Controlled, Flag, Impl_Base_Type_Only),
         Sm (Has_Storage_Size_Clause, Flag, Impl_Base_Type_Only),
         Sm (Is_Access_Constant, Flag),
         Sm (Is_Local_Anonymous_Access, Flag),
         Sm (Is_Param_Block_Component_Type, Flag, Base_Type_Only),
         Sm (Is_Pure_Unit_Access_Type, Flag),
-        Sm (Master_Id, Node_Id),
+        Sm (Master_Id, Node_Id, Root_Type_Only),
         Sm (No_Pool_Assigned, Flag, Root_Type_Only),
         Sm (No_Strict_Aliasing, Flag, Base_Type_Only),
         Sm (Storage_Size_Variable, Node_Id, Impl_Base_Type_Only)));
@@ -936,11 +944,14 @@ begin -- Gen_IL.Gen.Gen_Entities
        (Sm (Access_Subprogram_Wrapper, Node_Id),
         Sm (Extra_Accessibility_Of_Result, Node_Id),
         Sm (Extra_Formals, Node_Id),
-        Sm (Needs_No_Actuals, Flag)));
+        Sm (Extra_Formals_Known, Flag),
+        Sm (Needs_No_Actuals, Flag),
+        Sm (Scope_Depth_Value, Unat)));
 
    Ab (Overloadable_Kind, Entity_Kind,
        (Sm (Renamed_Or_Alias, Node_Id),
         Sm (Extra_Formals, Node_Id),
+        Sm (Extra_Formals_Known, Flag),
         Sm (Is_Abstract_Subprogram, Flag),
         Sm (Is_Primitive, Flag),
         Sm (Needs_No_Actuals, Flag),
@@ -954,6 +965,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Enumeration_Rep_Expr, Node_Id),
         Sm (Esize, Uint),
         Sm (Alignment, Unat),
+        Sm (Overridden_Inherited_Operation, Node_Id),
         Sm (Interface_Name, Node_Id)));
 
    Ab (Subprogram_Kind, Overloadable_Kind,
@@ -982,6 +994,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Is_Machine_Code_Subprogram, Flag),
         Sm (Last_Entity, Node_Id),
         Sm (Linker_Section_Pragma, Node_Id),
+        Sm (Overridden_Inherited_Operation, Node_Id),
         Sm (Overridden_Operation, Node_Id),
         Sm (Protected_Body_Subprogram, Node_Id),
         Sm (No_Raise, Flag),
@@ -1126,6 +1139,7 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Entry_Accepted, Flag),
         Sm (Entry_Parameters_Type, Node_Id),
         Sm (Extra_Formals, Node_Id),
+        Sm (Extra_Formals_Known, Flag),
         Sm (First_Entity, Node_Id),
         Sm (Has_Out_Or_In_Out_Parameter, Flag),
         Sm (Ignore_SPARK_Mode_Pragmas, Flag),
@@ -1224,8 +1238,10 @@ begin -- Gen_IL.Gen.Gen_Entities
    Cc (E_Loop, Entity_Kind,
        --  A loop identifier, created by an explicit or implicit label on a
        --  loop statement.
-       (Sm (First_Entity, Node_Id),
+       (Sm (Continue_Mark, Node_Id),
+        Sm (First_Entity, Node_Id),
         Sm (First_Exit_Statement, Node_Id),
+        Sm (Has_Exit, Flag),
         Sm (Has_Loop_Entry_Attributes, Flag),
         Sm (Last_Entity, Node_Id),
         Sm (Renamed_Or_Alias, Node_Id),
@@ -1325,6 +1341,7 @@ begin -- Gen_IL.Gen.Gen_Entities
        (Sm (Anonymous_Collections, Elist_Id),
         Sm (Contract, Node_Id),
         Sm (Extra_Formals, Node_Id),
+        Sm (Extra_Formals_Known, Flag),
         Sm (First_Entity, Node_Id),
         Sm (Ignore_SPARK_Mode_Pragmas, Flag),
         Sm (Interface_Name, Node_Id),
@@ -1333,6 +1350,17 @@ begin -- Gen_IL.Gen.Gen_Entities
         Sm (Scope_Depth_Value, Unat),
         Sm (SPARK_Pragma, Node_Id),
         Sm (SPARK_Pragma_Inherited, Flag)));
+
+   Cc (E_Assertion_Level, Entity_Kind,
+       --  An assertion level. Used to associate a level indicator to an
+       --  assertion like construct. Constructs assigned with a certain level
+       --  can be disabled through pragma Assertion_Policy. Levels can form a
+       --  hierarchy. A declaration of a level can include a list of levels
+       --  this level depends on known as the Parent_Levels. An opposite list
+       --  is also kept to store all the levels that depend on it known as the
+       --  Child_Levels.
+       (Sm (Child_Levels, Elist_Id),
+        Sm (Parent_Levels, Elist_Id)));
 
    --  Union types. These don't fit into the normal parent/child hierarchy
    --  above.

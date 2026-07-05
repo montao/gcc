@@ -1,6 +1,6 @@
 // -*- C++ -*- header.
 
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -75,17 +75,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return chrono::ceil<__w_dur>(__atime);
       }
 
-#ifdef _GLIBCXX_HAVE_LINUX_FUTEX
-#define _GLIBCXX_HAVE_PLATFORM_TIMED_WAIT
-#else
-// define _GLIBCXX_HAVE_PLATFORM_TIMED_WAIT and implement __platform_wait_until
-// if there is a more efficient primitive supported by the platform
-// (e.g. __ulock_wait) which is better than pthread_cond_clockwait.
-#endif // ! HAVE_LINUX_FUTEX
-
+    // This uses a nanoseconds duration for the timeout argument.
+    // For __abi_version=0 that is the time since the steady_clock's epoch.
+    // It's possible that in future we will add new __wait_flags constants
+    // to indicate that the timeout is the time since the system_clock epoch,
+    // or is a relative timeout not an absolute time.
     __wait_result_type
     __wait_until_impl(const void* __addr, __wait_args_base& __args,
-		      const __wait_clock_t::duration& __atime);
+		      const chrono::nanoseconds& __timeout);
 
     template<typename _Clock, typename _Dur>
       __wait_result_type
@@ -143,7 +140,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  auto __res = __detail::__wait_until(__addr, __args, __atime);
 	  if (__res._M_timeout)
 	    return false; // C++26 will also return last observed __val
-	  __val = __args._M_setup_wait(__addr, __vfn, __res);
+	  __val = __args._M_on_wake(__addr, __vfn, __res);
 	}
       return true; // C++26 will also return last observed __val
     }
@@ -156,9 +153,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 				  const chrono::time_point<_Clock, _Dur>& __atime,
 				  bool __bare_wait = false) noexcept
     {
-#ifndef _GLIBCXX_HAVE_PLATFORM_TIMED_WAIT
-      __glibcxx_assert(false); // This function can't be used for proxy wait.
-#endif
+      // This function must not be used if __wait_impl might use a proxy wait:
+      __glibcxx_assert(__platform_wait_uses_type<__detail::__platform_wait_t>);
+
       __detail::__wait_args __args{ __addr, __old, __order, __bare_wait };
       auto __res = __detail::__wait_until(__addr, __args, __atime);
       return !__res._M_timeout; // C++26 will also return last observed __val
@@ -195,7 +192,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  auto __res = __detail::__wait_for(__addr, __args, __rtime);
 	  if (__res._M_timeout)
 	    return false; // C++26 will also return last observed __val
-	  __val = __args._M_setup_wait(__addr, __vfn);
+	  __val = __args._M_on_wake(__addr, __vfn, __res);
 	}
       return true; // C++26 will also return last observed __val
     }
@@ -208,9 +205,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 				const chrono::duration<_Rep, _Period>& __rtime,
 				bool __bare_wait = false) noexcept
     {
-#ifndef _GLIBCXX_HAVE_PLATFORM_TIMED_WAIT
-      __glibcxx_assert(false); // This function can't be used for proxy wait.
-#endif
+      // This function must not be used if __wait_impl might use a proxy wait:
+      __glibcxx_assert(__platform_wait_uses_type<__detail::__platform_wait_t>);
+
       __detail::__wait_args __args{ __addr, __old, __order, __bare_wait };
       auto __res = __detail::__wait_for(__addr, __args, __rtime);
       return !__res._M_timeout; // C++26 will also return last observed __val

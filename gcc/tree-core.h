@@ -1,5 +1,5 @@
 /* Core data structures for the 'tree' type.
-   Copyright (C) 1989-2025 Free Software Foundation, Inc.
+   Copyright (C) 1989-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -34,6 +34,7 @@ struct real_value;
 struct fixed_value;
 struct ptr_info_def;
 struct die_struct;
+class irange;
 
 
 /*---------------------------------------------------------------------------
@@ -98,6 +99,13 @@ struct die_struct;
 /* Nonzero if this is a function expected to end with an exception.  */
 #define ECF_XTHROW		  (1 << 16)
 
+/* Flags for various callback attribute combinations.  These constants are only
+   meant to be used for the construction of builtin functions.  They were only
+   added because Fortran uses them for attributes of builtins.  */
+
+/* callback(1, 2) */
+#define ECF_CB_1_2		  (1 << 17)
+
 /* Call argument flags.  */
 
 /* Nonzero if the argument is not used by the function.  */
@@ -144,7 +152,7 @@ struct die_struct;
 #define DEFTREECODE(SYM, STRING, TYPE, NARGS)   SYM,
 #define END_OF_BASE_TREE_CODES LAST_AND_UNUSED_TREE_CODE,
 
-enum tree_code {
+enum tree_code : unsigned {
 #include "all-tree.def"
 MAX_TREE_CODES
 };
@@ -169,7 +177,7 @@ enum built_in_class {
   BUILT_IN_NORMAL
 };
 
-/* Last marker used for LTO stremaing of built_in_class.  We cannot add it
+/* Last marker used for LTO streaming of built_in_class.  We cannot add it
    to the enum since we need the enumb to fit in 2 bits.  */
 #define BUILT_IN_LAST (BUILT_IN_NORMAL + 1)
 
@@ -183,14 +191,12 @@ enum built_in_function {
   BUILT_IN_COMPLEX_MUL_MIN,
   BUILT_IN_COMPLEX_MUL_MAX
     = BUILT_IN_COMPLEX_MUL_MIN
-      + MAX_MODE_COMPLEX_FLOAT
-      - MIN_MODE_COMPLEX_FLOAT,
+      + (MAX_MODE_COMPLEX_FLOAT - MIN_MODE_COMPLEX_FLOAT),
 
   BUILT_IN_COMPLEX_DIV_MIN,
   BUILT_IN_COMPLEX_DIV_MAX
     = BUILT_IN_COMPLEX_DIV_MIN
-      + MAX_MODE_COMPLEX_FLOAT
-      - MIN_MODE_COMPLEX_FLOAT,
+      + (MAX_MODE_COMPLEX_FLOAT - MIN_MODE_COMPLEX_FLOAT),
 
   /* Upper bound on non-language-specific builtins.  */
   END_BUILTINS
@@ -591,6 +597,11 @@ enum omp_clause_code {
   /* OpenMP clause: nocontext (scalar-expression).  */
   OMP_CLAUSE_NOCONTEXT,
 
+  /* OpenMP clause: dyn_groupprivate ( [fallback (...)] : integer-expression).  */
+  OMP_CLAUSE_DYN_GROUPPRIVATE,
+
+  /* OpenMP clause: uses_allocators.  */
+  OMP_CLAUSE_USES_ALLOCATORS,
 };
 
 #undef DEFTREESTRUCT
@@ -649,6 +660,14 @@ enum omp_clause_bind_kind {
   OMP_CLAUSE_BIND_PARALLEL,
   OMP_CLAUSE_BIND_THREAD
 };
+
+enum omp_clause_fallback_kind {
+  OMP_CLAUSE_FALLBACK_UNSPECIFIED,
+  OMP_CLAUSE_FALLBACK_ABORT,
+  OMP_CLAUSE_FALLBACK_DEFAULT_MEM,
+  OMP_CLAUSE_FALLBACK_NULL
+};
+
 
 /* memory-order-clause on OpenMP atomic/flush constructs or
    argument of atomic_default_mem_order clause.  */
@@ -1118,7 +1137,7 @@ typedef tree (*walk_tree_lh) (tree *, int *, tree (*) (tree *, int *, void *),
    accessor macros.  */
 
 struct GTY(()) tree_base {
-  ENUM_BITFIELD(tree_code) code : 16;
+  tree_code code : 16;
 
   unsigned side_effects_flag : 1;
   unsigned constant_flag : 1;
@@ -1165,7 +1184,8 @@ struct GTY(()) tree_base {
 	 present in tree_base instead of tree_type is to save space.  The size
 	 of the field must be large enough to hold addr_space_t values.
 	 For CONSTRUCTOR nodes this holds the clobber_kind enum.
-	 The C++ front-end uses this in IDENTIFIER_NODE and NAMESPACE_DECL.  */
+	 The C++ front-end uses this in IDENTIFIER_NODE, REFLECT_EXPR, and
+	 NAMESPACE_DECL.  */
       unsigned address_space : 8;
     } bits;
 
@@ -1367,6 +1387,9 @@ struct GTY(()) tree_base {
 
        ENUM_IS_OPAQUE in
 	   ENUMERAL_TYPE
+
+       CONST_WRAPPER_P in
+	   VIEW_CONVERT_EXPR (used by C++)
 
    protected_flag:
 
@@ -1710,6 +1733,10 @@ struct GTY(()) tree_ssa_name {
 		"!POINTER_TYPE_P (TREE_TYPE ((tree)&%1)) : 2"))) info;
   /* Immediate uses list for this SSA_NAME.  */
   struct ssa_use_operand_t imm_uses;
+#if defined ENABLE_GIMPLE_CHECKING
+  gimple *GTY((skip(""))) active_iterated_stmt;
+  unsigned fast_iteration_depth;
+#endif
 };
 
 struct GTY(()) phi_arg_d {
@@ -1738,6 +1765,7 @@ struct GTY(()) tree_omp_clause {
     enum omp_clause_defaultmap_kind defaultmap_kind;
     enum omp_clause_bind_kind      bind_kind;
     enum omp_clause_device_type_kind device_type_kind;
+    enum omp_clause_fallback_kind fallback_kind;
   } GTY ((skip)) subcode;
 
   /* The gimplification of OMP_CLAUSE_REDUCTION_{INIT,MERGE} for omp-low's
@@ -1778,7 +1806,7 @@ struct GTY(()) tree_type_common {
   tree attributes;
   unsigned int uid;
 
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   unsigned int precision : 16;
   unsigned lang_flag_0 : 1;
@@ -1871,7 +1899,7 @@ struct GTY(()) tree_decl_common {
   struct tree_decl_minimal common;
   tree size;
 
-  ENUM_BITFIELD(machine_mode) mode : MACHINE_MODE_BITSIZE;
+  machine_mode mode : MACHINE_MODE_BITSIZE;
 
   unsigned nonlocal_flag : 1;
   unsigned virtual_flag : 1;
@@ -1996,7 +2024,7 @@ struct GTY(()) tree_decl_with_vis {
  unsigned seen_in_bind_expr : 1;
  unsigned comdat_flag : 1;
  /* Used for FUNCTION_DECL, VAR_DECL and in C++ for TYPE_DECL.  */
- ENUM_BITFIELD(symbol_visibility) visibility : 2;
+ enum symbol_visibility visibility : 2;
  unsigned visibility_specified : 1;
 
  /* Belong to FUNCTION_DECL exclusively.  */
@@ -2064,7 +2092,7 @@ struct GTY(()) tree_function_decl {
   /* In a FUNCTION_DECL this is DECL_UNCHECKED_FUNCTION_CODE.  */
   unsigned int function_code;
 
-  ENUM_BITFIELD(built_in_class) built_in_class : 2;
+  enum built_in_class built_in_class : 2;
   unsigned static_ctor_flag : 1;
   unsigned static_dtor_flag : 1;
   unsigned uninlinable : 1;
@@ -2082,7 +2110,7 @@ struct GTY(()) tree_function_decl {
   unsigned looping_const_or_pure_flag : 1;
 
   /* Align the bitfield to boundary of a byte.  */
-  ENUM_BITFIELD(function_decl_type) decl_type: 2;
+  enum function_decl_type decl_type: 2;
   unsigned has_debug_args_flag : 1;
   unsigned versioned_function : 1;
   unsigned replaceable_operator : 1;
