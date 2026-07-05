@@ -1,6 +1,6 @@
 
 ;; Code and mode itertator and attribute definitions for the ARM backend
-;; Copyright (C) 2010-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2010-2026 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -1788,6 +1788,11 @@
                   (V4HI "V2SI") (V8HI "V4SI")
                   (V2SI "DI")   (V4SI "V2DI")])
 
+;; Modes with double-width elements.
+(define_mode_attr v_double_width [(V8QI "v4hi") (V16QI "v8hi")
+				  (V4HI "v2si") (V8HI "v4si")
+				  (V2SI "di")   (V4SI "v2di")])
+
 ;; Double-sized modes with the same element size.
 ;; Used for neon_vdup_lane, where the second operand is double-sized
 ;; even when the first one is quad.
@@ -2056,6 +2061,14 @@
 			     (V2QI "v2qi")])
 (define_mode_attr MVE_vctp [(V16BI "8") (V8BI "16") (V4BI "32") (V2QI "64")])
 
+;; Assembly modifier for a const_int operand to narrow it to a
+;; specific mode.  For vector modes this is the element size.
+;; Currently only supports SI and HI.
+
+(define_mode_attr asm_const_size [(SI "") (HI "L")
+				  (V4SI "") (V2SI "")
+				  (V8HI "L") (V4HI "L")])
+
 ;;----------------------------------------------------------------------------
 ;; Code attributes
 ;;----------------------------------------------------------------------------
@@ -2097,7 +2110,7 @@
 (define_code_attr shift [(ashiftrt "ashr") (lshiftrt "lshr")])
 (define_code_attr shifttype [(ashiftrt "signed") (lshiftrt "unsigned")])
 
-;; String reprentations of operations on the sign of a number.
+;; String representations of operations on the sign of a number.
 (define_code_attr absneg_str [(abs "abs") (neg "neg")])
 
 ;; Conversions.
@@ -2255,7 +2268,7 @@
                                (UNSPEC_VRINTA "a") (UNSPEC_VRINTM "m")
                                (UNSPEC_VRINTR "r") (UNSPEC_VRINTX "x")])
 
-;; Some of the vrint instuctions are predicable.
+;; Some of the vrint instructions are predicable.
 (define_int_attr vrint_predicable [(UNSPEC_VRINTZ "yes") (UNSPEC_VRINTP "no")
                                   (UNSPEC_VRINTA "no") (UNSPEC_VRINTM "no")
                                   (UNSPEC_VRINTR "yes") (UNSPEC_VRINTX "yes")])
@@ -3014,3 +3027,20 @@
 ;; Define iterators for VCMLA operations as MUL
 (define_int_iterator VCMUL_OP [UNSPEC_VCMUL
 			       UNSPEC_VCMUL_CONJ])
+
+(define_int_attr VxCIQ_carry   [(VADCIQ_U "VADCIQ_U_carry")
+				(VADCIQ_S "VADCIQ_S_carry")
+				(VSBCIQ_U "VSBCIQ_U_carry")
+				(VSBCIQ_S "VSBCIQ_S_carry")])
+(define_int_attr VxCIQ_M_carry [(VADCIQ_M_U "VADCIQ_M_U_carry")
+				(VADCIQ_M_S "VADCIQ_M_S_carry")
+				(VSBCIQ_M_U "VSBCIQ_M_U_carry")
+				(VSBCIQ_M_S "VSBCIQ_M_S_carry")])
+(define_int_attr VxCQ_carry [(VADCQ_U "VADCQ_U_carry")
+			     (VADCQ_S "VADCQ_S_carry")
+			     (VSBCQ_U "VSBCQ_U_carry")
+			     (VSBCQ_S "VSBCQ_S_carry")])
+(define_int_attr VxCQ_M_carry [(VADCQ_M_U "VADCQ_M_U_carry")
+			       (VADCQ_M_S "VADCQ_M_S_carry")
+			       (VSBCQ_M_U "VSBCQ_M_U_carry")
+			       (VSBCQ_M_S "VSBCQ_M_S_carry")])

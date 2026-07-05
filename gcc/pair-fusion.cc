@@ -1,5 +1,5 @@
 // Pass to fuse adjacent loads/stores into paired memory accesses.
-// Copyright (C) 2023-2025 Free Software Foundation, Inc.
+// Copyright (C) 2023-2026 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -930,7 +930,7 @@ private:
   // are deleting both original insns and inserting a new insn for the stp.
   insn_info *m_repurpose;
 
-  // Destionation of the stp, it will be placed immediately after m_dest.
+  // Destination of the stp, it will be placed immediately after m_dest.
   insn_info *m_dest;
 
   // Current nondebug use that needs updating due to stp insertion.
@@ -2522,7 +2522,7 @@ pair_fusion_bb_info::try_fuse_pair (bool load_p, unsigned access_size,
     {
       if (dump_file)
 	fprintf (dump_file,
-		 "punting on load pair due to reg conflcits (%d,%d)\n",
+		 "punting on load pair due to reg conflicts (%d,%d)\n",
 		 insns[0]->uid (), insns[1]->uid ());
       return false;
     }

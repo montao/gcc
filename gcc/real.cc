@@ -1,5 +1,5 @@
 /* real.cc - software floating point emulation.
-   Copyright (C) 1993-2025 Free Software Foundation, Inc.
+   Copyright (C) 1993-2026 Free Software Foundation, Inc.
    Contributed by Stephen L. Moshier (moshier@world.std.com).
    Re-written by Richard Henderson <rth@redhat.com>
 
@@ -22,9 +22,13 @@
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "bitmap.h"
+#include "function.h"
 #include "tm.h"
 #include "rtl.h"
 #include "tree.h"
+#include "value-range.h"
+#include "vr-values.h"
 #include "realmpfr.h"
 #include "dfp.h"
 
@@ -1629,6 +1633,11 @@ real_to_decimal_for_mode (char *str, const REAL_VALUE_TYPE *r_orig,
       strcpy (str, (r.sign ? "-0.0" : "0.0"));
       return;
     case rvc_normal:
+      /*  When r_orig is a positive value that converts to all nines and is
+          rounded up to 1.0, str[0] is harmlessly accessed before being set to
+          '1'.  That read access triggers a valgrind warning.  Setting str[0]
+          to any value quiets the warning. */
+      str[0] = ' ';
       break;
     case rvc_inf:
       strcpy (str, (r.sign ? "-Inf" : "+Inf"));
@@ -3181,7 +3190,7 @@ const struct real_format motorola_single_format =
       - Denormals can be represented, but are treated as +0.0 when
 	used as an operand and are never generated as a result.
       - -0.0 can be represented, but a zero result is always +0.0.
-      - the only supported rounding mode is trunction (towards zero).  */
+      - the only supported rounding mode is truncation (towards zero).  */
 const struct real_format spu_single_format =
   {
     encode_ieee_single,
@@ -5505,6 +5514,26 @@ bool format_helper::can_represent_integral_type_p (tree type) const
      only one mantissa bit.  */
   bool signed_p = TYPE_SIGN (type) == SIGNED;
   return TYPE_PRECISION (type) - signed_p <= significand_size (*this);
+}
+
+/* True if all values in integer range *VR can be represented by this
+   floating-point type exactly.  */
+
+bool
+format_helper::can_represent_range_value_p (const irange *vr) const
+{
+  gcc_assert (!decimal_p ());
+
+  if (vr->undefined_p () || vr->varying_p ())
+    return false;
+
+  tree type = vr->type ();
+  unsigned precision = significand_size (*this);
+
+  if (TYPE_SIGN (type) == SIGNED)
+    precision++;
+
+  return range_fits_type_p (vr, precision, TYPE_SIGN (type));
 }
 
 /* True if mode M has a NaN representation and

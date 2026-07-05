@@ -1,5 +1,5 @@
 /* Analyze RTL for GNU compiler.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1546,6 +1546,9 @@ single_set_2 (const rtx_insn *insn, const_rtx pat)
 	    case CLOBBER:
 	      break;
 
+	    default:
+	      return NULL_RTX;
+
 	    case SET:
 	      /* We can consider insns having multiple sets, where all
 		 but one are dead as single set insns.  In common case
@@ -1555,23 +1558,28 @@ single_set_2 (const rtx_insn *insn, const_rtx pat)
 		 When we reach set first time, we just expect this is
 		 the single set we are looking for and only when more
 		 sets are found in the insn, we check them.  */
+	      auto unused = [] (const rtx_insn *insn, rtx dest) {
+		if (!df)
+		  return false;
+		if (df_note)
+		  return !!find_reg_note (insn, REG_UNUSED, dest);
+		return (REG_P (dest)
+			&& !HARD_REGISTER_P (dest)
+			&& REGNO (dest) < df->regs_inited
+			&& DF_REG_USE_COUNT (REGNO (dest)) == 0);
+	      };
 	      if (!set_verified)
 		{
-		  if (find_reg_note (insn, REG_UNUSED, SET_DEST (set))
-		      && !side_effects_p (set))
+		  if (unused (insn, SET_DEST (set)) && !side_effects_p (set))
 		    set = NULL;
 		  else
 		    set_verified = 1;
 		}
 	      if (!set)
 		set = sub, set_verified = 0;
-	      else if (!find_reg_note (insn, REG_UNUSED, SET_DEST (sub))
-		       || side_effects_p (sub))
+	      else if (!unused (insn, SET_DEST (sub)) || side_effects_p (sub))
 		return NULL_RTX;
 	      break;
-
-	    default:
-	      return NULL_RTX;
 	    }
 	}
     }
@@ -3821,6 +3829,13 @@ commutative_operand_precedence (rtx op)
       /* If only one operand is a binary expression, it will be the first
          operand.  In particular,  (plus (minus (reg) (reg)) (neg (reg)))
          is canonical, although it will usually be further simplified.  */
+      return 3;
+
+    case RTX_COMM_COMPARE:
+    case RTX_COMPARE:
+      /* Give comparisons a cost between the unary expressions below
+	 and the other binary expressions above, so that we don't have
+	 a situation where the canonical order is binary, unary, binary.  */
       return 2;
 
     case RTX_UNARY:
@@ -4787,6 +4802,24 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
 
   unsigned int mode_width = GET_MODE_PRECISION (mode);
 
+  /* For unary ops like ffs or popcount we want to determine the number of
+     nonzero bits from the operand.  This only matters with very large
+     vector modes.  A
+       (popcount:DI (V128BImode)
+     should not get a nonzero-bit mask of (1 << 7) - 1 as that could
+     lead to incorrect optimizations based on it, see PR123501.  */
+  unsigned int op_mode_width = mode_width;
+  machine_mode op_mode = mode;
+  if (UNARY_P (x))
+    {
+      const_rtx op = XEXP (x, 0);
+      if (GET_MODE_PRECISION (GET_MODE (op)).is_constant ())
+	{
+	  op_mode = GET_MODE (op);
+	  op_mode_width = GET_MODE_PRECISION (op_mode).to_constant ();
+	}
+    }
+
   if (CONST_INT_P (x))
     {
       if (SHORT_IMMEDIATES_SIGN_EXTEND
@@ -5190,13 +5223,16 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
     case FFS:
     case POPCOUNT:
       /* This is at most the number of bits in the mode.  */
-      nonzero = (HOST_WIDE_INT_UC (2) << (floor_log2 (mode_width))) - 1;
+      nonzero = (HOST_WIDE_INT_UC (2) << (floor_log2 (op_mode_width))) - 1;
       break;
 
     case CLZ:
       /* If CLZ has a known value at zero, then the nonzero bits are
-	 that value, plus the number of bits in the mode minus one.  */
-      if (CLZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
+	 that value, plus the number of bits in the mode minus one.
+	 If we have a different operand mode, don't try to get nonzero
+	 bits as currently nonzero is not a poly_int.  */
+      if (op_mode == mode
+	  && CLZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
 	nonzero
 	  |= (HOST_WIDE_INT_1U << (floor_log2 (mode_width))) - 1;
       else
@@ -5205,8 +5241,10 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
 
     case CTZ:
       /* If CTZ has a known value at zero, then the nonzero bits are
-	 that value, plus the number of bits in the mode minus one.  */
-      if (CTZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
+	 that value, plus the number of bits in the mode minus one.
+	 See above for op_mode != mode.  */
+      if (op_mode == mode
+	  && CLZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
 	nonzero
 	  |= (HOST_WIDE_INT_1U << (floor_log2 (mode_width))) - 1;
       else
@@ -5215,7 +5253,7 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
 
     case CLRSB:
       /* This is at most the number of bits in the mode minus 1.  */
-      nonzero = (HOST_WIDE_INT_1U << (floor_log2 (mode_width))) - 1;
+      nonzero = (HOST_WIDE_INT_1U << (floor_log2 (op_mode_width))) - 1;
       break;
 
     case PARITY:
@@ -5740,7 +5778,8 @@ pattern_cost (rtx pat, bool speed)
 	  rtx x = XVECEXP (pat, 0, i);
 	  if (GET_CODE (x) == SET)
 	    {
-	      if (GET_CODE (SET_SRC (x)) == COMPARE)
+	      if (GET_CODE (SET_SRC (x)) == COMPARE
+		  || GET_MODE_CLASS (GET_MODE (SET_DEST (x))) == MODE_CC)
 		{
 		  if (comparison)
 		    return 0;
@@ -5795,7 +5834,8 @@ seq_cost (const rtx_insn *seq, bool speed)
         cost += set_rtx_cost (set, speed);
       else if (NONDEBUG_INSN_P (seq))
 	{
-	  int this_cost = insn_cost (CONST_CAST_RTX_INSN (seq), speed);
+	  int this_cost = insn_cost (const_cast<struct rtx_insn *> (seq),
+				     speed);
 	  if (this_cost > 0)
 	    cost += this_cost;
 	  else
@@ -6974,6 +7014,26 @@ add_auto_inc_notes (rtx_insn *insn, rtx x)
 	for (j = XVECLEN (x, i) - 1; j >= 0; j--)
 	  add_auto_inc_notes (insn, XVECEXP (x, i, j));
     }
+}
+
+/* Return true if INSN is the second element of a pair of macro-fused
+   single_sets, both of which having the same register output as another.  */
+bool
+single_output_fused_pair_p (rtx_insn *insn)
+{
+  rtx set, prev_set;
+  rtx_insn *prev;
+
+  return INSN_P (insn)
+	 && SCHED_GROUP_P (insn)
+	 && (prev = prev_nonnote_nondebug_insn (insn))
+	 && (set = single_set (insn)) != NULL_RTX
+	 && (prev_set = single_set (prev))
+	     != NULL_RTX
+	 && REG_P (SET_DEST (set))
+	 && REG_P (SET_DEST (prev_set))
+	 && (!reload_completed
+	     || REGNO (SET_DEST (set)) == REGNO (SET_DEST (prev_set)));
 }
 
 /* Return true if X is register asm.  */

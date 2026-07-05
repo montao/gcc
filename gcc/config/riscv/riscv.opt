@@ -1,6 +1,6 @@
 ; Options for the RISC-V port of the compiler
 ;
-; Copyright (C) 2011-2025 Free Software Foundation, Inc.
+; Copyright (C) 2011-2026 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -34,7 +34,7 @@ Target RejectNegative Joined UInteger Var(riscv_branch_cost)
 -mbranch-cost=N	Set the cost of branches to roughly N instructions.
 
 mplt
-Target Alias(fplt)
+Target Alias(fplt) Undocumented
 This option is deprecated; use -fplt or -fno-plt instead.
 
 mabi=
@@ -107,7 +107,7 @@ Target RejectNegative Joined Var(riscv_cpu_string) Save
 -mcpu=PROCESSOR	Use architecture of and optimize the output for PROCESSOR.
 
 msmall-data-limit=
-Target Joined UInteger Var(g_switch_value) Init(8)
+Target Joined UInteger Var(g_switch_value) Init(8) RejectNegative
 -msmall-data-limit=N	Put global and static data smaller than <number> bytes into a special section (on some targets).
 
 msave-restore
@@ -131,6 +131,14 @@ Do not generate unaligned memory accesses.
 mscalar-strict-align
 Target Save Alias(mstrict-align)
 Do not generate unaligned scalar memory accesses.
+
+mzilsd-word-align
+Target RejectNegative
+Allow Zilsd/Zclsd memory accesses to be 4-byte aligned.
+
+mzilsd-strict-align
+Target RejectNegative
+Force Zilsd/Zclsd memory accesses to be 8-byte aligned.
 
 mvector-strict-align
 Target Save Var(rvv_vector_strict_align) Init(1)
@@ -170,6 +178,12 @@ Omit the frame pointer in leaf functions.
 
 TargetVariable
 int riscv_isa_flags
+
+TargetVariable
+enum riscv_zilsd_align_type riscv_zilsd_align = RISCV_ZILSD_ALIGN_DEFAULT
+
+TargetVariable
+int riscv_zilsd_align_explicit = 0
 
 Mask(64BIT) Var(riscv_isa_flags)
 
@@ -286,9 +300,17 @@ Max number of bytes to compare as part of inlined strcmp/strncmp routines (defau
 Target RejectNegative Joined UInteger Var(gpr2vr_cost) Init(GPR2VR_COST_UNPROVIDED)
 Set the cost value of the rvv instruction when operate from GPR to VR.
 
+-param=vr2gpr-cost=
+Target RejectNegative Joined UInteger Var(vr2gpr_cost) Init(VR2GPR_COST_UNPROVIDED)
+Set the cost value of the rvv instruction when operate from VR to GPR .
+
 -param=fpr2vr-cost=
 Target RejectNegative Joined UInteger Var(fpr2vr_cost) Init(FPR2VR_COST_UNPROVIDED)
 Set the cost value of the rvv instruction when operate from FPR to VR.
+
+-param=vr2fpr-cost=
+Target RejectNegative Joined UInteger Var(vr2fpr_cost) Init(VR2FPR_COST_UNPROVIDED)
+Set the cost value of the rvv instruction when operate from VR to FPR.
 
 -param=riscv-autovec-mode=
 Target Undocumented RejectNegative Joined Var(riscv_autovec_mode) Save
@@ -312,6 +334,9 @@ Enum(rvv_max_lmul) String(m8) Value(RVV_M8)
 
 EnumValue
 Enum(rvv_max_lmul) String(dynamic) Value(RVV_DYNAMIC)
+
+EnumValue
+Enum(rvv_max_lmul) String(conv-dynamic) Value(RVV_CONV_DYNAMIC)
 
 mrvv-max-lmul=
 Target RejectNegative Joined Enum(rvv_max_lmul) Var(rvv_max_lmul) Init(RVV_M1)
@@ -341,6 +366,10 @@ Target Undocumented RejectNegative Joined Enum(vsetvl_strategy) Var(vsetvl_strat
 Target Undocumented Uinteger Var(riscv_two_source_permutes) Init(0)
 -param=riscv-two-source-permutes Enable permutes with two source vectors.
 
+mmax-vectorization
+Target Var(riscv_max_vectorization) Save
+Override the scalar cost model such that vectorization is always profitable.
+
 Enum
 Name(stringop_strategy) Type(enum stringop_strategy_enum)
 Valid arguments to -mstringop-strategy=:
@@ -360,6 +389,18 @@ Enum(stringop_strategy) String(vector) Value(STRATEGY_VECTOR)
 mstringop-strategy=
 Target RejectNegative Joined Enum(stringop_strategy) Var(stringop_strategy) Init(STRATEGY_AUTO)
 Specify stringop expansion strategy.
+
+-param=memcpy-size-threshold=
+Target Joined UInteger Var(riscv_memcpy_size_threshold) Init(-1) Param
+Constant memcpy size in bytes above which to start using libcalls over inlining.
+
+-param=memmove-size-threshold=
+Target Joined UInteger Var(riscv_memmove_size_threshold) Init(-1) Param
+Constant memmove size in bytes above which to start using libcalls over inlining.
+
+-param=memset-size-threshold=
+Target Joined UInteger Var(riscv_memset_size_threshold) Init(-1) Param
+Constant memset size in bytes above which to start using libcalls over inlining.
 
 Enum
 Name(rvv_vector_bits) Type(enum rvv_vector_bits_enum)
@@ -396,3 +437,20 @@ Specifies whether the fence.tso instruction should be used.
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.
+
+Enum
+Name(arcv_mpy_option) Type(enum arcv_mpy_option_enum)
+Valid arguments to -mmpy_option=:
+
+EnumValue
+Enum(arcv_mpy_option) String(1c) Value(ARCV_MPY_OPTION_1C)
+
+EnumValue
+Enum(arcv_mpy_option) String(2c) Value(ARCV_MPY_OPTION_2C)
+
+EnumValue
+Enum(arcv_mpy_option) String(10c) Value(ARCV_MPY_OPTION_10C)
+
+mmpy-option=
+Target RejectNegative Joined Enum(arcv_mpy_option) Var(arcv_mpy_option) Init(ARCV_MPY_OPTION_2C)
+The type of MPY unit used by the RMX-100 core (to be used in combination with -mtune=arc-v-rmx-100-series) (default: 2c).

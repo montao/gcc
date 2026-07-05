@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -178,6 +178,10 @@ package Osint is
    --  Check if this library file is a read-only file
 
    function Strip_Directory (Name : File_Name_Type) return File_Name_Type;
+   --  Strips the prefix directory name (if any) from Name. Returns the
+   --  stripped name. Name cannot end with a directory separator.
+
+   function Strip_Directory (Name : String) return String;
    --  Strips the prefix directory name (if any) from Name. Returns the
    --  stripped name. Name cannot end with a directory separator.
 

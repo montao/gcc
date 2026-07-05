@@ -1,5 +1,5 @@
 /* File caching.
-   Copyright (C) 2023-2025 Free Software Foundation, Inc.
+   Copyright (C) 2023-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -138,7 +138,7 @@ fail_mmap:
   return ret;
 }
 
-/* Contructor of cache item.  */
+/* Constructor of cache item.  */
 ltrans_file_cache::item::item (std::string input, std::string output,
 			       checksum_t input_checksum,
 			       uint32_t last_used):

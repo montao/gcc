@@ -1,5 +1,5 @@
 /* Mode switching cleanup pass for the EPIPHANY cpu.
-   Copyright (C) 2000-2025 Free Software Foundation, Inc.
+   Copyright (C) 2000-2026 Free Software Foundation, Inc.
    Contributed by Embecosm on behalf of Adapteva, Inc.
 
 This file is part of GCC.
@@ -68,7 +68,7 @@ public:
    If only one rounding mode is required, select that one.
    Else we have to choose one to use in this mode setting insn and
    insert new mode setting insns on the edges where the other mode
-   becomes unambigous.  */
+   becomes unambiguous.  */
 
 unsigned
 pass_resolve_sw_modes::execute (function *fun)

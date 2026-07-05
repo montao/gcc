@@ -1,5 +1,5 @@
 /* Top level of GCC compilers (cc1, cc1plus, etc.)
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -22,6 +22,7 @@ along with GCC; see the file COPYING3.  If not see
    in the proper order, and counts the time used by each.
    Error messages and low-level interface to malloc also handled here.  */
 
+#define INCLUDE_LIST
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -63,6 +64,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic-core.h" /* for fnotice */
 #include "stringpool.h"
 #include "attribs.h"
+#include "topics/pass-events.h"
+#include "channels.h"
 
 /* Reserved TODOs */
 #define TODO_verify_il			(1u << 31)
@@ -78,7 +81,7 @@ opt_pass *current_pass;
    need to implement cloning, but passes that support multiple instances
    *must* provide their own implementation of the clone method.
 
-   Handle this by providing a default implemenation, but make it a fatal
+   Handle this by providing a default implementation, but make it a fatal
    error to call it.  */
 
 opt_pass *
@@ -355,13 +358,6 @@ finish_optimization_passes (void)
   gcc::dump_manager *dumps = m_ctxt->get_dumps ();
 
   timevar_push (TV_DUMP);
-  if (coverage_instrumentation_p () || flag_test_coverage
-      || flag_branch_probabilities)
-    {
-      dumps->dump_start (m_pass_profile_1->static_pass_number, NULL);
-      end_branch_prob ();
-      dumps->dump_finish (m_pass_profile_1->static_pass_number);
-    }
 
   /* Do whatever is necessary to finish printing the graphs.  */
   for (i = TDI_end; (dfi = dumps->get_dump_file_info (i)) != NULL; ++i)
@@ -891,7 +887,7 @@ pass_manager::register_one_dump_file (opt_pass *pass)
   set_pass_for_id (id, pass);
   full_name = concat (prefix, pass->name, num, NULL);
   register_pass_name (pass, full_name);
-  free (CONST_CAST (char *, full_name));
+  free (const_cast<char *> (full_name));
 }
 
 /* Register the dump files for the pass_manager starting at PASS. */
@@ -1918,7 +1914,7 @@ account_profile_1 (function *fn, void *data)
   pop_cfun ();
 }
 
-/* Account profile chnages to all passes in list starting in SUB.  */
+/* Account profile changes to all passes in list starting in SUB.  */
 
 static void
 account_profile_in_list (opt_pass *sub)
@@ -2036,6 +2032,7 @@ pass_manager::dump_profile_report () const
 	    fprintf (dump_file, "| %12.0f", profile_record[i].time);
 	    /* Time units changes with profile estimate and feedback.  */
 	    if (i == m_pass_profile_1->static_pass_number
+		|| i == m_pass_ipa_auto_profile_1->static_pass_number
 		|| i == m_pass_ipa_tree_profile_1->static_pass_number)
 	      fprintf (dump_file, "-------------");
 	    else if (rel_time_change)
@@ -2184,15 +2181,6 @@ execute_todo (unsigned int flags)
     df_finish_pass ((flags & TODO_df_verify) != 0);
 }
 
-/* Verify invariants that should hold between passes.  This is a place
-   to put simple sanity checks.  */
-
-static void
-verify_interpass_invariants (void)
-{
-  gcc_checking_assert (!fold_deferring_overflow_warnings_p ());
-}
-
 /* Helper function. Verify that the properties has been turn into the
    properties expected by the pass.  */
 
@@ -2210,7 +2198,7 @@ release_dump_file_name (void)
 {
   if (dump_file_name)
     {
-      free (CONST_CAST (char *, dump_file_name));
+      free (const_cast<char *> (dump_file_name));
       dump_file_name = NULL;
     }
 }
@@ -2341,7 +2329,6 @@ execute_one_ipa_transform_pass (struct cgraph_node *node,
   /* Run post-pass cleanup.  */
   gcc_checking_assert (!(todo_after & TODO_verify_il));
   execute_todo (todo_after);
-  verify_interpass_invariants ();
 
   /* Stop timevar.  */
   if (pass->tv_id != TV_NONE)
@@ -2581,9 +2568,14 @@ skip_pass (opt_pass *pass)
 bool
 execute_one_pass (opt_pass *pass)
 {
+  namespace pass_events = gcc::topics::pass_events;
+
   unsigned int todo_after = 0;
 
   bool gate_status;
+
+  if (auto channel = g->get_channels ().pass_events_channel.get_if_active ())
+    channel->publish (pass_events::before_pass {pass, cfun});
 
   /* IPA passes are executed on whole program, so cfun should be NULL.
      Other passes need function context set.  */
@@ -2712,8 +2704,6 @@ execute_one_pass (opt_pass *pass)
 	}
     }
 
-  verify_interpass_invariants ();
-
   /* Stop timevar.  */
   if (pass->tv_id != TV_NONE)
     timevar_pop (pass->tv_id);
@@ -2747,6 +2737,10 @@ execute_one_pass (opt_pass *pass)
 
   if (pass->type == SIMPLE_IPA_PASS || pass->type == IPA_PASS)
     report_heap_memory_use ();
+
+  if (auto channel = g->get_channels ().pass_events_channel.get_if_active ())
+    channel->publish (pass_events::after_pass {pass, cfun});
+
   return true;
 }
 
@@ -2904,6 +2898,11 @@ ipa_write_summaries (void)
   FOR_EACH_DEFINED_VARIABLE (vnode)
     if (vnode->need_lto_streaming)
       lto_set_symtab_encoder_in_partition (encoder, vnode);
+
+  asm_node *anode;
+  for (anode = symtab->first_asm_symbol (); anode;
+       anode = safe_as_a<asm_node*> (anode->next))
+    lto_set_symtab_encoder_in_partition (encoder, anode);
 
   ipa_write_summaries_1 (compute_ltrans_boundary (encoder),
 			 flag_generate_offload);

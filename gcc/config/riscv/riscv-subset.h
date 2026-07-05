@@ -1,5 +1,5 @@
 /* Definition of data structure of RISC-V subset for GNU compiler.
-   Copyright (C) 2011-2025 Free Software Foundation, Inc.
+   Copyright (C) 2011-2026 Free Software Foundation, Inc.
    Contributed by Andrew Waterman (andrew@sifive.com).
    Based on MIPS target for GNU compiler.
 
@@ -45,15 +45,16 @@ class riscv_subset_list
 {
 public:
   /* Because the parse method is called in several places, to prevent repeated
-     errors, use this flag to prevent it from repeating parse. */
+     errors, use this flag to prevent it from repeating the parse.  */
   static bool parse_failed;
 
 private:
   /* Original arch string.  */
   const char *m_arch;
 
-  /* Location of arch string, used for report error.  */
-  location_t m_loc;
+  /* A pointer to the location that should be used for diagnostics,
+     or null if diagnostics should be suppressed.  */
+  location_t *m_loc;
 
   /* Head of subset info list.  */
   riscv_subset_t *m_head;
@@ -70,7 +71,7 @@ private:
   /* Allow adding the same extension more than once.  */
   bool m_allow_adding_dup;
 
-  riscv_subset_list (const char *, location_t);
+  riscv_subset_list (const char *, location_t *);
 
   const char *parsing_subset_version (const char *, const char *, unsigned *,
 				      unsigned *, bool, bool *);
@@ -106,12 +107,12 @@ public:
 
   riscv_subset_list *clone () const;
 
-  static riscv_subset_list *parse (const char *, location_t);
+  static riscv_subset_list *parse (const char *, location_t *);
   const char *parse_single_ext (const char *, bool exact_single_p = true);
 
   int match_score (riscv_subset_list *) const;
 
-  void set_loc (location_t);
+  void set_loc (location_t *);
 
   void set_allow_adding_dup (bool v) { m_allow_adding_dup = v; }
 
@@ -182,7 +183,7 @@ extern void
 riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);
 extern bool riscv_minimal_hwprobe_feature_bits (const char *,
 						struct riscv_feature_bits *,
-						location_t);
+						location_t *);
 extern bool
 riscv_ext_is_subset (struct cl_target_option *, struct cl_target_option *);
 

@@ -1,6 +1,6 @@
 /* Read the GIMPLE representation from a file stream.
 
-   Copyright (C) 2009-2025 Free Software Foundation, Inc.
+   Copyright (C) 2009-2026 Free Software Foundation, Inc.
    Contributed by Kenneth Zadeck <zadeck@naturalbridge.com>
    Re-implemented by Diego Novillo <dnovillo@google.com>
 
@@ -508,7 +508,7 @@ lto_location_cache::revert_location_cache ()
 /* Read a location bitpack from bit pack BP and either update *LOC directly
    or add it to the location cache.  If IB is non-NULL, stream in a block
    afterwards.
-   It is neccesary to call apply_location_cache to get *LOC updated.  */
+   It is necessary to call apply_location_cache to get *LOC updated.  */
 
 void
 lto_location_cache::input_location_and_block (location_t *loc,
@@ -611,7 +611,7 @@ lto_location_cache::input_location_and_block (location_t *loc,
 
 /* Read a location bitpack from bit pack BP and either update *LOC directly
    or add it to the location cache.
-   It is neccesary to call apply_location_cache to get *LOC updated.  */
+   It is necessary to call apply_location_cache to get *LOC updated.  */
 
 void
 lto_location_cache::input_location (location_t *loc, struct bitpack_d *bp,
@@ -622,7 +622,7 @@ lto_location_cache::input_location (location_t *loc, struct bitpack_d *bp,
 
 /* Read a location bitpack from input block IB and either update *LOC directly
    or add it to the location cache.
-   It is neccesary to call apply_location_cache to get *LOC updated.  */
+   It is necessary to call apply_location_cache to get *LOC updated.  */
 
 void
 lto_input_location (location_t *loc, struct bitpack_d *bp,
@@ -634,7 +634,7 @@ lto_input_location (location_t *loc, struct bitpack_d *bp,
 /* Read a reference to a tree node from DATA_IN using input block IB.
    TAG is the expected node that should be found in IB, if TAG belongs
    to one of the indexable trees, expect to read a reference index to
-   be looked up in one of the symbol tables, otherwise read the pysical
+   be looked up in one of the symbol tables, otherwise read the physical
    representation of the tree using stream_read_tree.  FN is the
    function scope for the read tree.  */
 
@@ -1140,6 +1140,7 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
       loop->dont_vectorize = streamer_read_hwi (ib);
       loop->force_vectorize = streamer_read_hwi (ib);
       loop->finite_p = streamer_read_hwi (ib);
+      loop->can_be_parallel = streamer_read_hwi (ib);
       loop->simduid = stream_read_tree (ib, data_in);
 
       place_new_loop (fn, loop);
@@ -1987,7 +1988,6 @@ lto_input_toplevel_asms (struct lto_file_decl_data *file_data, int order_base)
     = (const struct lto_simple_header_with_strings *) data;
   int string_offset;
   class data_in *data_in;
-  tree str;
 
   if (! data)
     return;
@@ -2000,10 +2000,13 @@ lto_input_toplevel_asms (struct lto_file_decl_data *file_data, int order_base)
   data_in = lto_data_in_create (file_data, data + string_offset,
 			      header->string_size, vNULL);
 
-  while ((str = streamer_read_string_cst (data_in, &ib)))
+  unsigned asm_count = streamer_read_uhwi (&ib);
+  for (unsigned i = 0; i < asm_count; i++)
     {
+      tree str = stream_read_tree (&ib, data_in);
       asm_node *node = symtab->finalize_toplevel_asm (str);
       node->order = streamer_read_hwi (&ib) + order_base;
+      node->lto_file_data = file_data;
       if (node->order >= symtab->order)
 	symtab->order = node->order + 1;
     }

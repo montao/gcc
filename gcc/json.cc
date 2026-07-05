@@ -1,5 +1,5 @@
 /* JSON trees
-   Copyright (C) 2017-2025 Free Software Foundation, Inc.
+   Copyright (C) 2017-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -120,6 +120,42 @@ pointer::token::operator= (pointer::token &&other)
   return *this;
 }
 
+/* Print this to PP as an RFC 6901 section 3 reference-token.  */
+
+void
+pointer::token::print (pretty_printer *pp) const
+{
+  switch (m_kind)
+    {
+    case kind::root_value:
+      break;
+
+    case kind::object_member:
+      {
+	for (const char *ch = m_data.u_member; *ch; ++ch)
+	  {
+	    switch (*ch)
+	      {
+	      case '~':
+		pp_string (pp, "~0");
+		break;
+	      case '/':
+		pp_string (pp, "~1");
+		break;
+	      default:
+		pp_character (pp, *ch);
+		break;
+	      }
+	  }
+      }
+      break;
+
+    case kind::array_index:
+      pp_scalar (pp, HOST_SIZE_T_PRINT_UNSIGNED, (fmt_size_t) m_data.u_index);
+      break;
+    }
+}
+
 /* class json::value.  */
 
 /* Dump this json::value tree to OUTF.
@@ -234,6 +270,29 @@ value::compare (const value &val_a, const value &val_b)
     }
 }
 
+/* Print this value's JSON Pointer to PP.  */
+
+void
+value::print_pointer (pretty_printer *pp) const
+{
+  /* Get path from this value to root.  */
+  auto_vec<const pointer::token *> ancestry;
+  for (auto *iter = this; iter; iter = iter->m_pointer_token.m_parent)
+    ancestry.safe_push (&iter->m_pointer_token);
+
+  /* Walk backward, going from root to this value.  */
+  ancestry.reverse ();
+  bool first = true;
+  for (auto iter : ancestry)
+    {
+      if (first)
+	first = false;
+      else
+	pp_character (pp, '/');
+      iter->print (pp);
+    }
+}
+
 /* class json::object, a subclass of json::value, representing
    an ordered collection of key/value pairs.  */
 
@@ -289,6 +348,30 @@ object::print (pretty_printer *pp, bool formatted) const
   pp_character (pp, '}');
 }
 
+std::unique_ptr<value>
+object::clone () const
+{
+  return clone_as_object ();
+}
+
+std::unique_ptr<object>
+object::clone_as_object () const
+{
+  auto result = std::make_unique<object> ();
+
+  /* Iterate in the order that the keys were inserted.  */
+  unsigned i;
+  const char *key;
+  FOR_EACH_VEC_ELT (m_keys, i, key)
+    {
+      map_t &mut_map = const_cast<map_t &> (m_map);
+      value *value = *mut_map.get (key);
+      result->set (key, value->clone ());
+    }
+
+  return result;
+}
+
 /* Set the json::value * for KEY, taking ownership of V
    (and taking a copy of KEY if necessary).  */
 
@@ -335,21 +418,27 @@ object::get (const char *key) const
 }
 
 /* Set value of KEY within this object to a JSON
-   string value based on UTF8_VALUE.  */
+   string value based on UTF8_VALUE.
+   Return a borrowed ptr to the new json::string.  */
 
-void
+const json::string *
 object::set_string (const char *key, const char *utf8_value)
 {
-  set (key, new json::string (utf8_value));
+  json::string *str = new json::string (utf8_value);
+  set (key, str);
+  return str;
 }
 
 /* Set value of KEY within this object to a JSON
-   integer value based on V.  */
+   integer value based on V.
+   Return a borrowed ptr to the new json::integer_number.  */
 
-void
+const json::integer_number *
 object::set_integer (const char *key, long v)
 {
-  set (key, new json::integer_number (v));
+  json::integer_number *js_int = new json::integer_number (v);
+  set (key, js_int);
+  return js_int;
 }
 
 /* Set value of KEY within this object to a JSON
@@ -368,6 +457,31 @@ void
 object::set_bool (const char *key, bool v)
 {
   set (key, new json::literal (v));
+}
+
+void
+object::set_string (const string_property &property, const char *utf8_value)
+{
+  set_string (property.m_key.get (), utf8_value);
+}
+
+void
+object::set_integer (const integer_property &property, long value)
+{
+  set_integer (property.m_key.get (), value);
+}
+
+void
+object::set_bool (const bool_property &property, bool value)
+{
+  set_bool (property.m_key.get (), value);
+}
+
+void
+object::set_array_of_string (const array_of_string_property &property,
+			     std::unique_ptr<json::array> value)
+{
+  set<array> (property.m_key.get (), std::move (value));
 }
 
 /* Subroutine of json::compare for comparing a pairs of objects.  */
@@ -443,6 +557,17 @@ array::print (pretty_printer *pp, bool formatted) const
   pp_character (pp, ']');
 }
 
+std::unique_ptr<value>
+array::clone () const
+{
+  auto result = std::make_unique<array> ();
+  unsigned i;
+  value *v;
+  FOR_EACH_VEC_ELT (m_elements, i, v)
+    result->append (v->clone ());
+  return result;
+}
+
 /* Append non-NULL value V to a json::array, taking ownership of V.  */
 
 void
@@ -453,11 +578,16 @@ array::append (value *v)
   m_elements.safe_push (v);
 }
 
-void
+/* Append UTF8_VALUE to this array, returning a borrowed pointer to the
+   new json::string.  */
+
+const json::string *
 array::append_string (const char *utf8_value)
 {
   gcc_assert (utf8_value);
-  append (new json::string (utf8_value));
+  auto js_str = new json::string (utf8_value);
+  append (js_str);
+  return js_str;
 }
 
 /* class json::float_number, a subclass of json::value, wrapping a double.  */
@@ -473,6 +603,12 @@ float_number::print (pretty_printer *pp,
   pp_string (pp, tmp);
 }
 
+std::unique_ptr<value>
+float_number::clone () const
+{
+  return std::make_unique<float_number> (m_value);
+}
+
 /* class json::integer_number, a subclass of json::value, wrapping a long.  */
 
 /* Implementation of json::value::print for json::integer_number.  */
@@ -486,6 +622,11 @@ integer_number::print (pretty_printer *pp,
   pp_string (pp, tmp);
 }
 
+std::unique_ptr<value>
+integer_number::clone () const
+{
+  return std::make_unique<integer_number> (m_value);
+}
 
 /* class json::string, a subclass of json::value.  */
 
@@ -501,9 +642,10 @@ string::string (const char *utf8)
 string::string (const char *utf8, size_t len)
 {
   gcc_assert (utf8);
-  m_utf8 = XNEWVEC (char, len);
+  m_utf8 = XNEWVEC (char, len + 1);
   m_len = len;
   memcpy (m_utf8, utf8, len);
+  m_utf8[len] = '\0';
 }
 
 /* Implementation of json::value::print for json::string.  */
@@ -513,6 +655,12 @@ string::print (pretty_printer *pp,
 	       bool formatted ATTRIBUTE_UNUSED) const
 {
   print_escaped_json_string (pp, m_utf8, m_len);
+}
+
+std::unique_ptr<value>
+string::clone () const
+{
+  return std::make_unique<string> (m_utf8, m_len);
 }
 
 /* class json::literal, a subclass of json::value.  */
@@ -537,6 +685,12 @@ literal::print (pretty_printer *pp,
     default:
       gcc_unreachable ();
     }
+}
+
+std::unique_ptr<value>
+literal::clone () const
+{
+  return std::make_unique<literal> (m_kind);
 }
 
 
@@ -914,6 +1068,65 @@ test_comparisons ()
   ASSERT_JSON_NE (arr_1, arr_2);
 }
 
+/* Ensure that json::string's get_string is usable as a C-style string.  */
+
+static void
+test_strcmp ()
+{
+  string str ("foobar", 3);
+  ASSERT_EQ (strcmp (str.get_string (), "foo"), 0);
+}
+
+static void
+test_cloning ()
+{
+  // Objects
+  {
+    object obj;
+    obj.set_string ("foo", "bar");
+
+    auto obj_clone = obj.clone ();
+    ASSERT_JSON_EQ (obj, *obj_clone);
+  }
+
+  // Arrays
+  {
+    array arr;
+    arr.append (std::make_unique<string> ("foo"));
+
+    auto arr_clone = arr.clone ();
+    ASSERT_JSON_EQ (arr, *arr_clone);
+  }
+
+  // float_number
+  {
+    float_number f_one (1.0);
+    auto f_clone = f_one.clone ();
+    ASSERT_JSON_EQ (f_one, *f_clone);
+  }
+
+  // integer_number
+  {
+    integer_number num (42);
+    auto num_clone = num.clone ();
+    ASSERT_JSON_EQ (num, *num_clone);
+  }
+
+  // string
+  {
+    string str ("foo");
+    auto str_clone = str.clone ();
+    ASSERT_JSON_EQ (str, *str_clone);
+  }
+
+  // literal
+  {
+    literal lit (JSON_TRUE);
+    auto lit_clone = lit.clone ();
+    ASSERT_JSON_EQ (lit, *lit_clone);
+  }
+}
+
 /* Run all of the selftests within this file.  */
 
 void
@@ -928,6 +1141,8 @@ json_cc_tests ()
   test_writing_literals ();
   test_formatting ();
   test_comparisons ();
+  test_strcmp ();
+  test_cloning ();
 }
 
 } // namespace selftest

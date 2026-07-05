@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE (__ARM_FEATURE_SVE2 intrinsics)
-   Copyright (C) 2020-2025 Free Software Foundation, Inc.
+   Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -40,13 +40,13 @@
 #include "tree-vector-builder.h"
 #include "rtx-vector-builder.h"
 #include "vec-perm-indices.h"
-#include "aarch64-sve-builtins.h"
+#include "aarch64-acle-builtins.h"
 #include "aarch64-sve-builtins-shapes.h"
 #include "aarch64-sve-builtins-base.h"
 #include "aarch64-sve-builtins-sve2.h"
 #include "aarch64-sve-builtins-functions.h"
 
-using namespace aarch64_sve;
+using namespace aarch64_acle;
 
 namespace {
 
@@ -252,18 +252,6 @@ public:
   }
 };
 
-class svcvtxnt_impl : public CODE_FOR_MODE1 (aarch64_sve2_cvtxnt)
-{
-public:
-  gimple *
-  fold (gimple_folder &f) const override
-  {
-    if (f.pred == PRED_x && is_pfalse (gimple_call_arg (f.call, 1)))
-      return f.fold_call_to (build_zero_cst (TREE_TYPE (f.lhs)));
-    return NULL;
-  }
-};
-
 class svdup_laneq_impl : public function_base
 {
 public:
@@ -303,6 +291,65 @@ public:
   }
 };
 
+class svfirst_lastp_impl : public function_base
+{
+public:
+  CONSTEXPR svfirst_lastp_impl (bool first)
+    : m_first (first)
+  {}
+
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    tree pg = gimple_call_arg (f.call, 0);
+    tree pn = gimple_call_arg (f.call, 1);
+
+    gcc_assert (TYPE_MODE (TREE_TYPE (pg)) == TYPE_MODE (TREE_TYPE (pn)));
+
+    if (is_pfalse (pg) || is_pfalse (pn))
+      return f.fold_call_to (build_minus_one_cst (TREE_TYPE (f.lhs)));
+
+    if (TREE_CODE (pg) != VECTOR_CST
+	|| TREE_CODE (pn) != VECTOR_CST)
+      return NULL;
+
+    HOST_WIDE_INT nelts_full_vector = aarch64_fold_sve_cnt_pat (AARCH64_SV_ALL,
+						      f.elements_per_vq (0));
+    if (!m_first && nelts_full_vector < 0)
+      return NULL;
+
+    tree pa = fold_build2 (BIT_AND_EXPR, TREE_TYPE (pg), pg, pn);
+    gcc_assert (TREE_CODE (pa) == VECTOR_CST);
+
+    int elt_size = f.type_suffix (0).element_bytes;
+    unsigned int nelts = vector_cst_encoded_nelts (pa);
+    for (unsigned int i = 0; i < nelts; i++)
+      {
+	unsigned int idx = m_first ? i : nelts - 1 - i;
+	if (tree_to_shwi (VECTOR_CST_ENCODED_ELT (pa, idx)) != 0)
+	  return f.fold_call_to (build_int_cst (TREE_TYPE (f.lhs),
+						m_first
+						? i / elt_size
+						: (nelts_full_vector - 1
+						   - i / elt_size)));
+      }
+
+    return f.fold_call_to (build_minus_one_cst (TREE_TYPE (f.lhs)));
+  }
+
+  rtx
+  expand (function_expander &e) const override
+  {
+    machine_mode mode = e.vector_mode (0);
+    return e.use_exact_insn (m_first ? code_for_aarch64_pred_firstp (mode)
+				     : code_for_aarch64_pred_lastp (mode));
+  }
+
+private:
+  /* True for svfirstp, false for svlastp.  */
+  bool m_first;
+};
+
 class svld1q_gather_impl : public full_width_access
 {
 public:
@@ -316,7 +363,8 @@ public:
   expand (function_expander &e) const override
   {
     e.prepare_gather_address_operands (1, false);
-    return e.use_exact_insn (CODE_FOR_aarch64_gather_ld1q);
+    auto icode = code_for_aarch64_gather_ld1q (e.tuple_mode (0));
+    return e.use_exact_insn (icode);
   }
 };
 
@@ -722,7 +770,7 @@ public:
   expand (function_expander &e) const override
   {
     rtx data = e.args.last ();
-    e.args.last () = force_lowpart_subreg (VNx2DImode, data, GET_MODE (data));
+    e.args.last () = aarch64_sve_reinterpret (VNx2DImode, data);
     e.prepare_gather_address_operands (1, false);
     return e.use_exact_insn (CODE_FOR_aarch64_scatter_st1q);
   }
@@ -880,7 +928,9 @@ public:
   {
     for (unsigned int i = 0; i < 2; ++i)
       e.args[i] = e.convert_to_pmode (e.args[i]);
-    return e.use_exact_insn (code_for_while (m_unspec, Pmode, e.gp_mode (0)));
+    auto icode = code_for_aarch64_sve_while_acle (m_unspec, Pmode,
+						  e.gp_mode (0));
+    return e.use_exact_insn (icode);
   }
 
   int m_unspec;
@@ -929,9 +979,47 @@ public:
   unsigned int m_bits;
 };
 
+/* The same as cond_or_uncond_unspec_function but the intrinsics with vector
+   modes are SME2 extensions instead of SVE.  */
+class faminmaximpl : public function_base
+{
+public:
+  CONSTEXPR faminmaximpl (int cond_unspec, int uncond_unspec)
+    : m_cond_unspec (cond_unspec), m_uncond_unspec (uncond_unspec)
+    {}
+
+  rtx
+  expand (function_expander &e) const override
+  {
+    if (e.group_suffix ().vectors_per_tuple > 1)
+      {
+	/* SME2+faminmax intrinsics.  */
+	gcc_assert (e.pred == PRED_none);
+	auto mode = e.tuple_mode (0);
+	auto icode = (code_for_aarch64_sme (m_uncond_unspec, mode));
+	return e.use_exact_insn (icode);
+      }
+    /* SVE+faminmax intrinsics.  */
+    else if (e.pred == PRED_none)
+      {
+	auto mode = e.tuple_mode (0);
+	auto icode = (e.mode_suffix_id == MODE_single
+		      ? code_for_aarch64_sve_single (m_uncond_unspec, mode)
+		      : code_for_aarch64_sve (m_uncond_unspec, mode));
+	return e.use_exact_insn (icode);
+      }
+    return e.map_to_unspecs (m_cond_unspec, m_cond_unspec, m_cond_unspec);
+  }
+
+  /* The unspecs for the conditional and unconditional instructions,
+     respectively.  */
+  int m_cond_unspec;
+  int m_uncond_unspec;
+};
+
 } /* end anonymous namespace */
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 FUNCTION (svaba, svaba_impl,)
 FUNCTION (svabalb, unspec_based_add_function, (UNSPEC_SABDLB,
@@ -957,10 +1045,8 @@ FUNCTION (svaesd, fixed_insn_function, (CODE_FOR_aarch64_sve2_aesd))
 FUNCTION (svaese, fixed_insn_function, (CODE_FOR_aarch64_sve2_aese))
 FUNCTION (svaesimc, fixed_insn_function, (CODE_FOR_aarch64_sve2_aesimc))
 FUNCTION (svaesmc, fixed_insn_function, (CODE_FOR_aarch64_sve2_aesmc))
-FUNCTION (svamax, cond_or_uncond_unspec_function,
-	  (UNSPEC_COND_FAMAX, UNSPEC_FAMAX))
-FUNCTION (svamin, cond_or_uncond_unspec_function,
-	  (UNSPEC_COND_FAMIN, UNSPEC_FAMIN))
+FUNCTION (svamax, faminmaximpl, (UNSPEC_COND_FAMAX, UNSPEC_FAMAX))
+FUNCTION (svamin, faminmaximpl, (UNSPEC_COND_FAMIN, UNSPEC_FAMIN))
 FUNCTION (svandqv, reduction, (UNSPEC_ANDQV, UNSPEC_ANDQV, -1))
 FUNCTION (svbcax, CODE_FOR_MODE0 (aarch64_sve2_bcax),)
 FUNCTION (svbdep, unspec_based_function, (UNSPEC_BDEP, UNSPEC_BDEP, -1))
@@ -981,25 +1067,29 @@ FUNCTION (svclamp, svclamp_impl,)
 FUNCTION (svcvt1, svcvt_fp8_impl, (UNSPEC_F1CVT))
 FUNCTION (svcvt2, svcvt_fp8_impl, (UNSPEC_F2CVT))
 FUNCTION (svcvtl, svcvtl_impl,)
+FUNCTION (svcvtl1, svcvt_fp8_impl, (UNSPEC_F1CVTL))
+FUNCTION (svcvtl2, svcvt_fp8_impl, (UNSPEC_F2CVTL))
 FUNCTION (svcvtlt1, svcvt_fp8_impl, (UNSPEC_F1CVTLT))
 FUNCTION (svcvtlt2, svcvt_fp8_impl, (UNSPEC_F2CVTLT))
 FUNCTION (svcvtlt, unspec_based_function, (-1, -1, UNSPEC_COND_FCVTLT))
 FUNCTION (svcvtn, svcvtn_impl,)
 FUNCTION (svcvtnb, fixed_insn_function, (CODE_FOR_aarch64_sve2_fp8_cvtnbvnx16qi))
 FUNCTION (svcvtx, unspec_based_function, (-1, -1, UNSPEC_COND_FCVTX))
-FUNCTION (svcvtxnt, svcvtxnt_impl,)
+FUNCTION (svcvtxnt, NARROWING_TOP_CONVERT1 (aarch64_sve2_cvtxnt),)
 FUNCTION (svdup_laneq, svdup_laneq_impl,)
 FUNCTION (sveor3, CODE_FOR_MODE0 (aarch64_sve2_eor3),)
 FUNCTION (sveorbt, unspec_based_function, (UNSPEC_EORBT, UNSPEC_EORBT, -1))
 FUNCTION (sveorqv, reduction, (UNSPEC_EORQV, UNSPEC_EORQV, -1))
 FUNCTION (sveortb, unspec_based_function, (UNSPEC_EORTB, UNSPEC_EORTB, -1))
 FUNCTION (svextq, svextq_impl,)
+FUNCTION (svfirstp, svfirst_lastp_impl, (true))
 FUNCTION (svhadd, unspec_based_function, (UNSPEC_SHADD, UNSPEC_UHADD, -1))
 FUNCTION (svhsub, unspec_based_function, (UNSPEC_SHSUB, UNSPEC_UHSUB, -1))
 FUNCTION (svhistcnt, CODE_FOR_MODE0 (aarch64_sve2_histcnt),)
 FUNCTION (svhistseg, CODE_FOR_MODE0 (aarch64_sve2_histseg),)
 FUNCTION (svhsubr, unspec_based_function_rotated, (UNSPEC_SHSUB,
 						   UNSPEC_UHSUB, -1))
+FUNCTION (svlastp, svfirst_lastp_impl, (false))
 FUNCTION (svld1q_gather, svld1q_gather_impl,)
 FUNCTION (svld1udq, svld1uxq_impl, (VNx1DImode))
 FUNCTION (svld1uwq, svld1uxq_impl, (VNx1SImode))
@@ -1157,6 +1247,10 @@ FUNCTION (svrax1, fixed_insn_function, (CODE_FOR_aarch64_sve2_rax1))
 FUNCTION (svrevd, unspec_based_function, (UNSPEC_REVD, UNSPEC_REVD,
 					  UNSPEC_REVD))
 FUNCTION (svrhadd, unspec_based_function, (UNSPEC_SRHADD, UNSPEC_URHADD, -1))
+FUNCTION (svrint32x, unspec_based_function, (-1, -1, UNSPEC_FRINT32X))
+FUNCTION (svrint32z, unspec_based_function, (-1, -1, UNSPEC_FRINT32Z))
+FUNCTION (svrint64x, unspec_based_function, (-1, -1, UNSPEC_FRINT64X))
+FUNCTION (svrint64z, unspec_based_function, (-1, -1, UNSPEC_FRINT64Z))
 FUNCTION (svrshl, svrshl_impl,)
 FUNCTION (svrshr, unspec_based_function, (UNSPEC_SRSHR, UNSPEC_URSHR, -1))
 FUNCTION (svrshrnb, unspec_based_function, (UNSPEC_RSHRNB, UNSPEC_RSHRNB, -1))
@@ -1223,4 +1317,4 @@ FUNCTION (svzipq2, svzipq_impl, (1))
 FUNCTION (svluti2_lane, svluti_lane_impl, (2))
 FUNCTION (svluti4_lane, svluti_lane_impl, (4))
 
-} /* end namespace aarch64_sve */
+}

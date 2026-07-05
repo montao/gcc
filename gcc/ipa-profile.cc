@@ -1,5 +1,5 @@
 /* Basic IPA optimizations based on profile.
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -316,7 +316,11 @@ ipa_profile_generate_summary (void)
 			      count = all;
 			    }
 			  speculative_call_target item (
-			    val, GCOV_COMPUTE_SCALE (count, all));
+			    val,
+			    profile_count::from_gcov_type (count)
+			      .probability_in
+				(profile_count::from_gcov_type (all))
+				 .to_reg_br_prob_base ());
 			  csum->speculative_call_targets.safe_push (item);
 			}
 
@@ -621,7 +625,7 @@ ipa_propagate_frequency_1 (struct cgraph_node *node, void *data)
   return edge != NULL;
 }
 
-/* Return ture if NODE contains hot calls.  */
+/* Return true if NODE contains hot calls.  */
 
 bool
 contains_hot_call_p (struct cgraph_node *node)
@@ -773,7 +777,17 @@ ipa_profile (void)
   gcov_type threshold;
 
   if (dump_file)
-    dump_histogram (dump_file, histogram);
+    {
+      if (profile_info)
+	{
+	  fprintf (dump_file,
+		   "runs: %i sum_max: %" PRId64 " cutoff: %" PRId64"\n",
+		   profile_info->runs, profile_info->sum_max, profile_info->cutoff);
+	  fprintf (dump_file, "hot bb threshold: %" PRId64 "\n",
+		   get_hot_bb_threshold ());
+	}
+      dump_histogram (dump_file, histogram);
+    }
   for (i = 0; i < (int)histogram.length (); i++)
     {
       overall_time += ((widest_int)histogram[i]->count) * histogram[i]->time;
@@ -907,7 +921,7 @@ ipa_profile (void)
 				     "Not speculating: "
 				     "parameter count mismatch\n");
 			}
-		      else if (e->indirect_info->polymorphic
+		      else if (usable_polymorphic_info_p (e->indirect_info)
 			       && !opt_for_fn (n->decl, flag_devirtualize)
 			       && !possible_polymorphic_call_target_p (e, n2))
 			{

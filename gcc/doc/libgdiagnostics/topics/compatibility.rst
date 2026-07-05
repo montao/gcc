@@ -1,4 +1,4 @@
-.. Copyright (C) 2015-2025 Free Software Foundation, Inc.
+.. Copyright (C) 2015-2026 Free Software Foundation, Inc.
    Originally contributed by David Malcolm <dmalcolm@redhat.com>
 
    This is free software: you can redistribute it and/or modify it
@@ -30,7 +30,7 @@ libgdiagnostics.h.
           locked-down at this time.
 
 API compatibility is achieved by extending the API rather than changing
-it.  For ABI compatiblity, we avoid bumping the SONAME, and instead use
+it.  For ABI compatibility, we avoid bumping the SONAME, and instead use
 symbol versioning to tag each symbol, so that a binary linked against
 libgdiagnostics.so is tagged according to the symbols that it uses.
 
@@ -166,7 +166,7 @@ tagged with ``LIBGDIAGNOSTICS_ABI_0``; these entrypoints are:
 ``LIBGDIAGNOSTICS_ABI_1``
 -------------------------
 ``LIBGDIAGNOSTICS_ABI_1`` covers the addition of these functions for
-acccessing values within a :type:`diagnostic_logical_location`:
+accessing values within a :type:`diagnostic_logical_location`:
 
   * :func:`diagnostic_logical_location_get_kind`
 
@@ -178,6 +178,8 @@ acccessing values within a :type:`diagnostic_logical_location`:
 
   * :func:`diagnostic_logical_location_get_decorated_name`
 
+.. _LIBGDIAGNOSTICS_ABI_2:
+
 ``LIBGDIAGNOSTICS_ABI_2``
 -------------------------
 ``LIBGDIAGNOSTICS_ABI_2`` covers the addition of these functions for
@@ -186,3 +188,86 @@ supporting command-line options and SARIF playback:
   * :func:`diagnostic_manager_add_sink_from_spec`
 
   * :func:`diagnostic_manager_set_analysis_target`
+
+.. _LIBGDIAGNOSTICS_ABI_3:
+
+``LIBGDIAGNOSTICS_ABI_3``
+-------------------------
+
+``LIBGDIAGNOSTICS_ABI_3`` covers the addition of these functions for
+working with directed graphs:
+
+  * :func:`diagnostic_manager_new_graph`
+
+  * :func:`diagnostic_manager_take_global_graph`
+
+  * :func:`diagnostic_take_graph`
+
+  * :func:`diagnostic_graph_release`
+
+  * :func:`diagnostic_graph_set_description`
+
+  * :func:`diagnostic_graph_add_node`
+
+  * :func:`diagnostic_graph_add_edge`
+
+  * :func:`diagnostic_graph_get_node_by_id`
+
+  * :func:`diagnostic_graph_get_edge_by_id`
+
+  * :func:`diagnostic_node_set_label`
+
+  * :func:`diagnostic_node_set_location`
+
+  * :func:`diagnostic_node_set_logical_location`
+
+.. _LIBGDIAGNOSTICS_ABI_4:
+
+``LIBGDIAGNOSTICS_ABI_4``
+-------------------------
+
+``LIBGDIAGNOSTICS_ABI_4`` covers the addition of these functions for
+working with :type:`diagnostic_message_buffer`.
+
+  * :func:`diagnostic_message_buffer_new`
+
+  * :func:`diagnostic_message_buffer_release`
+
+  * :func:`diagnostic_message_buffer_append_str`
+
+  * :func:`diagnostic_message_buffer_append_text`
+
+  * :func:`diagnostic_message_buffer_append_byte`
+
+  * :func:`diagnostic_message_buffer_append_printf`
+
+  * :func:`diagnostic_message_buffer_append_event_id`
+
+  * :func:`diagnostic_message_buffer_begin_url`
+
+  * :func:`diagnostic_message_buffer_end_url`
+
+  * :func:`diagnostic_message_buffer_begin_quote`
+
+  * :func:`diagnostic_message_buffer_end_quote`
+
+  * :func:`diagnostic_message_buffer_begin_color`
+
+  * :func:`diagnostic_message_buffer_end_color`
+
+  * :func:`diagnostic_message_buffer_dump`
+
+  * :func:`diagnostic_finish_via_msg_buf`
+
+  * :func:`diagnostic_add_location_with_label_via_msg_buf`
+
+  * :func:`diagnostic_execution_path_add_event_via_msg_buf`
+
+.. _LIBGDIAGNOSTICS_ABI_5:
+
+``LIBGDIAGNOSTICS_ABI_5``
+-------------------------
+
+``LIBGDIAGNOSTICS_ABI_5`` covers the addition of this function:
+
+  * :func:`diagnostic_manager_set_debug_physical_locations`

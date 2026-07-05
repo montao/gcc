@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -20,6 +20,7 @@
 #define RUST_COMPILE_CONTEXT
 
 #include "rust-system.h"
+#include "rust-compile-drop-candidate.h"
 #include "rust-hir-map.h"
 #include "rust-name-resolver.h"
 #include "rust-hir-type-check.h"
@@ -27,13 +28,17 @@
 #include "rust-hir-full.h"
 #include "rust-mangle.h"
 #include "rust-tree.h"
-#include "rust-immutable-name-resolution-context.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace Compile {
 
 struct fncontext
 {
+  fncontext (tree fndecl, ::Bvariable *ret_addr, TyTy::BaseType *retty)
+    : fndecl (fndecl), ret_addr (ret_addr), retty (retty)
+  {}
+
   tree fndecl;
   ::Bvariable *ret_addr;
   TyTy::BaseType *retty;
@@ -49,7 +54,7 @@ struct CustomDeriveInfo
 class Context
 {
 public:
-  Context ();
+  static Context *get ();
 
   void setup_builtins ();
 
@@ -90,7 +95,6 @@ public:
     return type;
   }
 
-  Resolver::Resolver *get_resolver () { return resolver; }
   Resolver::TypeCheckContext *get_tyctx () { return tyctx; }
   Analysis::Mappings &get_mappings () { return mappings; }
 
@@ -98,6 +102,7 @@ public:
   {
     scope_stack.push_back (scope);
     statements.push_back ({});
+    block_drop_candidates.emplace_back ();
   }
 
   tree pop_block ()
@@ -107,6 +112,9 @@ public:
 
     auto stmts = statements.back ();
     statements.pop_back ();
+
+    rust_assert (!block_drop_candidates.empty ());
+    block_drop_candidates.pop_back ();
 
     Backend::block_add_statements (block, stmts);
 
@@ -127,6 +135,18 @@ public:
   }
 
   void add_statement (tree stmt) { statements.back ().push_back (stmt); }
+
+  std::vector<DropCandidate> &peek_block_drop_candidates ()
+  {
+    rust_assert (!block_drop_candidates.empty ());
+    return block_drop_candidates.back ();
+  }
+
+  void note_simple_drop_candidate (HirId hirid, location_t locus)
+  {
+    rust_assert (!block_drop_candidates.empty ());
+    block_drop_candidates.back ().emplace_back (hirid, locus);
+  }
 
   void insert_var_decl (HirId id, ::Bvariable *decl)
   {
@@ -155,7 +175,7 @@ public:
     if (it == mono_fns.end ())
       mono_fns[dId] = {};
 
-    mono_fns[dId].push_back ({ref, fn});
+    mono_fns[dId].emplace_back (ref, fn);
   }
 
   void insert_closure_decl (const TyTy::ClosureType *ref, tree fn)
@@ -165,7 +185,7 @@ public:
     if (it == mono_closure_fns.end ())
       mono_closure_fns[dId] = {};
 
-    mono_closure_fns[dId].push_back ({ref, fn});
+    mono_closure_fns[dId].emplace_back (ref, fn);
   }
 
   tree lookup_closure_decl (const TyTy::ClosureType *ref)
@@ -280,7 +300,7 @@ public:
 
   void push_fn (tree fn, ::Bvariable *ret_addr, TyTy::BaseType *retty)
   {
-    fn_stack.push_back (fncontext{fn, ret_addr, retty});
+    fn_stack.emplace_back (fn, ret_addr, retty);
   }
   void pop_fn () { fn_stack.pop_back (); }
 
@@ -319,7 +339,13 @@ public:
 
   void push_loop_context (Bvariable *var) { loop_value_stack.push_back (var); }
 
-  Bvariable *peek_loop_context () { return loop_value_stack.back (); }
+  bool have_loop_context () const { return !loop_value_stack.empty (); }
+
+  Bvariable *peek_loop_context ()
+  {
+    rust_assert (!loop_value_stack.empty ());
+    return loop_value_stack.back ();
+  }
 
   Bvariable *pop_loop_context ()
   {
@@ -333,7 +359,11 @@ public:
     loop_begin_labels.push_back (label);
   }
 
-  tree peek_loop_begin_label () { return loop_begin_labels.back (); }
+  tree peek_loop_begin_label ()
+  {
+    rust_assert (!loop_begin_labels.empty ());
+    return loop_begin_labels.back ();
+  }
 
   tree pop_loop_begin_label ()
   {
@@ -391,7 +421,8 @@ public:
   }
 
 private:
-  Resolver::Resolver *resolver;
+  Context ();
+
   Resolver::TypeCheckContext *tyctx;
   Analysis::Mappings &mappings;
   Mangler mangler;
@@ -405,6 +436,7 @@ private:
   std::map<HirId, tree> compiled_labels;
   std::vector<::std::vector<tree>> statements;
   std::vector<tree> scope_stack;
+  std::vector<::std::vector<DropCandidate>> block_drop_candidates;
   std::vector<::Bvariable *> loop_value_stack;
   std::vector<tree> loop_begin_labels;
   std::map<DefId, std::vector<std::pair<const TyTy::BaseType *, tree>>>

@@ -1,5 +1,5 @@
 ;; Constraint definitions for RISC-V target.
-;; Copyright (C) 2011-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2011-2026 Free Software Foundation, Inc.
 ;; Contributed by Andrew Waterman (andrew@sifive.com).
 ;; Based on MIPS target for GNU compiler.
 ;;
@@ -184,6 +184,14 @@
 (define_register_constraint "vm" "TARGET_VECTOR ? VM_REGS : NO_REGS"
   "A vector mask register (if available).")
 
+;; Dependent (dynamic) constraint:
+;; "The source group must overlap the highest-numbered part of the
+;; "destination group", i.e. this operand depends on operand 0.
+(define_register_constraint "Wtt" "TARGET_VECTOR ? V_REGS : NO_REGS"
+  "Vector widening overlap"
+  "riscv_widen_overlap_ok (regno, mode, ref_regno, ref_mode)"
+  "0")
+
 ;; This constraint is used to match instruction "csrr %0, vlenb" which is generated in "mov<mode>".
 ;; VLENB is a run-time constant which represent the vector register length in bytes.
 ;; BYTES_PER_RISCV_VECTOR represent runtime invariant of vector register length in bytes.
@@ -194,7 +202,7 @@
        (match_test "known_eq (rtx_to_poly_int64 (op), BYTES_PER_RISCV_VECTOR)")))
 
 (define_constraint "vu"
-  "A undefined vector value."
+  "An undefined vector value."
   (and (match_code "unspec")
        (match_test "XINT (op, 1) == UNSPEC_VUNDEF")))
 
@@ -237,10 +245,11 @@
  (and (match_code "const_vector")
       (match_test "rtx_equal_p (op, riscv_vector::gen_scalar_move_mask (GET_MODE (op)))")))
 
-(define_memory_constraint "Wdm"
+(define_constraint "Wdm"
   "Vector duplicate memory operand"
-  (and (match_code "mem")
-       (match_code "reg" "0")))
+  (and (match_test "strided_load_broadcast_p ()")
+       (and (match_code "mem")
+	    (match_code "reg" "0"))))
 
 ;; Vendor ISA extension constraints.
 
@@ -329,3 +338,17 @@
 (define_constraint "Q"
   "An address operand that is valid for a prefetch instruction"
   (match_operand 0 "prefetch_operand"))
+
+(define_address_constraint "ZD"
+  "An address operand that is valid for a mips prefetch instruction"
+  (match_test "TARGET_XMIPSCBOP && riscv_prefetch_offset_address_p (op, mode)"))
+
+(define_constraint "Ou07"
+  "A 7-bit unsigned immediate."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 127)")))
+
+(define_constraint "ads_Bext"
+  "Sequence bit extract."
+  (and (match_code "const_int")
+       (match_test "(ival & (ival + 1)) == 0")))

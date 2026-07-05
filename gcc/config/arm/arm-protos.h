@@ -1,5 +1,5 @@
 /* Prototypes for exported functions defined in arm.cc and pe.c
-   Copyright (C) 1999-2025 Free Software Foundation, Inc.
+   Copyright (C) 1999-2026 Free Software Foundation, Inc.
    Contributed by Richard Earnshaw (rearnsha@arm.com)
    Minor hacks by Nick Clifton (nickc@cygnus.com)
 
@@ -209,6 +209,7 @@ extern bool arm_pad_reg_upward (machine_mode, tree, int);
 #endif
 extern int arm_apply_result_size (void);
 extern opt_machine_mode arm_get_mask_mode (machine_mode mode);
+extern bool arm_bitint_type_info (int, struct bitint_info *);
 extern bool arm_noce_conversion_profitable_p (rtx_insn *,struct noce_if_info *);
 
 #endif /* RTX_CODE */
@@ -359,7 +360,7 @@ struct tune_params
     prefer_constant_pool: 1;
   /* Prefer STRD/LDRD instructions over PUSH/POP/LDM/STM.  */
   enum {PREF_LDRD_FALSE, PREF_LDRD_TRUE} prefer_ldrd_strd: 1;
-  /* The preference for non short cirtcuit operation when optimizing for
+  /* The preference for non short circuit operation when optimizing for
      performance. The first element covers Thumb state and the second one
      is for ARM state.  */
   enum log_op_non_short_circuit {LOG_OP_NON_SHORT_CIRCUIT_FALSE,

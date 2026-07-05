@@ -1,5 +1,5 @@
 /* Base header for the analyzer, plus utility functions.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -22,7 +22,10 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_ANALYZER_COMMON_H
 
 #include "config.h"
+#define INCLUDE_ALGORITHM
+#define INCLUDE_LIST
 #define INCLUDE_MAP
+#define INCLUDE_SET
 #define INCLUDE_STRING
 #define INCLUDE_VECTOR
 #include "system.h"
@@ -34,11 +37,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "options.h"
 #include "bitmap.h"
 #include "diagnostic-core.h"
-#include "diagnostic-path.h"
+#include "diagnostics/paths.h"
 #include "rich-location.h"
 #include "function.h"
 #include "json.h"
 #include "tristate.h"
+#include "value-range.h"
 
 class graphviz_out;
 
@@ -49,14 +53,6 @@ namespace ana {
 class supergraph;
 class supernode;
 class superedge;
-  class cfg_superedge;
-    class switch_cfg_superedge;
-    class eh_dispatch_cfg_superedge;
-      class eh_dispatch_try_cfg_superedge;
-      class eh_dispatch_allowed_cfg_superedge;
-  class callgraph_superedge;
-    class call_superedge;
-    class return_superedge;
 
 class svalue;
   class region_svalue;
@@ -119,14 +115,13 @@ class checker_event;
 class checker_path;
 class extrinsic_state;
 class sm_state_map;
-class stmt_finder;
 class program_point;
-class function_point;
 class program_state;
 class exploded_graph;
 class exploded_node;
 class exploded_edge;
 class feasibility_problem;
+class feasibility_state;
 class exploded_cluster;
 class exploded_path;
 class analysis_plan;
@@ -145,6 +140,10 @@ class call_summary;
 class call_summary_replay;
 struct per_function_data;
 struct interesting_t;
+class state_transition;
+  class state_transition_at_call;
+  class state_transition_at_return;
+class uncertainty_t;
 
 class feasible_node;
 
@@ -152,16 +151,25 @@ class known_function;
   class builtin_known_function;
   class internal_known_function;
 
+class translation_unit;
+
 /* Forward decls of functions.  */
 
 extern void dump_tree (pretty_printer *pp, tree t);
 extern void dump_quoted_tree (pretty_printer *pp, tree t);
 extern void print_quoted_type (pretty_printer *pp, tree t);
 extern void print_expr_for_user (pretty_printer *pp, tree t);
+extern bool printable_expr_p (const_tree expr);
 extern int readability_comparator (const void *p1, const void *p2);
 extern int tree_cmp (const void *p1, const void *p2);
 extern tree fixup_tree_for_diagnostic (tree);
 extern tree get_diagnostic_tree_for_gassign (const gassign *);
+
+inline bool
+useful_location_p (location_t loc)
+{
+  return get_pure_location (loc) != UNKNOWN_LOCATION;
+}
 
 /* A tree, extended with stack frame information for locals, so that
    we can distinguish between different values of locals within a potentially
@@ -202,6 +210,11 @@ extern bool int_size_in_bits (const_tree type, bit_size_t *out);
 
 extern tree get_field_at_bit_offset (tree record_type, bit_offset_t bit_offset);
 
+extern bool
+compare_bit_offsets_p (bit_offset_t a,
+		       enum tree_code op,
+		       bit_offset_t b);
+
 /* The location of a region expressesd as an offset relative to a
    base region.  */
 
@@ -209,14 +222,14 @@ class region_offset
 {
 public:
   region_offset ()
-  : m_base_region (NULL), m_offset (0), m_sym_offset (NULL)
+  : m_base_region (nullptr), m_offset (0), m_sym_offset (nullptr)
   {
   }
 
   static region_offset make_concrete (const region *base_region,
 				      bit_offset_t offset)
   {
-    return region_offset (base_region, offset, NULL);
+    return region_offset (base_region, offset, nullptr);
   }
   static region_offset make_symbolic (const region *base_region,
 				      const svalue *sym_offset)
@@ -228,8 +241,8 @@ public:
 
   const region *get_base_region () const { return m_base_region; }
 
-  bool concrete_p () const { return m_sym_offset == NULL; }
-  bool symbolic_p () const { return m_sym_offset != NULL; }
+  bool concrete_p () const { return m_sym_offset == nullptr; }
+  bool symbolic_p () const { return m_sym_offset != nullptr; }
 
   bit_offset_t get_bit_offset () const
   {
@@ -283,6 +296,12 @@ extern bool operator<= (const region_offset &, const region_offset &);
 extern bool operator> (const region_offset &, const region_offset &);
 extern bool operator>= (const region_offset &, const region_offset &);
 
+extern tristate
+eval_region_offset_comparison (region_offset lhs_offset,
+			       enum tree_code op,
+			       region_offset rhs_offset,
+			       const region_model &model);
+
 extern location_t get_stmt_location (const gimple *stmt, function *fun);
 
 extern bool compat_types_p (tree src_type, tree dst_type);
@@ -296,6 +315,15 @@ class known_function
 public:
   virtual ~known_function () {}
   virtual bool matches_call_types_p (const call_details &cd) const = 0;
+
+  /* A hook for performing additional checks on the expected state
+     at a call.  */
+  virtual void
+  check_any_preconditions (const call_details &) const
+  {
+    // no-op
+  }
+
   virtual void impl_call_pre (const call_details &) const
   {
     return;
@@ -306,7 +334,7 @@ public:
   }
 
   virtual const builtin_known_function *
-  dyn_cast_builtin_kf () const { return NULL; }
+  dyn_cast_builtin_kf () const { return nullptr; }
 };
 
 /* Subclass of known_function for builtin functions.  */
@@ -354,17 +382,6 @@ extern void register_known_file_functions (known_function_manager &kfm);
 extern void register_known_functions_lang_cp (known_function_manager &kfm);
 extern void register_varargs_builtins (known_function_manager &kfm);
 
-/* Passed by pointer to PLUGIN_ANALYZER_INIT callbacks.  */
-
-class plugin_analyzer_init_iface
-{
-public:
-  virtual void register_state_machine (std::unique_ptr<state_machine>) = 0;
-  virtual void register_known_function (const char *name,
-					std::unique_ptr<known_function>) = 0;
-  virtual logger *get_logger () const = 0;
-};
-
 /* An enum for describing the direction of an access to memory.  */
 
 enum class access_direction
@@ -372,6 +389,44 @@ enum class access_direction
   read,
   write
 };
+
+/* State tracked along an execution path that's pertinent to a specific
+   diagnostic (e.g. for a divide-by-zero warning where the zero value
+   comes from).  */
+
+struct diagnostic_state
+{
+  diagnostic_state ()
+  : m_region_holding_value (nullptr)
+  {
+  }
+
+  diagnostic_state (std::string debug_desc,
+		   const region *region_holding_value)
+  : m_debug_desc (std::move (debug_desc)),
+    m_region_holding_value (region_holding_value)
+  {
+  }
+
+  void dump_to_pp (pretty_printer *) const;
+  void dump () const;
+
+  bool
+  operator== (const diagnostic_state &other) const
+  {
+    return m_region_holding_value == other.m_region_holding_value;
+  }
+  bool
+  operator!= (const diagnostic_state &other) const
+  {
+    return !(*this == other);
+  }
+
+  std::string m_debug_desc;
+  const region *m_region_holding_value;
+};
+
+struct rewind_context;
 
 /* Abstract base class for associating custom data with an
    exploded_edge, for handling non-standard edges such as
@@ -388,6 +443,10 @@ public:
   /* Hook for making .dot label more readable.  */
   virtual void print (pretty_printer *pp) const = 0;
 
+  virtual void
+  get_dot_attrs (const char *&out_style,
+		 const char *&out_color) const;
+
   /* Hook for updating STATE when handling bifurcation.  */
   virtual bool update_state (program_state *state,
 			     const exploded_edge *eedge,
@@ -400,13 +459,21 @@ public:
 			     region_model_context *ctxt) const = 0;
 
   virtual void add_events_to_path (checker_path *emission_path,
-				   const exploded_edge &eedge) const = 0;
+				   const exploded_edge &eedge,
+				   pending_diagnostic &pd,
+				   const state_transition *state_trans) const = 0;
 
   virtual exploded_node *create_enode (exploded_graph &eg,
 				       const program_point &point,
 				       program_state &&state,
 				       exploded_node *enode_for_diag,
 				       region_model_context *ctxt) const;
+
+  virtual bool
+  try_to_rewind_data_flow (rewind_context &) const
+  {
+    return false;
+  }
 };
 
 /* Abstract base class for splitting state.
@@ -443,7 +510,7 @@ extern std::unique_ptr<json::value>
 tree_to_json (tree node);
 
 extern std::unique_ptr<json::value>
-diagnostic_event_id_to_json (const diagnostic_event_id_t &);
+diagnostic_event_id_to_json (const diagnostics::paths::event_id_t &);
 
 extern std::unique_ptr<json::value>
 bit_offset_to_json (const bit_offset_t &offset);
@@ -485,6 +552,7 @@ extern bool is_longjmp_call_p (const gcall &call);
 extern bool is_placement_new_p (const gcall &call);
 extern bool is_cxa_throw_p (const gcall &call);
 extern bool is_cxa_rethrow_p (const gcall &call);
+extern bool is_cxa_end_catch_p (const gcall &call);
 
 extern const char *get_user_facing_name (const gcall &call);
 
@@ -567,13 +635,13 @@ public:
       delete (*iter).second;
   }
 
-  /* Get the instance of T for K if one exists, or NULL.  */
+  /* Get the instance of T for K if one exists, or nullptr.  */
 
   T *get (const key_t &k) const
   {
     if (instance_t **slot = const_cast<inner_map_t &> (m_inner_map).get (k))
       return *slot;
-    return NULL;
+    return nullptr;
   }
 
   /* Take ownership of INSTANCE.  */
@@ -597,6 +665,64 @@ private:
 #if __GNUC__ >= 10
 #pragma GCC diagnostic ignored "-Wformat-diag"
 #endif
+
+namespace gcc {
+namespace topics {
+
+/* A topic for messages relating to the analyzer.  */
+
+namespace analyzer_events {
+
+/* A message published by the analyzer when the frontend finishes
+   parsing the TU, to allow it to look up pertinent items using the FE's
+   name-resolution logic.  */
+
+struct on_tu_finished
+{
+  ana::logger *m_logger;
+  const ana::translation_unit &m_tu;
+};
+
+/* A message published by the analyzer as it starts up, intended for
+   subsystems/plugins that want to register additional functionality
+   within the analyzer.  */
+
+struct on_ana_init
+{
+  virtual void
+  register_state_machine (std::unique_ptr<ana::state_machine>) const = 0;
+
+  virtual void
+  register_known_function (const char *name,
+			   std::unique_ptr<ana::known_function>) const = 0;
+
+  virtual ana::logger *
+  get_logger () const = 0;
+};
+
+/* A message published by the analyzer when it simulates popping a stack
+   frame.  */
+
+struct on_frame_popped
+{
+  const ana::region_model *m_new_model;
+  const ana::region_model *m_old_model;
+  const ana::svalue *m_retval;
+  ana::region_model_context *m_ctxt;
+};
+
+struct subscriber {
+
+  virtual ~subscriber () = default;
+
+  virtual void on_message (const on_tu_finished &) {}
+  virtual void on_message (const on_ana_init &) {}
+  virtual void on_message (const on_frame_popped &) {}
+};
+
+} // namespace gcc::topics::analyzer_events
+} // namespace gcc::topics
+} // namespace gcc
 
 #if !ENABLE_ANALYZER
 extern void sorry_no_analyzer ();

@@ -1,6 +1,6 @@
 // -*- C++ -*- header.
 
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -100,8 +100,23 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       // The fastest implementation of this function is just _M_do_try_acquire
       // but that can fail under contention even when _M_count > 0.
-      // Using _M_try_acquire_for(0ns) will retry a few times in a loop.
-      return _M_try_acquire_for(__detail::__wait_clock_t::duration{});
+
+      auto __vfn = [this]{ return _M_get_current(); };
+      _Available __is_available{__vfn()};
+
+      // Retry the compare exchange a few times in case of contention:
+      for (int __i = 0; __i < 10 && __is_available(); ++__i)
+	if (_M_do_try_acquire(__is_available._M_val))
+	  return true;
+
+      // Spinloop to see if it becomes available.
+      constexpr auto __zero = __detail::__wait_clock_t::duration{};
+      if (std::__atomic_wait_address_for(&_M_counter, __is_available,
+					 __vfn, __zero, true))
+	return false; // timed out
+
+      // Should be available, try once more to acquire it:
+      return _M_do_try_acquire(__is_available._M_val);
     }
 
     template<typename _Clock, typename _Duration>
@@ -122,14 +137,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       bool
       _M_try_acquire_for(const chrono::duration<_Rep, _Period>& __rtime) noexcept
       {
-	auto __vfn = [this]{ return _M_get_current(); };
-	_Available __is_available{__vfn()};
-	while (!_M_do_try_acquire(__is_available._M_val))
-	  if (!__is_available())
-	    if (!std::__atomic_wait_address_for(&_M_counter, __is_available,
-						__vfn, __rtime, true))
-	      return false; // timed out
-	return true;
+	return _M_try_acquire_until(__detail::__wait_clock_t::now() + __rtime);
       }
 
     _GLIBCXX_ALWAYS_INLINE ptrdiff_t
@@ -173,8 +181,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   {
     using __count_type = __detail::__platform_wait_t;
 
-    static constexpr ptrdiff_t _S_max
-      = _Binary ? 1 : __gnu_cxx::__int_traits<__count_type>::__max;
+    static consteval ptrdiff_t
+    _S_calc_max()
+    {
+      if (_Binary)
+	return 1;
+      else if ((ptrdiff_t)__gnu_cxx::__int_traits<__count_type>::__max < 0)
+	return __gnu_cxx::__int_traits<ptrdiff_t>::__max;
+      else
+	return __gnu_cxx::__int_traits<__count_type>::__max;
+    }
+
+    static constexpr ptrdiff_t _S_max = _S_calc_max();
 
     constexpr explicit
     __platform_semaphore_impl(__count_type __count) noexcept

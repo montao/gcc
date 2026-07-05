@@ -1,5 +1,5 @@
 @ignore
-Copyright (C) 2005-2025 Free Software Foundation, Inc.
+Copyright (C) 2005-2026 Free Software Foundation, Inc.
 This is part of the GNU Fortran manual.   
 For copying conditions, see the file gfortran.texi.
 
@@ -106,6 +106,7 @@ Some basic guidelines for editing this document:
 * @code{C_ASSOCIATED}:  C_ASSOCIATED, Status of a C pointer
 * @code{C_F_POINTER}:   C_F_POINTER, Convert C into Fortran pointer
 * @code{C_F_PROCPOINTER}: C_F_PROCPOINTER, Convert C into Fortran procedure pointer
+* @code{C_F_STRPOINTER}: C_F_STRPOINTER, Convert C string to Fortran string pointer
 * @code{C_FUNLOC}:      C_FUNLOC,  Obtain the C address of a procedure
 * @code{C_LOC}:         C_LOC,     Obtain the C address of an object
 * @code{C_SIZEOF}:      C_SIZEOF,  Size in bytes of an expression
@@ -127,6 +128,7 @@ Some basic guidelines for editing this document:
 * @code{COS}:           COS,       Cosine function
 * @code{COSD}:          COSD,      Cosine function, degrees
 * @code{COSH}:          COSH,      Hyperbolic cosine function
+* @code{COSHAPE}:       COSHAPE,   Determine the coshape of a coarray
 * @code{COSPI}:         COSPI,     Circular cosine function
 * @code{COTAN}:         COTAN,     Cotangent function
 * @code{COTAND}:        COTAND,    Cotangent function, degrees
@@ -157,6 +159,7 @@ Some basic guidelines for editing this document:
 * @code{EXP}:           EXP,       Exponential function
 * @code{EXPONENT}:      EXPONENT,  Exponent function
 * @code{EXTENDS_TYPE_OF}: EXTENDS_TYPE_OF,  Query dynamic type for extension
+* @code{F_C_STRING}:    F_C_STRING,  Convert character scalar to C string
 * @code{FDATE}:         FDATE,     Subroutine (or function) to get the current time as a string
 * @code{FGET}:          FGET,      Read a single character in stream mode from stdin
 * @code{FGETC}:         FGETC,     Read a single character in stream mode
@@ -313,6 +316,7 @@ Some basic guidelines for editing this document:
 * @code{SIZEOF}:        SIZEOF,    Determine the size in bytes of an expression
 * @code{SLEEP}:         SLEEP,     Sleep for the specified number of seconds
 * @code{SPACING}:       SPACING,   Smallest distance between two numbers of a given type
+* @code{SPLIT}:         SPLIT,     Parse a string into tokens, one at a time.
 * @code{SPREAD}:        SPREAD,    Add a dimension to an array 
 * @code{SQRT}:          SQRT,      Square-root function
 * @code{SRAND}:         SRAND,     Reinitialize the random number generator
@@ -2238,7 +2242,7 @@ is different, the value is converted to the kind of @var{ATOM}.
 program atomic
   use iso_fortran_env
   logical(atomic_logical_kind) :: atom[*], prev
-  call atomic_cas (atom[1], prev, .false., .true.))
+  call atomic_cas (atom[1], prev, .false., .true.)
 end program atomic
 @end smallexample
 
@@ -3367,11 +3371,13 @@ Fortran 2003 and later
 
 @table @asis
 @item @emph{Synopsis}:
-@code{CALL C_F_POINTER(CPTR, FPTR[, SHAPE])}
+@code{CALL C_F_POINTER(CPTR, FPTR[, SHAPE, LOWER])}
 
 @item @emph{Description}:
-@code{C_F_POINTER(CPTR, FPTR[, SHAPE])} assigns the target of the C pointer
-@var{CPTR} to the Fortran pointer @var{FPTR} and specifies its shape.
+@code{C_F_POINTER(CPTR, FPTR[, SHAPE, LOWER])} assigns the target of the C
+pointer @var{CPTR} to the Fortran pointer @var{FPTR} and specifies its shape.
+For an array @var{FPTR}, the lower bounds are specified by @var{LOWER} if
+present and otherwise equal to 1.
 
 @item @emph{Class}:
 Subroutine
@@ -3383,9 +3389,11 @@ Subroutine
 @item @var{FPTR}  @tab pointer interoperable with @var{cptr}. It is
 @code{INTENT(OUT)}.
 @item @var{SHAPE} @tab (Optional) Rank-one array of type @code{INTEGER}
-with @code{INTENT(IN)}. It shall be present
-if and only if @var{fptr} is an array. The size
-must be equal to the rank of @var{fptr}.
+with @code{INTENT(IN)}. It shall be present if and only if @var{FPTR} is an
+array. The size must be equal to the rank of @var{FPTR}.
+@item @var{LOWER} @tab (Optional) Rank-one array of type @code{INTEGER}
+with @code{INTENT(IN)}. It shall not be present if @var{SHAPE} is not present.
+The size must be equal to the rank of @var{FPTR}.
 @end multitable
 
 @item @emph{Example}:
@@ -3407,11 +3415,12 @@ end program main
 @end smallexample
 
 @item @emph{Standard}:
-Fortran 2003 and later
+Fortran 2003 and later, with @var{LOWER} argument Fortran 2023 and later
 
 @item @emph{See also}:
 @ref{C_LOC}, @*
-@ref{C_F_PROCPOINTER}
+@ref{C_F_PROCPOINTER}, @*
+@ref{C_F_STRPOINTER}
 @end table
 
 
@@ -3469,7 +3478,88 @@ Fortran 2003 and later
 
 @item @emph{See also}:
 @ref{C_LOC}, @*
-@ref{C_F_POINTER}
+@ref{C_F_POINTER}, @*
+@ref{C_F_STRPOINTER}
+@end table
+
+
+@node C_F_STRPOINTER
+@section @code{C_F_STRPOINTER} --- Convert C string into Fortran string pointer
+@fnindex C_F_STRPOINTER
+@cindex string, convert C to Fortran
+
+@table @asis
+@item @emph{Synopsis}:
+@multitable @columnfractions .80
+@item @code{CALL C_F_STRPOINTER(CSTRARRAY, FSTRPTR[, NCHARS])}
+@item @code{CALL C_F_STRPOINTER(CSTRPTR, FSTRPTR, NCHARS)}
+@end multitable
+
+@item @emph{Description}:
+@code{C_F_STRPOINTER(CSTRARRAY, FSTRPTR[, NCHARS])}
+pointer-associates the deferred-length character pointer
+@code{FSTRPTR} with the initial substring of the simply contiguous
+Fortran character array @code{STRARRAY}, up to the first null character,
+the length @code{NCHARS} if specified, or the actual size of @code{CSTRARRAY}.
+
+@code{CALL C_F_STRPOINTER(CSTRPTR, FSTRPTR, NCHARS)}
+pointer-associates the deferred-length array pointer @code{FSTRPTR} with the
+initial substring of the continguous array of characters pointed to by
+the C pointer @code{CSTRPTR}, up to the first null character or
+length @code{NCHARS}.
+
+@item @emph{Class}:
+Subroutine
+
+@item @emph{Arguments}:
+@multitable @columnfractions .15 .70
+@item @var{CSTRARRAY}  @tab Rank-one character array of kind @code{C_CHAR}
+and character length one, which must be simply contiguous and have the
+@code{TARGET} attribute. It is @code{INTENT(IN)}.
+@item @var{CSTRPTR}  @tab Scalar of the type @code{C_PTR}. It is
+@code{INTENT(IN)}.
+@item @var{FSTRPTR}  @tab Scalar deferred-length character pointer of kind
+@code{C_CHAR}.  It is @code{INTENT(OUT)}.
+@item @var{NCHARS} @tab (Optional) Integer scalar.  It is @code{INTENT(IN)}.
+This argument can only be omitted for the @code{CSTRARRAY} form of the
+intrinsic, and only if @code{STRARRAY} is not assumed-size.
+@end multitable
+
+@item @emph{Example}:
+@smallexample
+program main
+
+  use iso_c_binding
+  implicit none
+
+  character (kind=c_char, len=1), dimension(15), target :: a
+  type(c_ptr) :: p
+  character (len=:, kind=c_char), pointer :: fp1, fp2
+
+  a = [ character :: 'h', 'e', 'l', 'l', 'o', ' ', &
+                     'w', 'o', 'r', 'l', 'd', '!', &
+                     ' ', ' ', ' ']
+  ! give array a terminating null so its C string length is 12.
+  a(13) = C_NULL_CHAR
+
+  ! p is a C pointer to the the first character in the array
+  p = C_LOC (a(1))
+
+  ! Make both fp1 and fp2 point to a with Fortran string length 12.
+  call c_f_strpointer (p, fp1, 15)
+  call c_f_strpointer (a, fp2)
+end program main
+
+@end smallexample
+
+@item @emph{Standard}:
+Fortran 2023 and later.
+
+@item @emph{See also}:
+@ref{C_LOC}, @*
+@ref{C_F_POINTER}, @*
+@ref{C_F_PROCPOINTER}, @*
+@ref{F_C_STRING}
 @end table
 
 
@@ -4121,7 +4211,7 @@ parameters as @var{A}.  The function shall return a nonallocatable scalar of
 the same type and type parameters as @var{A}.  The function shall be the same on
 all images and with regards to the arguments mathematically commutative and
 associative.  Note that @var{OPERATION} may not be an elemental function, unless
-it is an intrisic function.
+it is an intrinsic function.
 @item @var{RESULT_IMAGE} @tab (optional) a scalar integer expression; if
 present, it shall have the same value on all images and refer to an
 image of the current team.
@@ -4626,6 +4716,48 @@ Fortran 77 and later, for a complex argument Fortran 2008 or later
 @item @emph{See also}:
 Inverse function: @*
 @ref{ACOSH}
+@end table
+
+
+
+@node COSHAPE
+@section @code{COSHAPE} --- Determine the coshape of a coarray
+@fnindex COSHAPE
+@cindex coarray, coshape
+
+@table @asis
+@item @emph{Synopsis}:
+@code{RESULT = COSHAPE(COARRAY [, KIND])}
+
+@item @emph{Description}:
+Returns the shape of the cobounds of a coarray.
+
+@item @emph{Class}:
+Inquiry function
+
+@item @emph{Arguments}:
+@multitable @columnfractions .15 .70
+@item @var{COARRAY} @tab Shall be an coarray, of any type.
+@item @var{KIND} @tab (Optional) A scalar @code{INTEGER} constant
+expression indicating the kind parameter of the result.
+@end multitable
+
+
+@item @emph{Example}:
+
+@smallexample
+program test_cosh
+  real(8) :: x[*]
+  integer, allocatable :: csh (:)
+  csh = coshape(x, kind = kind(csh))
+end program test_cosh
+@end smallexample
+
+@item @emph{Standard}:
+Fortran 2018
+
+@item @emph{See also}:
+@ref{SHAPE}
 @end table
 
 
@@ -6264,6 +6396,61 @@ Fortran 2003 and later
 
 
 
+@node F_C_STRING
+@section @code{F_C_STRING} --- Convert Fortran character scalar to C string
+@fnindex F_C_STRING
+@cindex string, convert Fortran to C
+
+@table @asis
+@item @emph{Synopsis}:
+@code{RESULT = F_C_STRING(STRING[, ASIS])}
+
+@item @emph{Description}:
+The @code{F_C_STRING} intrinsic is equivalent to @code{STRING//C_NULL_CHAR}
+if the @code{ASIS} argument is present and true, and to
+@code{TRIM(STRING)//C_NULL_CHAR} otherwise.
+
+@item @emph{Class}:
+Transformational function
+
+@item @emph{Arguments}:
+@multitable @columnfractions .15 .70
+@item @var{STRING}  @tab A character scalar of kind @code{C_CHAR}.
+@item @var{ASIS}    @tab An optional logical scalar.
+@end multitable
+
+@item @emph{Return value}:
+The result is a null-terminated character scalar of the same type and kind
+as @code{STRING}, suitable for passing to a C function that accepts a
+@code{char *} argument.
+
+@item @emph{Example}:
+@smallexample
+program main
+  use iso_c_binding, only: f_c_string, c_char
+  implicit none (external, type)
+  character(:, c_char), allocatable :: s1, s2, s3
+
+  ! s1 is null-terminated "hello, world!   "
+  s1 = f_c_string ("hello, world!   ", .true.)
+
+  ! s2 is null-terminated "hello, world!"
+  s2 = f_c_string ("hello, world!   ", .false.)
+
+  ! s3 is null-terminated "hello, world!" (same as s2 example)
+  s3 = f_c_string ("hello, world!   ")
+end program main
+
+@end smallexample
+
+@item @emph{Standard}:
+Fortran 2023 and later.
+
+@item @emph{See also}:
+@ref{C_F_STRPOINTER}
+@end table
+
+
 @node FDATE
 @section @code{FDATE} --- Get the current time as a string
 @fnindex FDATE
@@ -6809,7 +6996,6 @@ GNU extension
 @end table
 
 
-
 @node FRACTION
 @section @code{FRACTION} --- Fractional part of the model representation
 @fnindex FRACTION
@@ -6835,14 +7021,15 @@ Elemental function
 @item @emph{Return value}:
 The return value is of the same type and kind as the argument.
 The fractional part of the model representation of @code{X} is returned;
-it is @code{X * RADIX(X)**(-EXPONENT(X))}.
+it is @code{X * REAL(RADIX(X))**(-EXPONENT(X))}.
 
 @item @emph{Example}:
 @smallexample
 program test_fraction
+  implicit none
   real :: x
   x = 178.1387e-4
-  print *, fraction(x), x * radix(x)**(-exponent(x))
+  print *, fraction(x), x * real(radix(x))**(-exponent(x))
 end program test_fraction
 @end smallexample
 
@@ -6987,7 +7174,7 @@ GNU extension
 @end multitable
 
 @item @emph{Description}:
-@code{FSTAT} is identical to @ref{STAT}, except that information about an 
+@code{FSTAT} is identical to @ref{STAT}, except that information about an
 already opened file is obtained.
 
 The elements in @code{VALUES} are the same as described by @ref{STAT}.
@@ -7002,9 +7189,9 @@ Subroutine, function
 @multitable @columnfractions .15 .70
 @item @var{UNIT}   @tab An open I/O unit number of type @code{INTEGER}.
 @item @var{VALUES} @tab The type shall be @code{INTEGER, DIMENSION(13)}
-of the default kind.
+of either kind 4 or kind 8.
 @item @var{STATUS} @tab (Optional) status flag of type @code{INTEGER}
-of the default kind.
+of kind 2 or larger.
 Returns 0 on success and a system specific error code otherwise.
 @end multitable
 
@@ -10309,9 +10496,9 @@ Subroutine, function
 @item @var{NAME}   @tab The type shall be @code{CHARACTER} of the default
 kind, a valid path within the file system.
 @item @var{VALUES} @tab The type shall be @code{INTEGER, DIMENSION(13)}
-of the default kind.
+of either kind 4 or kind 8.
 @item @var{STATUS} @tab (Optional) status flag of type @code{INTEGER}
-of the default kind.
+of kind 2 or larger.
 Returns 0 on success and a system specific error code otherwise.
 @end multitable
 
@@ -13558,6 +13745,7 @@ END PROGRAM
 Fortran 90 and later, with @var{KIND} argument Fortran 2003 and later
 
 @item @emph{See also}:
+@ref{COSHAPE}, @*
 @ref{RESHAPE}, @*
 @ref{SIZE}
 @end table
@@ -14203,6 +14391,69 @@ Fortran 90 and later
 
 
 
+@node SPLIT
+@section @code{SPLIT} --- Parse a string into tokens, one at a time
+@fnindex SPLIT
+@cindex string, split
+
+@table @asis
+@item @emph{Synopsis}:
+@code{CALL SPLIT(STRING, SET, POS [, BACK])}
+
+@item @emph{Description}:
+Updates the integer @var{POS} to the position of the next (or previous)
+separator in @var{STRING}.
+
+If @var{BACK} is absent or is present with the value false, @var{POS} is
+assigned the position of the leftmost token delimiter in @var{STRING} whose
+position is greater than @var{POS}, or if there is no such character, it is
+assigned a value one greater than the length of @var{STRING}. This identifies
+a token with starting position one greater than the value of @var{POS} on
+invocation, and ending position one less than the value of @var{POS} on return.
+
+If @var{BACK} is present with the value true, @var{POS} is assigned the
+position of the rightmost token delimiter in @var{STRING} whose position is
+less than @var{POS}, or if there is no such character, it is assigned the value
+zero. This identifies a token with ending position one less than the value of
+@var{POS} on invocation, and starting position one greater than the value of
+@var{POS} on return.
+
+@item @emph{Class}:
+Subroutine
+
+@item @emph{Arguments}:
+@multitable @columnfractions .15 .70
+@item @var{STRING} @tab Shall be a scalar of type @code{CHARACTER}.
+@item @var{SET}    @tab Shall be a scalar of type @code{CHARACTER}.
+@item @var{POS}    @tab Shall be a scalar of type @code{INTEGER}.
+@item @var{BACK}   @tab (Optional) Shall be a scalar of type @code{LOGICAL}.
+@end multitable
+
+@item @emph{Example}:
+@smallexample
+character(len=:), allocatable :: input
+character(len=2) :: set = ', '
+integer :: p
+input = "one,last example"
+p = 0
+do
+  if (p > len(input)) exit
+  istart = p + 1
+  call split(input, set, p)
+  iend = p - 1
+  print '(t7, a)', input(istart:iend)
+end do
+@end smallexample
+
+@item @emph{Standard}:
+Fortran 2023
+
+@item @emph{See also}:
+@ref{SCAN}
+@end table
+
+
+
 @node SPREAD
 @section @code{SPREAD} --- Add a dimension to an array
 @fnindex SPREAD
@@ -14372,28 +14623,28 @@ GNU extension
 @end multitable
 
 @item @emph{Description}:
-This function returns information about a file. No permissions are required on 
-the file itself, but execute (search) permission is required on all of the 
+This function returns information about a file. No permissions are required on
+the file itself, but execute (search) permission is required on all of the
 directories in path that lead to the file.
 
 The elements that are obtained and stored in the array @code{VALUES}:
 @multitable @columnfractions .15 .70
-@item @code{VALUES(1)}   @tab  Device ID 
-@item @code{VALUES(2)}   @tab  Inode number 
-@item @code{VALUES(3)}   @tab  File mode 
-@item @code{VALUES(4)}   @tab  Number of links 
-@item @code{VALUES(5)}   @tab  Owner's uid 
-@item @code{VALUES(6)}   @tab  Owner's gid 
-@item @code{VALUES(7)}   @tab  ID of device containing directory entry for file (0 if not available) 
-@item @code{VALUES(8)}   @tab  File size (bytes) 
-@item @code{VALUES(9)}   @tab  Last access time 
-@item @code{VALUES(10)}  @tab  Last modification time 
-@item @code{VALUES(11)}  @tab  Last file status change time 
-@item @code{VALUES(12)}  @tab  Preferred I/O block size (-1 if not available) 
+@item @code{VALUES(1)}   @tab  Device ID
+@item @code{VALUES(2)}   @tab  Inode number
+@item @code{VALUES(3)}   @tab  File mode
+@item @code{VALUES(4)}   @tab  Number of links
+@item @code{VALUES(5)}   @tab  Owner's uid
+@item @code{VALUES(6)}   @tab  Owner's gid
+@item @code{VALUES(7)}   @tab  ID of device containing directory entry for file (0 if not available)
+@item @code{VALUES(8)}   @tab  File size (bytes)
+@item @code{VALUES(9)}   @tab  Last access time
+@item @code{VALUES(10)}  @tab  Last modification time
+@item @code{VALUES(11)}  @tab  Last file status change time
+@item @code{VALUES(12)}  @tab  Preferred I/O block size (-1 if not available)
 @item @code{VALUES(13)}  @tab  Number of blocks allocated (-1 if not available)
 @end multitable
 
-Not all these elements are relevant on all systems. 
+Not all these elements are relevant on all systems.
 If an element is not relevant, it is returned as 0.
 If the value of an element would overflow the range of default integer,
 a -1 is returned instead.
@@ -14409,9 +14660,9 @@ Subroutine, function
 @item @var{NAME}   @tab The type shall be @code{CHARACTER}, of the
 default kind and a valid path within the file system.
 @item @var{VALUES} @tab The type shall be @code{INTEGER, DIMENSION(13)}
-of the default kind.
+of either kind 4 or kind 8.
 @item @var{STATUS} @tab (Optional) status flag of type @code{INTEGER}
-of the default kind.
+of kind 2 or larger.
 Returns 0 on success and a system specific error code otherwise.
 @end multitable
 
@@ -14875,54 +15126,6 @@ Fortran 77 and later, for a complex argument Fortran 2008 or later
 
 
 
-@node TEAM_NUMBER
-@section @code{TEAM_NUMBER} --- Retrieve team id of given team
-@fnindex TEAM_NUMBER
-@cindex coarray, @code{TEAM_NUMBER}
-@cindex teams, index of given team
-
-@table @asis
-@item @emph{Synopsis}:
-@item @code{RESULT = TEAM_NUMBER([TEAM])}
-
-@item @emph{Description}:
-Returns the team id for the given @var{TEAM} as assigned by @code{FORM TEAM}.
-If @var{TEAM} is absent, returns the team number of the current team.
-
-@item @emph{Class}:
-Transformational function
-
-@item @emph{Arguments}:
-@multitable @columnfractions .15 .70
-@item @var{TEAM} @tab (optional, intent(in)) The handle of the team for which
-the number, aka id, is desired.
-@end multitable
-
-@item @emph{Return value}:
-Default integer.  The id as given in a call @code{FORM TEAM}. Applying
-@code{TEAM_NUMBER} to the initial team will result in @code{-1} to be returned.
-Returns the id of the current team, if @var{TEAM} is null.
-
-@item @emph{Example}:
-@smallexample
-use, intrinsic :: iso_fortran_env
-type(team_type) :: t
-
-print *, team_number() ! -1
-form team (99, t)
-print *, team_number(t) ! 99
-@end smallexample
-
-@item @emph{Standard}:
-Fortran 2018 and later.
-
-@item @emph{See also}:
-@ref{GET_TEAM}, @*
-@ref{TEAM_NUMBER}
-@end table
-
-
-
 @node TANPI
 @section @code{TANPI} --- Circular tangent function
 @fnindex TANPI
@@ -14968,6 +15171,54 @@ end program test_tanpi
 @item @emph{See also}:
 @ref{ATANPI} @*
 @ref{TAN} @*
+@end table
+
+
+
+@node TEAM_NUMBER
+@section @code{TEAM_NUMBER} --- Retrieve team id of given team
+@fnindex TEAM_NUMBER
+@cindex coarray, @code{TEAM_NUMBER}
+@cindex teams, index of given team
+
+@table @asis
+@item @emph{Synopsis}:
+@item @code{RESULT = TEAM_NUMBER([TEAM])}
+
+@item @emph{Description}:
+Returns the team id for the given @var{TEAM} as assigned by @code{FORM TEAM}.
+If @var{TEAM} is absent, returns the team number of the current team.
+
+@item @emph{Class}:
+Transformational function
+
+@item @emph{Arguments}:
+@multitable @columnfractions .15 .70
+@item @var{TEAM} @tab (optional, intent(in)) The handle of the team for which
+the number, aka id, is desired.
+@end multitable
+
+@item @emph{Return value}:
+Default integer.  The id as given in a call @code{FORM TEAM}. Applying
+@code{TEAM_NUMBER} to the initial team will result in @code{-1} to be returned.
+Returns the id of the current team, if @var{TEAM} is null.
+
+@item @emph{Example}:
+@smallexample
+use, intrinsic :: iso_fortran_env
+type(team_type) :: t
+
+print *, team_number() ! -1
+form team (99, t)
+print *, team_number(t) ! 99
+@end smallexample
+
+@item @emph{Standard}:
+Fortran 2018 and later.
+
+@item @emph{See also}:
+@ref{GET_TEAM}, @*
+@ref{TEAM_NUMBER}
 @end table
 
 
@@ -15478,7 +15729,7 @@ Fortran 2008 and later
 @node UINT
 @section @code{UINT} -- Convert to @code{UNSIGNED} type
 @fnindex UINT
-@cindex, conversion, to unsigned
+@cindex conversion, to unsigned
 
 @table @asis
 @item @emph{Synopsis}:
@@ -16125,9 +16376,10 @@ with the following options: @code{-fno-unsafe-math-optimizations
 @table @asis
 @item @emph{Standard}:
 OpenMP Application Program Interface v4.5,
-OpenMP Application Program Interface v5.0 (partially supported),
-OpenMP Application Program Interface v5.1 (partially supported) and
-OpenMP Application Program Interface v5.2 (partially supported).
+OpenMP Application Program Interface v5.0,
+OpenMP Application Program Interface v5.1,
+OpenMP Application Program Interface v5.2, and
+OpenMP Application Program Interface v6.0 (partially supported).
 @end table
 
 The OpenMP Fortran runtime library routines are provided both in
@@ -16148,6 +16400,8 @@ OpenMP Application Program Interface v5.0},
 OpenMP Application Program Interface v5.1} and
 @uref{https://www.openmp.org/wp-content/uploads/OpenMP-API-Specification-5-2.pdf,
 OpenMP Application Program Interface v5.2}.
+@uref{https://www.openmp.org/wp-content/uploads/OpenMP-API-Specification-6-0.pdf,
+OpenMP Application Program Interface v6.0}.
 
 @code{OMP_LIB_KINDS} provides the following scalar default-integer
 named constants:
@@ -16170,7 +16424,7 @@ named constants:
 @code{OMP_LIB} provides the scalar default-integer
 named constant @code{openmp_version} with a value of the form
 @var{yyyymm}, where @code{yyyy} is the year and @var{mm} the month
-of the OpenMP version; for OpenMP v4.5 the value is @code{201511}.
+of the OpenMP version; for OpenMP v5.2 the value is @code{202111}.
 
 The following derived type:
 
@@ -16182,6 +16436,7 @@ The following scalar default-integer named constants:
 @table @asis
 @item @code{omp_initial_device}
 @item @code{omp_invalid_device}
+@item @code{omp_default_device}
 @end table
 
 
@@ -16202,7 +16457,7 @@ kind @code{omp_proc_bind_kind}:
 @item @code{omp_proc_bind_false}
 @item @code{omp_proc_bind_true}
 @item @code{omp_proc_bind_primary}
-@item @code{omp_proc_bind_master}
+@item @code{omp_proc_bind_master} (deprecated)
 @item @code{omp_proc_bind_close}
 @item @code{omp_proc_bind_spread}
 @end table
@@ -16211,11 +16466,11 @@ The following scalar integer named constants are of the
 kind @code{omp_lock_hint_kind}:
 
 @table @asis
-@item @code{omp_lock_hint_none}
-@item @code{omp_lock_hint_uncontended}
-@item @code{omp_lock_hint_contended}
-@item @code{omp_lock_hint_nonspeculative}
-@item @code{omp_lock_hint_speculative}
+@item @code{omp_lock_hint_none} (deprecated)
+@item @code{omp_lock_hint_uncontended} (deprecated)
+@item @code{omp_lock_hint_contended} (deprecated)
+@item @code{omp_lock_hint_nonspeculative} (deprecated)
+@item @code{omp_lock_hint_speculative} (deprecated)
 @item @code{omp_sync_hint_none}
 @item @code{omp_sync_hint_uncontended}
 @item @code{omp_sync_hint_contended}
@@ -16223,12 +16478,13 @@ kind @code{omp_lock_hint_kind}:
 @item @code{omp_sync_hint_speculative}
 @end table
 
-And the following two scalar integer named constants are of the
+And the following three scalar integer named constants are of the
 kind @code{omp_pause_resource_kind}:
 
 @table @asis
 @item @code{omp_pause_soft}
 @item @code{omp_pause_hard}
+@item @code{omp_pause_tool}
 @end table
 
 The following scalar integer named constants are of the kind
@@ -16256,7 +16512,7 @@ The following scalar integer named constants are of the kind
 @item @code{omp_atv_contended}
 @item @code{omp_atv_uncontended}
 @item @code{omp_atv_serialized}
-@item @code{omp_atv_sequential}
+@item @code{omp_atv_sequential} (deprecated)
 @item @code{omp_atv_private}
 @item @code{omp_atv_all}
 @item @code{omp_atv_thread}
@@ -16295,6 +16551,27 @@ The following scalar integer named constants are of the kind
 @item @code{omp_const_mem_space}
 @item @code{omp_high_bw_mem_space}
 @item @code{omp_low_lat_mem_space}
+@end table
+
+The following scalar integer named constants are of the kind
+@code{omp_control_tool_kind}:
+
+@table @asis
+@item @code{omp_control_tool_start}
+@item @code{omp_control_tool_pause}
+@item @code{omp_control_tool_flush}
+@item @code{omp_control_tool_end}
+@item @code{omp_control_tool_max}
+@end table
+
+The following scalar integer named constants are of the kind
+@code{omp_control_tool_result_kind}:
+
+@table @asis
+@item @code{omp_control_tool_notool}
+@item @code{omp_control_tool_nocallback}
+@item @code{omp_control_tool_success}
+@item @code{omp_control_tool_ignored}
 @end table
 
 

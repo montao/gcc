@@ -41,6 +41,9 @@
 
 #include <bits/invoke.h>
 #include <bits/utility.h>
+#if __glibcxx_function_ref
+#include <bits/stl_function.h>
+#endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -139,6 +142,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	 { return &_S_call_ptrs<_Adjust_target<_Tp>>; }
 
 #ifdef __glibcxx_function_ref // C++ >= 26
+       template<typename _Fn>
+	 static _Ret
+	 _S_static(_Ptrs, _Args... __args) noexcept(_Noex)
+	 { return _Fn::operator()(std::forward<_Args>(__args)...); }
+
        template<auto __fn>
 	 static _Ret
 	 _S_nttp(_Ptrs, _Args... __args) noexcept(_Noex)
@@ -223,12 +231,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
      using _Invoker = _Base_invoker<_Noex, remove_cv_t<_Ret>, __param_t<_Args>...>;
 
    template<typename _Func>
-     auto&
+     constexpr auto&
      __invoker_of(_Func& __f) noexcept
      { return __f._M_invoke; }
 
    template<typename _Func>
-     auto&
+     constexpr auto&
      __base_of(_Func& __f) noexcept
      { return static_cast<__like_t<_Func&, typename _Func::_Base>>(__f); }
 
@@ -236,9 +244,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
      consteval bool
      __is_invoker_convertible() noexcept
      {
-       if constexpr (requires { typename _Src::_Signature; })
-	 return is_convertible_v<typename _Src::_Signature,
-				 typename _Dst::_Signature>;
+       if constexpr (requires { typename _Src::_Invoker::_Signature; })
+	 return is_convertible_v<typename _Src::_Invoker::_Signature,
+				 typename _Dst::_Invoker::_Signature>;
        else
 	 return false;
      }
@@ -419,6 +427,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        _M_manage = _Manager::_S_empty;
      }
 
+     void _M_destroy() noexcept
+     { _M_manage(_Manager::_Op::_Destroy, _M_storage, nullptr); }
+
      ~_Mo_base()
      { _M_destroy(); }
 
@@ -434,17 +445,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        std::swap(_M_manage, __x._M_manage);
      }
 
-     _Storage _M_storage;
-
-   private:
-     void _M_destroy() noexcept
-     { _M_manage(_Manager::_Op::_Destroy, _M_storage, nullptr); }
-
      _Manager::_Func _M_manage;
-
-#ifdef __glibcxx_copyable_function // C++ >= 26 && HOSTED
-     friend class _Cpy_base;
-#endif // __glibcxx_copyable_function
+     _Storage _M_storage;
    };
 #endif // __glibcxx_copyable_function || __glibcxx_copyable_function
 } // namespace __polyfunc
@@ -501,6 +503,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       _Cpy_base(_Cpy_base&&) = default;
 
       _Cpy_base(_Cpy_base const& __x)
+      : _Mo_base()
       { _M_copy(__x); }
 
       _Cpy_base&
@@ -536,6 +539,25 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /// @cond undocumented
   namespace __polyfunc
   {
+    struct _Ref_base
+    {
+      constexpr
+      _Ref_base() noexcept
+      { _M_ptrs._M_obj = nullptr; }
+
+      template<typename _Tp>
+	constexpr void
+	_M_init(_Tp* __ptr) noexcept
+	{
+	  if constexpr (is_function_v<_Tp>)
+	    _M_ptrs._M_func = reinterpret_cast<void(*)()>(__ptr);
+	  else
+	    _M_ptrs._M_obj = __ptr;
+	}
+
+      _Ptrs _M_ptrs;
+    };
+
     template<typename _Sig>
       struct __skip_first_arg;
 
@@ -544,14 +566,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       struct __skip_first_arg<_Ret(*)(_Arg, _Args...) noexcept(_Noex)>
       { using type = _Ret(_Args...) noexcept(_Noex); };
 
+    // Returns a function pointer to signature to be used with function_ref, or void.
     template<typename _Fn, typename _Tr>
       consteval auto
       __deduce_funcref()
       {
 	if constexpr (is_member_object_pointer_v<_Fn>)
-	  // TODO Consider reporting issue to make this noexcept
-	  return static_cast<invoke_result_t<_Fn, _Tr>(*)()>(nullptr);
-	else
+	  {
+	    if constexpr (is_invocable_v<_Fn, _Tr>)
+	      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+	      // 4425. CTAD function_ref from data member pointer should produce
+	      //       noexcept signature
+	      return static_cast<invoke_result_t<_Fn, _Tr>(*)() noexcept>(nullptr);
+	  }
+	else if constexpr (requires { typename __skip_first_arg<_Fn>::type; })
 	  return static_cast<__skip_first_arg<_Fn>::type*>(nullptr);
       }
   } // namespace __polyfunc
@@ -564,15 +592,39 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     requires is_function_v<_Fn>
     function_ref(_Fn*) -> function_ref<_Fn>;
 
-  template<auto __f, class _Fn = remove_pointer_t<decltype(__f)>>
-    requires is_function_v<_Fn>
-    function_ref(nontype_t<__f>) -> function_ref<_Fn>;
+  template<auto __fn, typename _Fn>
+    requires is_function_v<remove_pointer_t<_Fn>>
+    function_ref(constant_wrapper<__fn, _Fn>)
+      -> function_ref<remove_pointer_t<_Fn>>;
 
-  template<auto __f, typename _Tp, class _Fn = decltype(__f)>
-    requires is_member_pointer_v<_Fn> || is_function_v<remove_pointer_t<_Fn>>
-    function_ref(nontype_t<__f>, _Tp&&)
-      -> function_ref<
-	   remove_pointer_t<decltype(__polyfunc::__deduce_funcref<_Fn, _Tp&>())>>;
+  template<auto __fn, typename _Fn, typename _Tp,
+	   typename _SignaturePtr =
+	     decltype(__polyfunc::__deduce_funcref<_Fn, _Tp&>())>
+    requires (!is_void_v<_SignaturePtr>)
+    function_ref(constant_wrapper<__fn, _Fn>, _Tp&&)
+      -> function_ref<remove_pointer_t<_SignaturePtr>>;
+
+  /// @cond undocumented
+  template<typename _Tp>
+    constexpr bool __is_function_ref_v = false;
+  template<typename _Tp>
+    constexpr bool __is_function_ref_v<function_ref<_Tp>> = true;
+
+  namespace __polyfunc
+  {
+    template<typename _Dst, typename _Src>
+      consteval bool
+      __is_funcref_assignable() noexcept
+      {
+	if constexpr (__is_function_ref_v<_Src>)
+	  if constexpr (is_convertible_v<typename _Src::_ArgsSignature*,
+					 typename _Dst::_ArgsSignature*>)
+	    return is_convertible_v<typename _Dst::_TargetQuals,
+				    typename _Src::_TargetQuals>;
+	return false;
+      }
+  } // namespace __polyfunc
+  /// @endcond
 
 #endif // __glibcxx_function_ref
 

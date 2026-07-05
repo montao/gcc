@@ -1,6 +1,6 @@
 /* Header file for intrinsics check, resolve and simplify function
    prototypes.
-   Copyright (C) 2000-2025 Free Software Foundation, Inc.
+   Copyright (C) 2000-2026 Free Software Foundation, Inc.
    Contributed by Andy Vaught & Katherine Holcomb
 
 This file is part of GCC.
@@ -53,6 +53,7 @@ bool gfc_check_chdir (gfc_expr *);
 bool gfc_check_chmod (gfc_expr *, gfc_expr *);
 bool gfc_check_cmplx (gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_complex (gfc_expr *, gfc_expr *);
+bool gfc_check_coshape (gfc_expr *, gfc_expr *);
 bool gfc_check_co_broadcast (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_co_minmax (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_co_sum (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
@@ -165,8 +166,9 @@ bool gfc_check_sign (gfc_expr *, gfc_expr *);
 bool gfc_check_signal (gfc_expr *, gfc_expr *);
 bool gfc_check_sizeof (gfc_expr *);
 bool gfc_check_c_associated (gfc_expr *, gfc_expr *);
-bool gfc_check_c_f_pointer (gfc_expr *, gfc_expr *, gfc_expr *);
+bool gfc_check_c_f_pointer (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_c_f_procpointer (gfc_expr *, gfc_expr *);
+bool gfc_check_c_f_strpointer (gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_c_funloc (gfc_expr *);
 bool gfc_check_c_loc (gfc_expr *);
 bool gfc_check_c_sizeof (gfc_expr *);
@@ -215,6 +217,7 @@ bool gfc_check_mvbits (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *,
 bool gfc_check_random_init (gfc_expr *, gfc_expr *);
 bool gfc_check_random_number (gfc_expr *);
 bool gfc_check_random_seed (gfc_expr *, gfc_expr *, gfc_expr *);
+bool gfc_check_split (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_dtime_etime_sub (gfc_expr *, gfc_expr *);
 bool gfc_check_fgetputc_sub (gfc_expr *, gfc_expr *, gfc_expr *);
 bool gfc_check_fgetput_sub (gfc_expr *, gfc_expr *);
@@ -497,6 +500,7 @@ void gfc_resolve_complex (gfc_expr *, gfc_expr *, gfc_expr *);
 void gfc_resolve_conjg (gfc_expr *, gfc_expr *);
 void gfc_resolve_cos (gfc_expr *, gfc_expr *);
 void gfc_resolve_cosh (gfc_expr *, gfc_expr *);
+void gfc_resolve_coshape (gfc_expr *, gfc_expr *, gfc_expr *);
 void gfc_resolve_count (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 void gfc_resolve_cshift (gfc_expr *, gfc_expr *, gfc_expr *, gfc_expr *);
 void gfc_resolve_ctime (gfc_expr *, gfc_expr *);
@@ -693,6 +697,7 @@ void gfc_resolve_link_sub (gfc_code *);
 void gfc_resolve_symlnk_sub (gfc_code *);
 void gfc_resolve_signal_sub (gfc_code *);
 void gfc_resolve_sleep_sub (gfc_code *);
+void gfc_resolve_split (gfc_code *);
 void gfc_resolve_stat_sub (gfc_code *);
 void gfc_resolve_system_clock (gfc_code *);
 void gfc_resolve_system_sub (gfc_code *);

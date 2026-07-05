@@ -1,5 +1,5 @@
-/* Functions related to building -*- C++ -*- classes and their related objects.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+/* Functions related to building C++ classes and their related objects.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -37,6 +37,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimplify.h"
 #include "intl.h"
 #include "asan.h"
+#include "contracts.h"
 
 /* Id for dumping the class hierarchy.  */
 int class_dump_id;
@@ -166,6 +167,7 @@ static int maybe_indent_hierarchy (FILE *, int, int);
 static tree dump_class_hierarchy_r (FILE *, dump_flags_t, tree, tree, int);
 static void dump_class_hierarchy (tree);
 static void dump_class_hierarchy_1 (FILE *, dump_flags_t, tree);
+static void dump_vtable_entry (FILE *, tree);
 static void dump_array (FILE *, tree);
 static void dump_vtable (tree, tree, tree);
 static void dump_vtt (tree, tree);
@@ -347,7 +349,10 @@ build_base_path (enum tree_code code,
 		 || processing_template_decl
 		 || in_template_context);
 
-  fixed_type_p = resolves_to_fixed_type_p (expr, &nonnull);
+  if (!uneval)
+    fixed_type_p = resolves_to_fixed_type_p (expr, &nonnull);
+  else
+    fixed_type_p = 0;
 
   /* Do we need to look in the vtable for the real offset?  */
   virtual_access = (v_binfo && fixed_type_p <= 0);
@@ -1219,9 +1224,10 @@ object_parms_correspond (tree fn, tree method, tree context)
       && DECL_IOBJ_MEMBER_FUNCTION_P (method))
     {
       /* Either both or neither need to be ref-qualified for
-	 differing quals to allow overloading.  */
-      if ((FUNCTION_REF_QUALIFIED (fn_type)
-	   == FUNCTION_REF_QUALIFIED (method_type))
+	 differing quals to allow overloading before C++20 (P1787R6).  */
+      if ((cxx_dialect >= cxx20
+	   || (FUNCTION_REF_QUALIFIED (fn_type)
+	       == FUNCTION_REF_QUALIFIED (method_type)))
 	  && (type_memfn_quals (fn_type) != type_memfn_quals (method_type)
 	      || type_memfn_rqual (fn_type) != type_memfn_rqual (method_type)))
 	return false;
@@ -1356,7 +1362,30 @@ add_method (tree type, tree method, bool via_using)
       if (!compparms (parms1, parms2))
 	continue;
 
-      if (!equivalently_constrained (fn, method))
+      tree fn_constraints = get_constraints (fn);
+      tree method_constraints = get_constraints (method);
+
+      if (fn_constraints && method_constraints
+	  && DECL_CONTEXT (fn) != type
+	  && !processing_template_decl)
+	{
+	  if (TREE_CODE (fn) == TEMPLATE_DECL)
+	    ++processing_template_decl;
+	  if (tree outer_args = outer_template_args (fn))
+	    fn_constraints = tsubst_constraint_info (fn_constraints,
+						     outer_args,
+						     tf_warning_or_error,
+						     fn);
+	  if (tree outer_args = outer_template_args (method))
+	    method_constraints = tsubst_constraint_info (method_constraints,
+							 outer_args,
+							 tf_warning_or_error,
+							 method);
+	  if (TREE_CODE (fn) == TEMPLATE_DECL)
+	    --processing_template_decl;
+	}
+
+      if (!equivalent_constraints (fn_constraints, method_constraints))
 	{
 	  if (processing_template_decl)
 	    /* We can't check satisfaction in dependent context, wait until
@@ -1407,7 +1436,7 @@ add_method (tree type, tree method, bool via_using)
       /* If these are versions of the same function, process and
 	 move on.  */
       if (TREE_CODE (fn) == FUNCTION_DECL
-	  && maybe_version_functions (method, fn, true))
+	  && maybe_version_functions (method, fn))
 	continue;
 
       if (DECL_INHERITED_CTOR (method))
@@ -1683,11 +1712,12 @@ check_tag (tree tag, tree id, tree *tp, abi_tag_data *p)
 	  /* Don't inherit this tag multiple times.  */
 	  IDENTIFIER_MARKED (id) = true;
 
+	  ABI_TAG_INHERITED (p->tags) = true;
 	  if (TYPE_P (p->t))
 	    {
 	      /* Tags inherited from type template arguments are only used
 		 to avoid warnings.  */
-	      ABI_TAG_IMPLICIT (p->tags) = true;
+	      ABI_TAG_NOT_MANGLED (p->tags) = true;
 	      return;
 	    }
 	  /* For functions and variables we want to warn, too.  */
@@ -1976,7 +2006,7 @@ inherit_targ_abi_tags (tree t)
 }
 
 /* Return true, iff class T has a non-virtual destructor that is
-   accessible from outside the class heirarchy (i.e. is public, or
+   accessible from outside the class hierarchy (i.e. is public, or
    there's a suitable friend.  */
 
 static bool
@@ -2392,8 +2422,9 @@ finish_struct_bits (tree t)
      mode to be BLKmode, and force its TREE_ADDRESSABLE bit to be
      nonzero.  This will cause it to be passed by invisible reference
      and prevent it from being returned in a register.  */
-  if (type_has_nontrivial_copy_init (t)
-      || TYPE_HAS_NONTRIVIAL_DESTRUCTOR (t))
+  if (!has_trivial_abi_attribute (t)
+      && (type_has_nontrivial_copy_init (t)
+	  || TYPE_HAS_NONTRIVIAL_DESTRUCTOR (t)))
     {
       SET_DECL_MODE (TYPE_MAIN_DECL (t), BLKmode);
       SET_TYPE_MODE (t, BLKmode);
@@ -3228,6 +3259,10 @@ check_for_override (tree decl, tree ctype)
 
       if (DECL_DESTRUCTOR_P (decl))
 	TYPE_HAS_NONTRIVIAL_DESTRUCTOR (ctype) = true;
+
+      if (DECL_HAS_CONTRACTS_P (decl))
+	error_at (DECL_SOURCE_LOCATION (decl),
+		  "contracts cannot be added to virtual functions");
     }
   else if (DECL_FINAL_P (decl))
     error ("%q+#D marked %<final%>, but is not virtual", decl);
@@ -3255,7 +3290,7 @@ warn_hidden (tree t)
 	unsigned j;
 	size_t num_overriders = 0;
 	hash_set<tree> overriden_base_fndecls;
-	/* base_fndecls that are hidden but not overriden. The "value"
+	/* base_fndecls that are hidden but not overridden. The "value"
 	   contains the last fndecl we saw that hides the "key".  */
 	hash_map<tree, tree> hidden_base_fndecls;
 
@@ -3421,9 +3456,9 @@ maybe_add_class_template_decl_list (tree type, tree t, int friend_p)
 /* This function is called from declare_virt_assop_and_dtor via
    dfs_walk_all.
 
-   DATA is a type that direcly or indirectly inherits the base
+   DATA is a type that directly or indirectly inherits the base
    represented by BINFO.  If BINFO contains a virtual assignment [copy
-   assignment or move assigment] operator or a virtual constructor,
+   assignment or move assignment] operator or a virtual constructor,
    declare that function in DATA if it hasn't been already declared.  */
 
 static tree
@@ -3869,17 +3904,28 @@ check_field_decl (tree field,
       else
 	{
 	  TYPE_NEEDS_CONSTRUCTING (t) |= TYPE_NEEDS_CONSTRUCTING (type);
-	  TYPE_HAS_NONTRIVIAL_DESTRUCTOR (t)
-	    |= TYPE_HAS_NONTRIVIAL_DESTRUCTOR (type);
 	  TYPE_HAS_COMPLEX_COPY_ASSIGN (t)
 	    |= (TYPE_HAS_COMPLEX_COPY_ASSIGN (type)
 		|| !TYPE_HAS_COPY_ASSIGN (type));
 	  TYPE_HAS_COMPLEX_COPY_CTOR (t) |= (TYPE_HAS_COMPLEX_COPY_CTOR (type)
 					     || !TYPE_HAS_COPY_CTOR (type));
-	  TYPE_HAS_COMPLEX_MOVE_ASSIGN (t) |= TYPE_HAS_COMPLEX_MOVE_ASSIGN (type);
+	  TYPE_HAS_COMPLEX_MOVE_ASSIGN (t)
+	    |= TYPE_HAS_COMPLEX_MOVE_ASSIGN (type);
 	  TYPE_HAS_COMPLEX_MOVE_CTOR (t) |= TYPE_HAS_COMPLEX_MOVE_CTOR (type);
-	  TYPE_HAS_COMPLEX_DFLT (t) |= (!TYPE_HAS_DEFAULT_CONSTRUCTOR (type)
-					|| TYPE_HAS_COMPLEX_DFLT (type));
+	  /* In C++26, triviality of default ctor or dtor of a variant member
+	     doesn't matter for triviality of the t's default ctor or dtor.
+	     Before C++26, non-trivial default ctor or dtor of a variant
+	     member makes it deleted with the exception of default ctor
+	     when DMI is present, but in that case default ctor is
+	     non-trivial.   */
+	  if (TREE_CODE (DECL_CONTEXT (field)) != UNION_TYPE)
+	    {
+	      TYPE_HAS_NONTRIVIAL_DESTRUCTOR (t)
+		|= TYPE_HAS_NONTRIVIAL_DESTRUCTOR (type);
+	      TYPE_HAS_COMPLEX_DFLT (t)
+		|= (!TYPE_HAS_DEFAULT_CONSTRUCTOR (type)
+		    || TYPE_HAS_COMPLEX_DFLT (type));
+	    }
 	}
 
       if (TYPE_HAS_COPY_CTOR (type)
@@ -5115,7 +5161,7 @@ check_methods (tree t)
 	    error_at (location_of (t), "no viable destructor for %qT", t);
 	  else
 	    error_at (location_of (t), "destructor for %qT is ambiguous", t);
-	  print_candidates (dtor);
+	  print_candidates (location_of (t), dtor);
 
 	  /* Arbitrarily prune the overload set to a single function for
 	     sake of error recovery.  */
@@ -5700,7 +5746,7 @@ in_class_defaulted_default_constructor (tree t)
 }
 
 /* Returns true iff FN is a user-provided function, i.e. user-declared
-   and not defaulted at its first declaration.  */
+   and not explicitly defaulted or deleted on its first declaration.  */
 
 bool
 user_provided_p (tree fn)
@@ -5708,7 +5754,12 @@ user_provided_p (tree fn)
   fn = STRIP_TEMPLATE (fn);
   return (!DECL_ARTIFICIAL (fn)
 	  && !(DECL_INITIALIZED_IN_CLASS_P (fn)
-	       && (DECL_DEFAULTED_FN (fn) || DECL_DELETED_FN (fn))));
+	       && (DECL_DEFAULTED_FN (fn) || DECL_DELETED_FN (fn)))
+	  /* At namespace scope,
+	      void f () = delete;
+	    is *not* user-provided (and any function deleted after its first
+	    declaration is ill-formed).  */
+	  && !(DECL_NAMESPACE_SCOPE_P (fn) && DECL_DELETED_FN (fn)));
 }
 
 /* Returns true iff class T has a user-provided constructor.  */
@@ -6046,6 +6097,24 @@ classtype_has_non_deleted_move_ctor (tree t)
   for (ovl_iterator iter (CLASSTYPE_CONSTRUCTORS (t)); iter; ++iter)
     if (move_fn_p (*iter) && !DECL_DELETED_FN (*iter))
       return true;
+  return false;
+}
+
+/* True iff T has a copy or move constructor that is not deleted.  */
+
+bool
+classtype_has_non_deleted_copy_or_move_ctor (tree t)
+{
+  if (CLASSTYPE_LAZY_COPY_CTOR (t))
+    lazily_declare_fn (sfk_copy_constructor, t);
+  if (CLASSTYPE_LAZY_MOVE_CTOR (t))
+    lazily_declare_fn (sfk_move_constructor, t);
+  for (ovl_iterator iter (CLASSTYPE_CONSTRUCTORS (t)); iter; ++iter)
+    {
+      tree fn = *iter;
+      if ((copy_fn_p (fn) || move_fn_p (fn)) && !DECL_DELETED_FN (fn))
+	return true;
+    }
   return false;
 }
 
@@ -6415,7 +6484,7 @@ check_bases_and_members (tree t)
 
   /* Deduce noexcept on destructor.  This needs to happen after we've set
      triviality flags appropriately for our bases, and before checking
-     overriden virtual functions via check_methods.  */
+     overridden virtual functions via check_methods.  */
   if (cxx_dialect >= cxx11)
     if (tree dtor = CLASSTYPE_DESTRUCTOR (t))
       for (tree fn : ovl_range (dtor))
@@ -7449,10 +7518,14 @@ determine_key_method (tree type)
   for (method = TYPE_FIELDS (type); method; method = DECL_CHAIN (method))
     if (TREE_CODE (method) == FUNCTION_DECL
 	&& DECL_VINDEX (method) != NULL_TREE
-	&& ! DECL_DECLARED_INLINE_P (method)
+	/* [[gnu::gnu_inline]] virtual inline/constexpr methods will
+	   have out of line bodies emitted in some other TU and so
+	   those can be key methods and vtable emitted in the TU with
+	   the actual out of line definition.  */
+	&& ! DECL_NONGNU_INLINE_P (method)
 	&& ! DECL_PURE_VIRTUAL_P (method))
       {
-	CLASSTYPE_KEY_METHOD (type) = method;
+	SET_CLASSTYPE_KEY_METHOD (type, method);
 	break;
       }
 
@@ -7567,7 +7640,8 @@ find_flexarrays (tree t, flexmems_t *fmem, bool base_p,
       if (TREE_CODE (fld) == TYPE_DECL
 	  && DECL_IMPLICIT_TYPEDEF_P (fld)
 	  && CLASS_TYPE_P (TREE_TYPE (fld))
-	  && IDENTIFIER_ANON_P (DECL_NAME (fld)))
+	  && (IDENTIFIER_ANON_P (DECL_NAME (fld))
+	      || TYPE_DECL_WAS_UNNAMED (fld)))
 	{
 	  /* Check the nested unnamed type referenced via a typedef
 	     independently of FMEM (since it's not a data member of
@@ -8043,6 +8117,8 @@ finish_struct_1 (tree t)
 	}
     }
 
+  validate_trivial_abi_attribute (t);
+
   finish_struct_bits (t);
 
   set_method_tm_attributes (t);
@@ -8320,6 +8396,11 @@ finish_struct (tree t, tree attributes)
       /* Lambdas are defined by the LAMBDA_EXPR.  */
       && !LAMBDA_TYPE_P (t))
     add_stmt (build_min (TAG_DEFN, t));
+
+  /* Lambdas will be keyed by their LAMBDA_TYPE_EXTRA_SCOPE when that
+     gets set; other local types might need keying anyway though.  */
+  if (at_function_scope_p () && !LAMBDA_TYPE_P (t))
+    maybe_key_decl (current_scope (), TYPE_NAME (t));
 
   return t;
 }
@@ -8951,6 +9032,13 @@ resolve_address_of_overloaded_function (tree target_type,
 	if (!constraints_satisfied_p (fn))
 	  continue;
 
+	/* For target_version semantics, never resolve a non-default
+	   version.  */
+	if (!TARGET_HAS_FMV_TARGET_ATTRIBUTE
+	    && TREE_CODE (fn) == FUNCTION_DECL
+	    && !is_function_default_version (fn))
+	  continue;
+
 	if (undeduced_auto_decl (fn))
 	  {
 	    /* Force instantiation to do return type deduction.  */
@@ -9081,7 +9169,7 @@ resolve_address_of_overloaded_function (tree target_type,
 	  error ("no matches converting function %qD to type %q#T",
 		 OVL_NAME (overload), target_type);
 
-	  print_candidates (overload);
+	  print_candidates (input_location, overload);
 	}
       return error_mark_node;
     }
@@ -9097,8 +9185,7 @@ resolve_address_of_overloaded_function (tree target_type,
 	 decls_match will return false as they are different.  */
       for (match = TREE_CHAIN (matches); match; match = TREE_CHAIN (match))
 	if (!decls_match (fn, TREE_PURPOSE (match))
-	    && !targetm.target_option.function_versions
-	       (fn, TREE_PURPOSE (match)))
+	    && !disjoint_version_decls (fn, TREE_PURPOSE (match)))
           break;
 
       if (match)
@@ -9114,7 +9201,7 @@ resolve_address_of_overloaded_function (tree target_type,
 	      for (match = matches; match; match = TREE_CHAIN (match))
 		TREE_VALUE (match) = TREE_PURPOSE (match);
 
-	      print_candidates (matches);
+	      print_candidates (input_location, matches);
 	    }
 
 	  return error_mark_node;
@@ -9176,8 +9263,10 @@ resolve_address_of_overloaded_function (tree target_type,
   /* If a pointer to a function that is multi-versioned is requested, the
      pointer to the dispatcher function is returned instead.  This works
      well because indirectly calling the function will dispatch the right
-     function version at run-time.  */
-  if (DECL_FUNCTION_VERSIONED (fn))
+     function version at run-time.
+     This is done at multiple_target.cc for target_version semantics.  */
+
+  if (DECL_FUNCTION_VERSIONED (fn) && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
     {
       fn = get_function_version_dispatcher (fn);
       if (fn == NULL)
@@ -9674,7 +9763,7 @@ dump_class_hierarchy_r (FILE *stream,
   tree base_binfo;
   int i;
 
-  fprintf (stream, "%s (0x" HOST_WIDE_INT_PRINT_HEX ") ",
+  fprintf (stream, "%s (" HOST_WIDE_INT_PRINT_HEX ") ",
 	   type_as_string (BINFO_TYPE (binfo), TFF_PLAIN_IDENTIFIER),
 	   (HOST_WIDE_INT) (uintptr_t) binfo);
   if (binfo != igo)
@@ -9697,7 +9786,7 @@ dump_class_hierarchy_r (FILE *stream,
   if (BINFO_PRIMARY_P (binfo))
     {
       indented = maybe_indent_hierarchy (stream, indent + 3, indented);
-      fprintf (stream, " primary-for %s (0x" HOST_WIDE_INT_PRINT_HEX ")",
+      fprintf (stream, " primary-for %s (" HOST_WIDE_INT_PRINT_HEX ")",
 	       type_as_string (BINFO_TYPE (BINFO_INHERITANCE_CHAIN (binfo)),
 			       TFF_PLAIN_IDENTIFIER),
 	       (HOST_WIDE_INT) (uintptr_t) BINFO_INHERITANCE_CHAIN (binfo));
@@ -9790,6 +9879,23 @@ dump_class_hierarchy (tree t)
     }
 }
 
+/* Dump VALUE, a vtable entry, to STREAM.  Print integer offsets as signed
+   values.  */
+
+static void
+dump_vtable_entry (FILE *stream, tree value)
+{
+  /* Vtable offset entries are stored in the pointer-sized vtable entry
+     type, but should be displayed as signed ptrdiff_t values.  */
+  tree cst = value;
+  STRIP_NOPS (cst);
+
+  if (TREE_CODE (cst) == INTEGER_CST)
+    print_decs (wi::to_wide (cst), stream);
+  else
+    fprintf (stream, "%s", expr_as_string (value, TFF_PLAIN_IDENTIFIER));
+}
+
 static void
 dump_array (FILE * stream, tree decl)
 {
@@ -9808,8 +9914,11 @@ dump_array (FILE * stream, tree decl)
 
   FOR_EACH_CONSTRUCTOR_VALUE (CONSTRUCTOR_ELTS (DECL_INITIAL (decl)),
 			      ix, value)
-    fprintf (stream, "%-4ld  %s\n", (long)(ix * elt),
-	     expr_as_string (value, TFF_PLAIN_IDENTIFIER));
+    {
+      fprintf (stream, "%-4ld  ", (long)(ix * elt));
+      dump_vtable_entry (stream, value);
+      fprintf (stream, "\n");
+    }
 }
 
 static void
@@ -9831,7 +9940,7 @@ dump_vtable (tree t, tree binfo, tree vtable)
       if (ctor_vtbl_p)
 	{
 	  if (!BINFO_VIRTUAL_P (binfo))
-	    fprintf (stream, " (0x" HOST_WIDE_INT_PRINT_HEX " instance)",
+	    fprintf (stream, " (" HOST_WIDE_INT_PRINT_HEX " instance)",
 		     (HOST_WIDE_INT) (uintptr_t) binfo);
 	  fprintf (stream, " in %s", type_as_string (t, TFF_PLAIN_IDENTIFIER));
 	}
@@ -10405,7 +10514,7 @@ dfs_accumulate_vtbl_inits (tree binfo,
        straighten this out.  */
     BINFO_VTABLE (binfo) = tree_cons (rtti_binfo, vtbl, BINFO_VTABLE (binfo));
   else if (BINFO_PRIMARY_P (binfo) && BINFO_VIRTUAL_P (binfo))
-    /* Throw away any unneeded intializers.  */
+    /* Throw away any unneeded initializers.  */
     (*l)->truncate (n_inits);
   else
      /* For an ordinary vtable, set BINFO_VTABLE.  */

@@ -1,5 +1,5 @@
 ;; Machine description for RISC-V atomic operations.
-;; Copyright (C) 2011-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2011-2026 Free Software Foundation, Inc.
 ;; Contributed by Andrew Waterman (andrew@sifive.com).
 ;; Based on MIPS target for GNU compiler.
 
@@ -45,17 +45,19 @@
 	(unspec_volatile:ANYI
 	    [(match_operand:ANYI 1 "memory_operand" "A")
 	     (match_operand:SI 2 "const_int_operand")]  ;; model
-	 UNSPEC_ATOMIC_LOAD))]
+	 UNSPECV_ATOMIC_LOAD))]
   "TARGET_ZTSO"
   {
     enum memmodel model = (enum memmodel) INTVAL (operands[2]);
     model = memmodel_base (model);
 
+    /* Ignoring RCsc atomic load-acquire on MEMMODEL_SEQ_CST due to
+       Note 3 abi break for when TARGET_ZALASR is enabled.  */
     if (model == MEMMODEL_SEQ_CST)
       return "fence\trw,rw\;"
 	     "<load>\t%0,%1";
-    else
-      return "<load>\t%0,%1";
+
+    return "<load>\t%0,%1";
   }
   [(set_attr "type" "multi")
    (set (attr "length")
@@ -68,17 +70,20 @@
 	(unspec_volatile:ANYI
 	    [(match_operand:ANYI 1 "reg_or_0_operand" "rJ")
 	     (match_operand:SI 2 "const_int_operand")]  ;; model
-	 UNSPEC_ATOMIC_STORE))]
+	 UNSPECV_ATOMIC_STORE))]
   "TARGET_ZTSO"
   {
     enum memmodel model = (enum memmodel) INTVAL (operands[2]);
     model = memmodel_base (model);
 
+    if (TARGET_ZALASR && (model == MEMMODEL_SEQ_CST))
+      return "<store>.rl\t%z1,%0";
+
     if (model == MEMMODEL_SEQ_CST)
       return "<store>\t%z1,%0\;"
 	     "fence\trw,rw";
-    else
-      return "<store>\t%z1,%0";
+
+    return "<store>\t%z1,%0";
   }
   [(set_attr "type" "multi")
    (set (attr "length")

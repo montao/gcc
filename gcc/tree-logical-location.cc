@@ -1,5 +1,5 @@
 /* Subclass of logical_location_manager with knowledge of "tree".
-   Copyright (C) 2022-2025 Free Software Foundation, Inc.
+   Copyright (C) 2022-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -26,6 +26,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-logical-location.h"
 #include "langhooks.h"
 #include "intl.h"
+#include "diagnostics/dumping.h"
+
+using namespace diagnostics::logical_locations;
 
 static void
 assert_valid_tree (const_tree node)
@@ -35,35 +38,45 @@ assert_valid_tree (const_tree node)
   gcc_assert (TREE_CODE (node) != TRANSLATION_UNIT_DECL);
 }
 
-/* class tree_logical_location_manager : public logical_location_manager.  */
+/* class tree_logical_location_manager
+   : public diagnostics::logical_locations::manager.  */
 
-const char *
+void
+tree_logical_location_manager::dump (FILE *outfile, int indent) const
+{
+  diagnostics::dumping::emit_heading (outfile, indent,
+				      "tree_logical_location_manager");
+}
+
+label_text
 tree_logical_location_manager::get_short_name (key k) const
 {
   tree node = tree_from_key (k);
   assert_valid_tree (node);
 
   if (DECL_P (node))
-    return identifier_to_locale (lang_hooks.decl_printable_name (node, 0));
+    return label_text::borrow
+      (identifier_to_locale (lang_hooks.decl_printable_name (node, 0)));
   if (TYPE_P (node))
-    return IDENTIFIER_POINTER (TYPE_IDENTIFIER (node));
-  return nullptr;
+    return label_text::borrow (IDENTIFIER_POINTER (TYPE_IDENTIFIER (node)));
+  return label_text ();
 }
 
-const char *
+label_text
 tree_logical_location_manager::get_name_with_scope (key k) const
 {
   tree node = tree_from_key (k);
   assert_valid_tree (node);
 
   if (DECL_P (node))
-    return identifier_to_locale (lang_hooks.decl_printable_name (node, 1));
+    return label_text::borrow
+      (identifier_to_locale (lang_hooks.decl_printable_name (node, 1)));
   if (TYPE_P (node))
-    return nullptr;
-  return nullptr;
+    return label_text ();
+  return label_text ();
 }
 
-const char *
+label_text
 tree_logical_location_manager::get_internal_name (key k) const
 {
   tree node = tree_from_key (k);
@@ -74,14 +87,14 @@ tree_logical_location_manager::get_internal_name (key k) const
       if (HAS_DECL_ASSEMBLER_NAME_P (node)
 	  && TREE_CODE (node) != NAMESPACE_DECL) // FIXME
 	if (tree id = DECL_ASSEMBLER_NAME (node))
-	  return IDENTIFIER_POINTER (id);
+	  return label_text::borrow (IDENTIFIER_POINTER (id));
     }
   else if (TYPE_P (node))
-    return nullptr;
-  return NULL;
+    return label_text ();
+  return label_text ();
 }
 
-enum logical_location_kind
+enum kind
 tree_logical_location_manager::get_kind (key k) const
 {
   tree node = tree_from_key (k);
@@ -90,18 +103,18 @@ tree_logical_location_manager::get_kind (key k) const
   switch (TREE_CODE (node))
     {
     default:
-      return logical_location_kind::unknown;
+      return kind::unknown;
     case FUNCTION_DECL:
-      return logical_location_kind::function;
+      return kind::function;
     case PARM_DECL:
-      return logical_location_kind::parameter;
+      return kind::parameter;
     case VAR_DECL:
-      return logical_location_kind::variable;
+      return kind::variable;
     case NAMESPACE_DECL:
-      return logical_location_kind::namespace_;
+      return kind::namespace_;
 
     case RECORD_TYPE:
-      return logical_location_kind::type;
+      return kind::type;
     }
 }
 
@@ -123,7 +136,7 @@ tree_logical_location_manager::get_name_for_path_output (key k) const
   return label_text ();
 }
 
-logical_location
+key
 tree_logical_location_manager::get_parent (key k) const
 {
   tree node = tree_from_key (k);
@@ -132,16 +145,18 @@ tree_logical_location_manager::get_parent (key k) const
   if (DECL_P (node))
     {
       if (!DECL_CONTEXT (node))
-	return logical_location ();
+	return key ();
       if (TREE_CODE (DECL_CONTEXT (node)) == TRANSLATION_UNIT_DECL)
-	return logical_location ();
+	return key ();
       return key_from_tree (DECL_CONTEXT (node));
     }
   else if (TYPE_P (node))
     {
       if (!TYPE_CONTEXT (node))
-	return logical_location ();
+	return key ();
+      if (TREE_CODE (TYPE_CONTEXT (node)) == TRANSLATION_UNIT_DECL)
+	return key ();
       return key_from_tree (TYPE_CONTEXT (node));
     }
-  return logical_location ();
+  return key ();
 }

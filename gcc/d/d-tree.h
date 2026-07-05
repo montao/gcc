@@ -1,5 +1,5 @@
 /* d-tree.h -- Definitions and declarations for code generation.
-   Copyright (C) 2006-2025 Free Software Foundation, Inc.
+   Copyright (C) 2006-2026 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -608,6 +608,7 @@ extern tree build_bounds_index_condition (IndexExp *, tree, tree);
 extern tree build_bounds_slice_condition (SliceExp *, tree, tree, tree);
 extern bool array_bounds_check (void);
 extern bool checkaction_trap_p (void);
+extern tree build_trap_call (void);
 extern TypeFunction *get_function_type (Type *);
 extern bool call_side_effect_free_p (FuncDeclaration *, Type *);
 extern bool call_by_alias_p (FuncDeclaration *, FuncDeclaration *);
@@ -694,6 +695,7 @@ extern void d_defer_declaration (Declaration *);
 extern void d_finish_compilation (tree *, int);
 
 /* In runtime.cc.  */
+extern tree build_libcall (libcall_fn, int ...);
 extern tree build_libcall (libcall_fn, Type *, int ...);
 
 /* In typeinfo.cc.  */

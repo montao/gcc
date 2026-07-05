@@ -1,5 +1,5 @@
 /* Inlining decision heuristics.
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -175,7 +175,7 @@ typedef fibonacci_node <inline_badness, cgraph_edge> edge_heap_node_t;
 
 /* Statistics we collect about inlining algorithm.  */
 static int overall_size;
-static profile_count max_count;
+static bool has_nonzero_ipa_profile;
 static profile_count spec_rem;
 
 /* Return false when inlining edge E would lead to violating
@@ -452,6 +452,12 @@ can_inline_edge_p (struct cgraph_edge *e, bool report,
       e->inline_failed = CIF_UNSPECIFIED;
       inlinable = false;
     }
+  if (inlinable && callee->must_remain_in_tu_body
+      && caller->lto_file_data != callee->lto_file_data)
+    {
+      e->inline_failed = CIF_MUST_REMAIN_IN_TU;
+      inlinable = false;
+    }
   if (!inlinable && report)
     report_inline_failed_reason (e);
   return inlinable;
@@ -505,7 +511,7 @@ enum can_inline_edge_by_limits_flags
   /* Ignore size limits.  */
   CAN_INLINE_DISREGARD_LIMITS = 2,
   /* Force size limits (ignore always_inline).  This is used for
-     recrusive inlining where always_inline may lead to inline bombs
+     recursive inlining where always_inline may lead to inline bombs
      and technically it is non-sential anyway.  */
   CAN_INLINE_FORCE_LIMITS = 4,
   /* Report decision to dump file.  */
@@ -719,7 +725,7 @@ can_early_inline_edge_p (struct cgraph_edge *e)
 	  || !lookup_attribute ("always_inline", DECL_ATTRIBUTES (callee->decl))))
     {
       /* If there are indirect calls, inlining may produce direct call.
-	 TODO: We may lift this restriction if we avoid errors on formely
+	 TODO: We may lift this restriction if we avoid errors on formerly
 	 indirect calls to always_inline functions.  Taking address
 	 of always_inline function is generally bad idea and should
 	 have been declared as undefined, but sadly we allow this.  */
@@ -1860,7 +1866,7 @@ recursive_inlining (struct cgraph_edge *edge,
 	    false, vNULL, true, NULL, NULL, NULL);
 	  for (e = master_clone->callees; e; e = e->next_callee)
 	    if (!e->inline_failed)
-	      clone_inlined_nodes (e, true, false, NULL);
+	      clone_inlined_nodes (e, true, true, false, NULL);
 	  curr->redirect_callee (master_clone);
 	  if (edge_growth_cache != NULL)
 	    edge_growth_cache->remove (curr);
@@ -1971,7 +1977,7 @@ speculation_useful_p (struct cgraph_edge *e, bool anticipate_inlining)
 
   gcc_assert (e->speculative && !e->indirect_unknown_callee);
 
-  /* Even if calll statement is not hot, we can still have useful speculation
+  /* Even if call statement is not hot, we can still have useful speculation
      in cases where a lot of time is spent is callee.
      Do not check maybe_hot_p.  */
   if (!e->count.nonzero_p ())
@@ -2105,7 +2111,7 @@ inline_small_functions (void)
   /* Compute overall unit size and other global parameters used by badness
      metrics.  */
 
-  max_count = profile_count::uninitialized ();
+  has_nonzero_ipa_profile = false;
   ipa_reduced_postorder (order, true, ignore_edge_p);
   free (order);
 
@@ -2148,7 +2154,9 @@ inline_small_functions (void)
 	  }
 
 	for (edge = node->callers; edge; edge = edge->next_caller)
-	  max_count = max_count.max (edge->count.ipa ());
+	  if (edge->count.ipa ().initialized_p ()
+	      && edge->count.ipa ().nonzero_p ())
+	  has_nonzero_ipa_profile = true;
       }
   ipa_free_postorder_info ();
   initialize_growth_caches ();
@@ -2221,7 +2229,8 @@ inline_small_functions (void)
     }
 
   gcc_assert (in_lto_p
-	      || !(max_count > 0)
+	      || !has_nonzero_ipa_profile
+	      || flag_auto_profile
 	      || (profile_info && flag_branch_probabilities));
 
   while (!edge_heap.empty ())
@@ -2242,7 +2251,7 @@ inline_small_functions (void)
 	 This check is affected by scaling roundoff errors when compiling for
 	 IPA this we skip it in that case.  */
       if (flag_checking && !edge->callee->count.ipa_p ()
-	  && (!max_count.initialized_p () || !max_count.nonzero_p ()))
+	  && !has_nonzero_ipa_profile)
 	{
 	  sreal cached_badness = edge_badness (edge, false);
 
@@ -2755,13 +2764,13 @@ dump_inline_stats (void)
 	  }
       }
     for (e = node->indirect_calls; e; e = e->next_callee)
-      if (e->indirect_info->polymorphic
+      if (is_a <cgraph_polymorphic_indirect_info *> (e->indirect_info)
 	  & e->count.ipa ().initialized_p ())
 	indirect_poly_cnt += e->count.ipa ().to_gcov_type ();
       else if (e->count.ipa ().initialized_p ())
 	indirect_cnt += e->count.ipa ().to_gcov_type ();
   }
-  if (max_count.initialized_p ())
+  if (has_nonzero_ipa_profile)
     {
       fprintf (dump_file,
 	       "Inlined %" PRId64 " + speculative "
@@ -3261,7 +3270,7 @@ early_inliner (function *fun)
 	     statements that don't have inline parameters computed.  */
 	  for (edge = node->callees; edge; edge = edge->next_callee)
 	    {
-	      /* We can enounter not-yet-analyzed function during
+	      /* We can encounter not-yet-analyzed function during
 		 early inlining on callgraphs with strongly
 		 connected components.  */
 	      ipa_call_summary *es = ipa_call_summaries->get_create (edge);

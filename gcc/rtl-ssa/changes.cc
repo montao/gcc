@@ -1,5 +1,5 @@
-// RTL SSA routines for changing instructions                       -*- C++ -*-
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// RTL SSA routines for changing instructions.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -110,9 +110,10 @@ function_info::verify_insn_changes (array_slice<insn_change *const> changes)
 	// Make sure that the changes can be kept in their current order
 	// while honoring all of the move ranges.
 	min_insn = later_insn (min_insn, change->move_range.first);
-	while (min_insn != change->insn () && !can_insert_after (min_insn))
+	while (min_insn && min_insn != change->insn () && !can_insert_after (min_insn))
 	  min_insn = min_insn->next_nondebug_insn ();
-	if (*min_insn > *change->move_range.last)
+
+	if (!min_insn || *min_insn > *change->move_range.last)
 	  {
 	    if (dump_file && (dump_flags & TDF_DETAILS))
 	      fprintf (dump_file, "no viable insn position assignment\n");
@@ -713,7 +714,11 @@ function_info::apply_changes_to_insn (insn_change &change,
 
   // Add all uses, now that their position is final.
   for (use_info *use : change.new_uses)
-    add_use (use);
+    {
+      if (use->def ())
+	commit_make_use_available (use);
+      add_use (use);
+    }
 
   // Copy the uses and definitions.
   unsigned int num_defs = change.new_defs.size ();

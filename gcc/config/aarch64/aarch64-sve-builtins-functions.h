@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE (function_base classes)
-   Copyright (C) 2018-2025 Free Software Foundation, Inc.
+   Copyright (C) 2018-2026 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -20,7 +20,7 @@
 #ifndef GCC_AARCH64_SVE_BUILTINS_FUNCTIONS_H
 #define GCC_AARCH64_SVE_BUILTINS_FUNCTIONS_H
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 /* Wrap T, which is derived from function_base, and indicate that the
    function never has side effects.  It is only necessary to use this
@@ -371,7 +371,7 @@ typedef unspec_based_function_exact_insn<code_for_aarch64_sve_add_lane>
 typedef unspec_based_function_exact_insn<code_for_aarch64_sve_lane>
   unspec_based_lane_function;
 
-/* A functon that uses aarch64_pred* patterns regardless of the
+/* A function that uses aarch64_pred* patterns regardless of the
    predication type.  */
 typedef unspec_based_function_exact_insn<code_for_aarch64_pred>
   unspec_based_pred_function;
@@ -462,8 +462,9 @@ public:
   using parent = read_write_za<unspec_based_function_base>;
 
   CONSTEXPR sme_2mode_function_t (int unspec_for_sint, int unspec_for_uint,
-				  int unspec_for_fp)
-    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, -1, 1)
+				  int unspec_for_fp, int unspec_for_mfp8 = -1)
+    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, unspec_for_mfp8,
+	      1)
   {}
 
   rtx
@@ -478,6 +479,24 @@ public:
       icode = CODE_SINGLE (unspec_for (e), za_mode, v_mode);
     else
       icode = CODE (unspec_for (e), za_mode, v_mode);
+    return e.use_exact_insn (icode);
+  }
+};
+
+class svvdot_half_impl : public read_write_za<unspec_based_function_base>
+{
+public:
+  using parent = read_write_za<unspec_based_function_base>;
+
+  CONSTEXPR svvdot_half_impl (int unspec_for_sint, int unspec_for_uint,
+			      int unspec_for_fp, int unspec_for_mfp8)
+    : parent (unspec_for_sint, unspec_for_uint, unspec_for_fp, unspec_for_mfp8,
+	      1)
+  {}
+
+  rtx expand (function_expander &e) const override
+  {
+    insn_code icode = code_for_aarch64_fvdot_half (unspec_for (e));
     return e.use_exact_insn (icode);
   }
 };
@@ -630,7 +649,10 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    insn_code icode = code_for_aarch64_sve (m_unspec, e.vector_mode (0));
+    auto mode = e.vector_mode (0);
+    insn_code icode = (e.type_suffix (0).bool_p
+		       ? code_for_aarch64_sve_acle (m_unspec, mode)
+		       : code_for_aarch64_sve (m_unspec, mode));
     return e.use_exact_insn (icode);
   }
 
@@ -838,7 +860,8 @@ public:
 
     machine_mode pred_mode = e.vector_mode (0);
     scalar_mode reg_mode = GET_MODE_INNER (e.vector_mode (1));
-    return e.use_exact_insn (code_for_while (unspec, reg_mode, pred_mode));
+    auto icode = code_for_aarch64_sve_while_acle (unspec, reg_mode, pred_mode);
+    return e.use_exact_insn (icode);
   }
 
   /* The unspec codes associated with signed and unsigned operations
@@ -846,6 +869,47 @@ public:
   int m_unspec_for_sint;
   int m_unspec_for_uint;
 };
+
+template<insn_code (*CODE_FOR_MODE) (machine_mode), unsigned int N>
+class narrowing_top_convert : public code_for_mode_function <CODE_FOR_MODE, N>
+{
+  using base = code_for_mode_function <CODE_FOR_MODE, N>;
+
+public:
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    if (f.pred == PRED_x && is_pfalse (gimple_call_arg (f.call, 1)))
+      return f.fold_call_to (build_zero_cst (TREE_TYPE (f.lhs)));
+    return NULL;
+  }
+
+  rtx
+  expand (function_expander &e) const override
+  {
+    /* If the instruction is predicated, Add a selector argument for the
+       values of inactive lanes, which is equal to all ones for merging
+       predication and to all zeros for zeroing predication.  */
+    if (e.pred == PRED_none)
+      ;
+    else if (e.pred == PRED_z)
+      {
+	e.args.quick_push (CONST0_RTX (e.result_mode ()));
+      }
+    else
+      {
+	gcc_assert (e.pred == PRED_m || e.pred == PRED_x);
+	e.args.quick_push (CONST1_RTX (e.result_mode ()));
+      }
+
+    return base::expand (e);
+  }
+};
+
+#define NARROWING_TOP_CONVERT0(PATTERN)\
+  narrowing_top_convert<code_for_##PATTERN, 0>
+#define NARROWING_TOP_CONVERT1(PATTERN)\
+  narrowing_top_convert<code_for_##PATTERN, 1>
 
 }
 

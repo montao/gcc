@@ -1,5 +1,5 @@
 # configure.ac -- Backtrace configure script.
-# Copyright (C) 2012-2025 Free Software Foundation, Inc.
+# Copyright (C) 2012-2026 Free Software Foundation, Inc.
 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -37,7 +37,8 @@ if test -n "${with_target_subdir}"; then
   AM_ENABLE_MULTILIB(, ..)
 fi
 
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_HOST
+AC_CANONICAL_TARGET
 target_alias=${target_alias-$host_alias}
 
 AC_USE_SYSTEM_EXTENSIONS
@@ -82,7 +83,6 @@ AC_CHECK_PROG(DWZ, dwz, dwz)
 AM_CONDITIONAL(HAVE_DWZ, test "$DWZ" != "")
 
 LT_INIT
-AM_PROG_LIBTOOL
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
 

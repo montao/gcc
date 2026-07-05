@@ -1,5 +1,5 @@
 /* Code for range operators.
-   Copyright (C) 2017-2025 Free Software Foundation, Inc.
+   Copyright (C) 2017-2026 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
    and Aldy Hernandez <aldyh@redhat.com>.
 
@@ -51,30 +51,31 @@ along with GCC; see the file COPYING3.  If not see
 
 // Instantiate the operators which apply to multiple types here.
 
-operator_equal op_equal;
-operator_not_equal op_not_equal;
-operator_lt op_lt;
-operator_le op_le;
-operator_gt op_gt;
-operator_ge op_ge;
-operator_identity op_ident;
-operator_cst op_cst;
-operator_cast op_cast;
-operator_plus op_plus;
-operator_abs op_abs;
-operator_minus op_minus;
-operator_negate op_negate;
-operator_mult op_mult;
-operator_addr_expr op_addr;
-operator_bitwise_not op_bitwise_not;
-operator_bitwise_xor op_bitwise_xor;
-operator_bitwise_and op_bitwise_and;
-operator_bitwise_or op_bitwise_or;
-operator_min op_min;
-operator_max op_max;
+static const operator_equal op_equal;
+static const operator_not_equal op_not_equal;
+static const operator_lt op_lt;
+static const operator_le op_le;
+static const operator_gt op_gt;
+static const operator_ge op_ge;
+static const operator_identity op_ident;
+static const operator_cst op_cst;
+static const operator_cast op_cast;
+static const operator_view op_view;
+static const operator_plus op_plus;
+static const operator_abs op_abs;
+static const operator_minus op_minus;
+static const operator_negate op_negate;
+static const operator_mult op_mult;
+static const operator_addr_expr op_addr;
+static const operator_bitwise_not op_bitwise_not;
+static const operator_bitwise_xor op_bitwise_xor;
+static const operator_bitwise_and op_bitwise_and;
+static const operator_bitwise_or op_bitwise_or;
+static const operator_min op_min;
+static const operator_max op_max;
 
-// Instantaite a range operator table.
-range_op_table operator_table;
+// Instantiate a range operator table.
+static range_op_table operator_table;
 
 // Invoke the initialization routines for each class of range.
 
@@ -97,6 +98,7 @@ range_op_table::range_op_table ()
   set (INTEGER_CST, op_cst);
   set (NOP_EXPR, op_cast);
   set (CONVERT_EXPR, op_cast);
+  set (VIEW_CONVERT_EXPR, op_view);
   set (FLOAT_EXPR, op_cast);
   set (FIX_TRUNC_EXPR, op_cast);
   set (PLUS_EXPR, op_plus);
@@ -124,7 +126,7 @@ range_op_handler::range_op_handler ()
   m_operator = &default_operator;
 }
 
-// Create a range_op_handler for CODE.  Use a default operatoer if CODE
+// Create a range_op_handler for CODE.  Use a default operator if CODE
 // does not have an entry.
 
 range_op_handler::range_op_handler (unsigned code)
@@ -141,16 +143,16 @@ range_op_handler::operator bool () const
   return m_operator != &default_operator;
 }
 
-// Return a pointer to the range operator assocaited with this handler.
-// If it is a default operator, return NULL.
+// Return a pointer to the range operator associated with this handler.
+// If it is a default operator, return nullptr.
 // This is the equivalent of indexing the range table.
 
-range_operator *
+const range_operator *
 range_op_handler::range_op () const
 {
   if (m_operator != &default_operator)
     return m_operator;
-  return NULL;
+  return nullptr;
 }
 
 // Create a dispatch pattern for value range discriminators LHS, OP1, and OP2.
@@ -169,18 +171,18 @@ dispatch_trio (unsigned lhs, unsigned op1, unsigned op2)
 // Reminder, single operand instructions use the LHS type for op2, even if
 // unused.  So FLOAT = INT would be RO_FIF.
 
-const unsigned RO_III =	dispatch_trio (VR_IRANGE, VR_IRANGE, VR_IRANGE);
-const unsigned RO_IFI = dispatch_trio (VR_IRANGE, VR_FRANGE, VR_IRANGE);
-const unsigned RO_IFF = dispatch_trio (VR_IRANGE, VR_FRANGE, VR_FRANGE);
-const unsigned RO_FFF = dispatch_trio (VR_FRANGE, VR_FRANGE, VR_FRANGE);
-const unsigned RO_FIF = dispatch_trio (VR_FRANGE, VR_IRANGE, VR_FRANGE);
-const unsigned RO_FII = dispatch_trio (VR_FRANGE, VR_IRANGE, VR_IRANGE);
-const unsigned RO_PPP = dispatch_trio (VR_PRANGE, VR_PRANGE, VR_PRANGE);
-const unsigned RO_PPI = dispatch_trio (VR_PRANGE, VR_PRANGE, VR_IRANGE);
-const unsigned RO_IPP = dispatch_trio (VR_IRANGE, VR_PRANGE, VR_PRANGE);
-const unsigned RO_IPI = dispatch_trio (VR_IRANGE, VR_PRANGE, VR_IRANGE);
-const unsigned RO_PIP = dispatch_trio (VR_PRANGE, VR_IRANGE, VR_PRANGE);
-const unsigned RO_PII = dispatch_trio (VR_PRANGE, VR_IRANGE, VR_IRANGE);
+static const unsigned RO_III = dispatch_trio (VR_IRANGE, VR_IRANGE, VR_IRANGE);
+static const unsigned RO_IFI = dispatch_trio (VR_IRANGE, VR_FRANGE, VR_IRANGE);
+static const unsigned RO_IFF = dispatch_trio (VR_IRANGE, VR_FRANGE, VR_FRANGE);
+static const unsigned RO_FFF = dispatch_trio (VR_FRANGE, VR_FRANGE, VR_FRANGE);
+static const unsigned RO_FIF = dispatch_trio (VR_FRANGE, VR_IRANGE, VR_FRANGE);
+static const unsigned RO_FII = dispatch_trio (VR_FRANGE, VR_IRANGE, VR_IRANGE);
+static const unsigned RO_PPP = dispatch_trio (VR_PRANGE, VR_PRANGE, VR_PRANGE);
+static const unsigned RO_PPI = dispatch_trio (VR_PRANGE, VR_PRANGE, VR_IRANGE);
+static const unsigned RO_IPP = dispatch_trio (VR_IRANGE, VR_PRANGE, VR_PRANGE);
+static const unsigned RO_IPI = dispatch_trio (VR_IRANGE, VR_PRANGE, VR_IRANGE);
+static const unsigned RO_PIP = dispatch_trio (VR_PRANGE, VR_IRANGE, VR_PRANGE);
+static const unsigned RO_PII = dispatch_trio (VR_PRANGE, VR_IRANGE, VR_IRANGE);
 
 // Return a dispatch value for parameter types LHS, OP1 and OP2.
 
@@ -2385,6 +2387,25 @@ operator_mult::wi_fold (irange &r, tree type,
     }
 }
 
+bool
+operator_mult::op1_op2_relation_effect (irange &lhs_range, tree type,
+					const irange &,
+					const irange &,
+					relation_kind rel) const
+{
+  // a*a is nonnegative without overflow.
+  // tree_binary_nonnegative_p handles this in a similar way.
+  if (rel == VREL_EQ
+      && TYPE_OVERFLOW_UNDEFINED (type))
+    {
+      int_range<2> nonnegative;
+      nonnegative.set_nonnegative (type);
+      lhs_range.intersect (nonnegative);
+      return true;
+    }
+  return false;
+}
+
 class operator_widen_mult_signed : public range_operator
 {
 public:
@@ -2403,19 +2424,16 @@ operator_widen_mult_signed::wi_fold (irange &r, tree type,
 				     const wide_int &rh_lb,
 				     const wide_int &rh_ub) const
 {
-  signop s = TYPE_SIGN (type);
-
-  wide_int lh_wlb = wide_int::from (lh_lb, wi::get_precision (lh_lb) * 2, SIGNED);
-  wide_int lh_wub = wide_int::from (lh_ub, wi::get_precision (lh_ub) * 2, SIGNED);
-  wide_int rh_wlb = wide_int::from (rh_lb, wi::get_precision (rh_lb) * 2, s);
-  wide_int rh_wub = wide_int::from (rh_ub, wi::get_precision (rh_ub) * 2, s);
+  wide_int lh_wlb = wide_int::from (lh_lb, TYPE_PRECISION (type), SIGNED);
+  wide_int lh_wub = wide_int::from (lh_ub, TYPE_PRECISION (type), SIGNED);
+  wide_int rh_wlb = wide_int::from (rh_lb, TYPE_PRECISION (type), SIGNED);
+  wide_int rh_wub = wide_int::from (rh_ub, TYPE_PRECISION (type), SIGNED);
 
   /* We don't expect a widening multiplication to be able to overflow but range
      calculations for multiplications are complicated.  After widening the
      operands lets call the base class.  */
   return op_mult.wi_fold (r, type, lh_wlb, lh_wub, rh_wlb, rh_wub);
 }
-
 
 class operator_widen_mult_unsigned : public range_operator
 {
@@ -2435,12 +2453,39 @@ operator_widen_mult_unsigned::wi_fold (irange &r, tree type,
 				       const wide_int &rh_lb,
 				       const wide_int &rh_ub) const
 {
-  signop s = TYPE_SIGN (type);
+  wide_int lh_wlb = wide_int::from (lh_lb, TYPE_PRECISION (type), UNSIGNED);
+  wide_int lh_wub = wide_int::from (lh_ub, TYPE_PRECISION (type), UNSIGNED);
+  wide_int rh_wlb = wide_int::from (rh_lb, TYPE_PRECISION (type), UNSIGNED);
+  wide_int rh_wub = wide_int::from (rh_ub, TYPE_PRECISION (type), UNSIGNED);
 
-  wide_int lh_wlb = wide_int::from (lh_lb, wi::get_precision (lh_lb) * 2, UNSIGNED);
-  wide_int lh_wub = wide_int::from (lh_ub, wi::get_precision (lh_ub) * 2, UNSIGNED);
-  wide_int rh_wlb = wide_int::from (rh_lb, wi::get_precision (rh_lb) * 2, s);
-  wide_int rh_wub = wide_int::from (rh_ub, wi::get_precision (rh_ub) * 2, s);
+  /* We don't expect a widening multiplication to be able to overflow but range
+     calculations for multiplications are complicated.  After widening the
+     operands lets call the base class.  */
+  return op_mult.wi_fold (r, type, lh_wlb, lh_wub, rh_wlb, rh_wub);
+}
+
+class operator_widen_mult_signed_unsigned : public range_operator
+{
+public:
+  virtual void wi_fold (irange &r, tree type,
+			const wide_int &lh_lb,
+			const wide_int &lh_ub,
+			const wide_int &rh_lb,
+			const wide_int &rh_ub)
+    const;
+} op_widen_mult_signed_unsigned;
+
+void
+operator_widen_mult_signed_unsigned::wi_fold (irange &r, tree type,
+					      const wide_int &lh_lb,
+					      const wide_int &lh_ub,
+					      const wide_int &rh_lb,
+					      const wide_int &rh_ub) const
+{
+  wide_int lh_wlb = wide_int::from (lh_lb, TYPE_PRECISION (type), SIGNED);
+  wide_int lh_wub = wide_int::from (lh_ub, TYPE_PRECISION (type), SIGNED);
+  wide_int rh_wlb = wide_int::from (rh_lb, TYPE_PRECISION (type), UNSIGNED);
+  wide_int rh_wub = wide_int::from (rh_ub, TYPE_PRECISION (type), UNSIGNED);
 
   /* We don't expect a widening multiplication to be able to overflow but range
      calculations for multiplications are complicated.  After widening the
@@ -2471,10 +2516,10 @@ protected:
   tree_code m_code;
 };
 
-static operator_div op_trunc_div (TRUNC_DIV_EXPR);
-static operator_div op_floor_div (FLOOR_DIV_EXPR);
-static operator_div op_round_div (ROUND_DIV_EXPR);
-static operator_div op_ceil_div (CEIL_DIV_EXPR);
+static const operator_div op_trunc_div (TRUNC_DIV_EXPR);
+static const operator_div op_floor_div (FLOOR_DIV_EXPR);
+static const operator_div op_round_div (ROUND_DIV_EXPR);
+static const operator_div op_ceil_div (CEIL_DIV_EXPR);
 
 // Set OP2 to non-zero if the LHS isn't UNDEFINED.
 bool
@@ -3103,8 +3148,9 @@ operator_cast::fold_range (irange &r, tree type ATTRIBUTE_UNUSED,
       int_range_max tmp;
       fold_pair (tmp, x, inner, outer);
       r.union_ (tmp);
+      // If we hit varying, go update the bitmask.
       if (r.varying_p ())
-	return true;
+	break;
     }
 
   update_bitmask (r, inner, outer);
@@ -3204,6 +3250,25 @@ operator_cast::op1_range (irange &r, tree type,
 	}
       // And intersect with any known value passed in the extra operand.
       r.intersect (op2);
+      if (r.undefined_p ())
+	return true;
+
+      // Now create a bitmask indicating that the lower bit must match the
+      // bits in the LHS.   Zero-extend LHS bitmask to precision of op1.
+      irange_bitmask bm = lhs.get_bitmask ();
+      wide_int mask = wide_int::from (bm.mask (), TYPE_PRECISION (type),
+				      UNSIGNED);
+      wide_int value = wide_int::from (bm.value (), TYPE_PRECISION (type),
+				       UNSIGNED);
+
+      // Set then additional unknown bits in mask.
+      wide_int lim = wi::mask (TYPE_PRECISION (lhs_type), true,
+			       TYPE_PRECISION (type));
+      mask = mask | lim;
+
+      // Now set the new bitmask for the range.
+      irange_bitmask new_bm (value, mask);
+      r.update_bitmask (new_bm);
       return true;
     }
 
@@ -3225,6 +3290,80 @@ operator_cast::op1_range (irange &r, tree type,
   // Cast the calculated range to the type of the RHS.
   fold_range (r, type, tmp, int_range<1> (type));
   return true;
+}
+
+// VIEW_CONVERT_EXPR works like a cast between integral values.
+// If the number of bits are not the same, behaviour is undefined,
+// so cast behaviour still works.
+
+bool
+operator_view::fold_range (irange &r, tree type,
+			   const irange &op1, const irange &op2,
+			   relation_trio rel) const
+{
+  return m_cast.fold_range (r, type, op1, op2, rel);
+}
+
+bool
+operator_view::fold_range (prange &r, tree type,
+			   const prange &op1, const prange &op2,
+			   relation_trio rel) const
+{
+  return m_cast.fold_range (r, type, op1, op2, rel);
+}
+bool
+operator_view::fold_range (irange &r, tree type,
+			   const prange &op1, const irange &op2,
+			   relation_trio rel) const
+{
+  return m_cast.fold_range (r, type, op1, op2, rel);
+}
+
+bool
+operator_view::fold_range (prange &r, tree type,
+			   const irange &op1, const prange &op2,
+			   relation_trio rel) const
+{
+  return m_cast.fold_range (r, type, op1, op2, rel);
+}
+
+bool
+operator_view::op1_range (irange &r, tree type,
+			  const irange &lhs, const irange &op2,
+			  relation_trio rel) const
+{
+  return m_cast.op1_range (r, type, lhs, op2, rel);
+}
+
+bool
+operator_view::op1_range (prange &r, tree type,
+			  const prange &lhs, const prange &op2,
+			  relation_trio rel) const
+{
+  return m_cast.op1_range (r, type, lhs, op2, rel);
+}
+
+bool
+operator_view::op1_range (irange &r, tree type,
+			  const prange &lhs, const irange &op2,
+			  relation_trio rel) const
+{
+  return m_cast.op1_range (r, type, lhs, op2, rel);
+}
+
+bool
+operator_view::op1_range (prange &r, tree type,
+			  const irange &lhs, const prange &op2,
+			  relation_trio rel) const
+{
+  return m_cast.op1_range (r, type, lhs, op2, rel);
+}
+
+void
+operator_view::update_bitmask (irange &r, const irange &lh,
+			       const irange &rh) const
+{
+  m_cast.update_bitmask (r, lh, rh);
 }
 
 
@@ -3502,6 +3641,22 @@ operator_bitwise_and::wi_fold (irange &r, tree type,
 			       const wide_int &rh_lb,
 			       const wide_int &rh_ub) const
 {
+  // The AND algorithm does not handle complex signed operations well.
+  // If a signed range crosses the boundary between signed and unsigned
+  // process it as 2 ranges and union the results.
+  if (TYPE_SIGN (type) == SIGNED
+      && wi::neg_p (lh_lb, SIGNED) != wi::neg_p (lh_ub, SIGNED))
+    {
+      int prec = TYPE_PRECISION (type);
+      int_range_max tmp;
+      // Process [lh_lb, -1]
+      wi_fold (tmp, type, lh_lb, wi::minus_one (prec), rh_lb, rh_ub);
+      // Now Process [0, rh_ub]
+      wi_fold (r, type, wi::zero (prec), lh_ub, rh_lb, rh_ub);
+      r.union_ (tmp);
+      return;
+    }
+
   if (wi_optimize_and_or (r, BIT_AND_EXPR, type, lh_lb, lh_ub, rh_lb, rh_ub))
     return;
 
@@ -3733,12 +3888,15 @@ operator_bitwise_and::op1_range (irange &r, tree type,
   op1_mask |= lhs_bm.mask ();
   // The resulting zeros correspond to known bits in the LHS mask, and
   // the LHS value should tell us what they are.  Mask off any
-  // extraneous values thats are not convered by the mask.
+  // extraneous values that are not covered by the mask.
   wide_int op1_value = lhs_bm.value () & ~op1_mask;
   irange_bitmask op1_bm (op1_value, op1_mask);
-  // INtersect this mask with anything already known about the value.
-  op1_bm.intersect (r.get_bitmask ());
-  r.update_bitmask (op1_bm);
+  // Intersect this mask with anything already known about the value.
+  // A return valueof false indicated the bitmask is an UNDEFINED range.
+  if (op1_bm.intersect (r.get_bitmask ()))
+    r.update_bitmask (op1_bm);
+  else
+    r.set_undefined ();
   return true;
 }
 
@@ -3932,6 +4090,83 @@ operator_bitwise_xor::update_bitmask (irange &r, const irange &lh,
 				      const irange &rh) const
 {
   update_known_bitmask (r, BIT_XOR_EXPR, lh, rh);
+}
+
+bool
+operator_bitwise_xor::fold_range (irange &r, tree type,
+				  const irange &lh, const irange &rh,
+				  relation_trio rel) const
+{
+  // Handle X ^ UNDEFINED = UNDEFINED.
+  if (lh.undefined_p () || rh.undefined_p ())
+    {
+      r.set_undefined ();
+      return true;
+    }
+
+  // Next, handle X ^ X == [0, 0].
+  if (rel.op1_op2 () == VREL_EQ)
+   {
+     r.set_zero (type);
+     return true;
+   }
+
+  // If either operand is VARYING, the result is VARYING.
+  if (lh.varying_p () || rh.varying_p ())
+    {
+      // If the operands are not equal, zero is not possible.
+      if (rel.op1_op2 () != VREL_NE)
+	r.set_varying (type);
+      else
+	r.set_nonzero (type);
+      return true;
+    }
+
+  // Now deal with X ^ 0 == X.
+  if (lh.zero_p ())
+    {
+      r = rh;
+      return true;
+    }
+  if (rh.zero_p ())
+    {
+      r = lh;
+      return true;
+    }
+
+  // Start with the legacy range.  This can sometimes pick up values
+  // when there are a lot of subranges and fold_range aggregates them.
+  bool res = range_operator::fold_range (r, type, lh, rh, rel);
+
+  // Calculate the XOR identity :   x ^ y = (x | y) & ~(x & y)
+  // AND and OR are already much better optimized.
+  int_range_max tmp1, tmp2, tmp3, new_result;
+  int_range<2> varying;
+  varying.set_varying (type);
+
+  if (m_or.fold_range  (tmp1, type, lh, rh, rel)
+      && m_and.fold_range (tmp2, type, lh, rh, rel)
+      && m_not.fold_range (tmp3, type, tmp2, varying, rel)
+      && m_and.fold_range (new_result, type, tmp1, tmp3, rel))
+    {
+      // If the operands are not equal, or the LH does not contain any
+      // element of the RH, zero is not possible.
+      tmp1 = lh;
+      if (rel.op1_op2 () == VREL_NE
+	  || (tmp1.intersect (rh) && tmp1.undefined_p ()))
+	{
+	  tmp1.set_nonzero (type);
+	  new_result.intersect (tmp1);
+	}
+
+      // Combine with the legacy range if there was one.
+      if (res)
+	r.intersect (new_result);
+      else
+	r = new_result;
+      return true;
+    }
+  return res;
 }
 
 void
@@ -4132,6 +4367,24 @@ operator_trunc_mod::wi_fold (irange &r, tree type,
   new_ub = wi::min (new_ub, tmp, sign);
 
   value_range_with_overflow (r, type, new_lb, new_ub);
+
+  // When all positive and all X/Y combinations produce the same quotient
+  // we can refine the result with    X % Y == X - Q * Y.
+  // Ensure that division by 0 is not an option.
+  if (wi::gt_p (rh_lb, 0, sign) && wi::ge_p (lh_lb, 0, sign))
+    {
+      wide_int q_lb = wi::div_trunc (lh_lb, rh_ub, sign);
+      wide_int q_ub = wi::div_trunc (lh_ub, rh_lb, sign);
+
+      if (q_lb == q_ub)
+	{
+	  new_lb = lh_lb - q_lb * rh_ub;
+	  new_ub = lh_ub - q_lb * rh_lb;
+
+	  int_range<2> refined (type, new_lb, new_ub);
+	  r.intersect (refined);
+	}
+    }
 }
 
 bool
@@ -4619,6 +4872,7 @@ range_op_table::initialize_integral_ops ()
   set (ABSU_EXPR, op_absu);
   set (OP_WIDEN_MULT_SIGNED, op_widen_mult_signed);
   set (OP_WIDEN_MULT_UNSIGNED, op_widen_mult_unsigned);
+  set (OP_WIDEN_MULT_SIGNED_UNSIGNED, op_widen_mult_signed_unsigned);
   set (OP_WIDEN_PLUS_SIGNED, op_widen_plus_signed);
   set (OP_WIDEN_PLUS_UNSIGNED, op_widen_plus_unsigned);
 

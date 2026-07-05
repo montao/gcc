@@ -119,7 +119,7 @@ auto tai = std::format("{:%Q}", tai_clock::now()); // { dg-error "call to conste
 auto file = std::format("{:%Q}", file_clock::now()); // { dg-error "call to consteval function" }
 
 const auto ltc = local_seconds(10s);
-#if _GLIBCXX_USE_CXX11_ABI || !_GLIBCXX_USE_DUAL_ABI
+#if _GLIBCXX_USE_CXX11_ABI
 const auto zt = zoned_time<seconds>("Europe/Sofia", local_seconds(10s));
 auto zt1 = std::format("{:%Q}", zt); // { dg-error "call to consteval function" "" { target cxx11_abi } }
 #endif
@@ -141,7 +141,7 @@ auto hms5 = std::format("{:%F}", HMS(1255s)); // { dg-error "call to consteval f
 auto hms6 = std::format("{:%Q}", HMS(1255s)); // { dg-error "call to consteval function" }
 auto hms7 = std::format("{:%Z}", HMS(1255s)); // { dg-error "call to consteval function" }
 
-#if _GLIBCXX_USE_CXX11_ABI || !_GLIBCXX_USE_DUAL_ABI
+#if _GLIBCXX_USE_CXX11_ABI
 auto li1 = std::format("{:%d}", local_info()); // { dg-error "call to consteval function" "" { target cxx11_abi } }
 auto li2 = std::format("{:%w}", local_info()); // { dg-error "call to consteval function" "" { target cxx11_abi } }
 auto li3 = std::format("{:%m}", local_info()); // { dg-error "call to consteval function" "" { target cxx11_abi } }
@@ -161,4 +161,5 @@ auto si7 = std::format("{:%Q}", sys_info()); // { dg-error "call to consteval fu
 auto si8 = std::format("{:%Z}", sys_info()); // { dg-error "call to consteval function" "" { target cxx11_abi } }
 #endif
 
-// { dg-error "call to non-'constexpr' function" "" { target *-*-* } 0 }
+// { dg-error "call to non-'constexpr' function" "" { target { c++23_down || { ! cxx11_abi } } } 0 }
+// { dg-error "'std::terminate' called after throwing an exception" "" { target { { ! c++23_down } && cxx11_abi } } 0 }

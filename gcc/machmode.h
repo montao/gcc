@@ -1,5 +1,5 @@
 /* Machine mode definitions for GCC; included by rtl.h and tree.h.
-   Copyright (C) 1991-2025 Free Software Foundation, Inc.
+   Copyright (C) 1991-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -958,7 +958,8 @@ private:
 
 /* Find the best mode to use to access a bit field.  */
 
-extern bool get_best_mode (int, int, poly_uint64, poly_uint64, unsigned int,
+extern bool get_best_mode (HOST_WIDE_INT, HOST_WIDE_INT,
+			   poly_uint64, poly_uint64, unsigned int,
 			   unsigned HOST_WIDE_INT, bool, scalar_int_mode *);
 
 /* Determine alignment, 1<=result<=BIGGEST_ALIGNMENT.  */
@@ -1023,7 +1024,7 @@ HWI_COMPUTABLE_MODE_P (scalar_int_mode mode)
 }
 
 struct int_n_data_t {
-  /* These parts are initailized by genmodes output */
+  /* These parts are initialized by genmodes output */
   unsigned int bitsize;
   scalar_int_mode_pod m;
   /* RID_* is RID_INTN_BASE + index into this array */

@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2014-2026 Free Software Foundation, Inc.
    Contributed by Kai Tietz <ktietz@redhat.com>.
 
    This file is part of the GNU Atomic Library (libatomic).
@@ -42,7 +42,7 @@
 #endif
 
 /* The granularity at which locks are applied.  Almost certainly the
-   cachline size is the right thing to use here.  */
+   cacheline size is the right thing to use here.  */
 #ifndef WATCH_SIZE
 #define WATCH_SIZE CACHLINE_SIZE
 #endif

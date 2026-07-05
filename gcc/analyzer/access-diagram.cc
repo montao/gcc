@@ -1,5 +1,5 @@
 /* Text art visualizations within -fanalyzer.
-   Copyright (C) 2023-2025 Free Software Foundation, Inc.
+   Copyright (C) 2023-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1116,7 +1116,7 @@ public:
       {
 	logger.start_log_line ();
 	logger.log_partial ("table_x: %i", table_x);
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (maybe_get_access_range_for_table_x (table_x, &range_for_column))
 	  {
 	    logger.log_partial (": range: ");
@@ -1212,23 +1212,18 @@ public:
   : svalue_spatial_item (sval, bits, kind),
     m_compound_sval (sval)
   {
-    const binding_map &map = m_compound_sval.get_map ();
+    const concrete_binding_map &map = m_compound_sval.get_concrete_bindings ();
     auto_vec <const binding_key *> binding_keys;
     for (auto iter : map)
       {
-	const binding_key *key = iter.first;
+	const bit_range &key = iter.first;
 	const svalue *bound_sval = iter.second;
-	if (const concrete_binding *concrete_key
-	      = key->dyn_cast_concrete_binding ())
-	  {
-	    access_range range (nullptr,
-				concrete_key->get_bit_range ());
-	    if (std::unique_ptr<spatial_item> child
-		  = make_existing_svalue_spatial_item (bound_sval,
-						       range,
-						       theme))
-	      m_children.push_back (std::move (child));
-	  }
+	access_range range (nullptr, key);
+	if (std::unique_ptr<spatial_item> child
+	    = make_existing_svalue_spatial_item (bound_sval,
+						 range,
+						 theme))
+	  m_children.push_back (std::move (child));
       }
   }
 
@@ -1300,7 +1295,7 @@ class valid_region_spatial_item : public spatial_item
 {
 public:
   valid_region_spatial_item (const access_operation &op,
-			     diagnostic_event_id_t region_creation_event_id,
+			     diagnostics::paths::event_id_t region_creation_event_id,
 			     const theme &theme)
   : m_op (op),
     m_region_creation_event_id (region_creation_event_id),
@@ -1523,7 +1518,7 @@ public:
 
 private:
   const access_operation &m_op;
-  diagnostic_event_id_t m_region_creation_event_id;
+  diagnostics::paths::event_id_t m_region_creation_event_id;
   mutable const boundaries *m_boundaries;
   const svalue *m_existing_sval;
   std::unique_ptr<spatial_item> m_existing_sval_spatial_item;
@@ -2012,7 +2007,7 @@ class access_diagram_impl : public vbox_widget
 {
 public:
   access_diagram_impl (const access_operation &op,
-		       diagnostic_event_id_t region_creation_event_id,
+		       diagnostics::paths::event_id_t region_creation_event_id,
 		       style_manager &sm,
 		       const theme &theme,
 		       logger *logger)
@@ -2197,7 +2192,7 @@ public:
   const theme &get_theme () const { return m_theme; }
 
 private:
-  /* Figure out all of the boundaries of interest when visualizing ths op.  */
+  /* Figure out all of the boundaries of interest when visualizing the op.  */
   std::unique_ptr<boundaries>
   find_boundaries () const
   {
@@ -2214,10 +2209,10 @@ private:
 
   void add_aligned_child_table (table t)
   {
-    x_aligned_table_widget *w
-      = new x_aligned_table_widget (std::move (t), m_theme, *m_col_widths);
-    m_aligned_table_widgets.push_back (w);
-    add_child (std::unique_ptr<widget> (w));
+    auto w = std::make_unique<x_aligned_table_widget> (std::move (t),
+						       m_theme, *m_col_widths);
+    m_aligned_table_widgets.push_back (w.get ());
+    add_child (std::move (w));
   }
 
   /* Create a table showing headings for use by -fanalyzer-debug-text-art, for
@@ -2244,7 +2239,7 @@ private:
     for (int table_x = 0; table_x < t.get_size ().w; table_x++)
       {
 	const int table_y = 1;
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (m_btm.maybe_get_access_range_for_table_x (table_x,
 						      &range_for_column))
 	  {
@@ -2361,8 +2356,7 @@ private:
   {
     LOG_SCOPE (m_logger);
 
-    x_aligned_x_ruler_widget *w
-      = new x_aligned_x_ruler_widget (*this, m_theme);
+    auto w = std::make_unique<x_aligned_x_ruler_widget> (*this, m_theme);
 
     access_range invalid_before_bits;
     if (m_op.maybe_get_invalid_before_bits (&invalid_before_bits))
@@ -2410,7 +2404,7 @@ private:
       valid_bits.log ("valid_bits", *m_logger);
 
     got_valid_bits = true;
-    maybe_add_gap (w, invalid_before_bits, valid_bits);
+    maybe_add_gap (w.get (), invalid_before_bits, valid_bits);
 
     std::unique_ptr<styled_string> label;
     if (m_op.m_dir == access_direction::read)
@@ -2441,7 +2435,7 @@ private:
     if (m_op.maybe_get_invalid_after_bits (&invalid_after_bits))
       {
 	if (got_valid_bits)
-	  maybe_add_gap (w, valid_bits, invalid_after_bits);
+	  maybe_add_gap (w.get (), valid_bits, invalid_after_bits);
 
 	if (m_logger)
 	  invalid_before_bits.log ("invalid_after_bits", *m_logger);
@@ -2478,7 +2472,7 @@ private:
 	  m_logger->log ("no invalid_after_bits");
       }
 
-    add_child (std::unique_ptr<widget> (w));
+    add_child (std::move (w));
   }
 
   /* Subroutine of calc_req_size.
@@ -2495,7 +2489,7 @@ private:
     std::vector<bit_offset_t> bit_sizes (num_columns);
     for (unsigned table_x = 0; table_x < num_columns; table_x++)
       {
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (m_btm.maybe_get_access_range_for_table_x (table_x,
 						      &range_for_column))
 	  {
@@ -2564,7 +2558,7 @@ private:
   }
 
   const access_operation &m_op;
-  diagnostic_event_id_t m_region_creation_event_id;
+  diagnostics::paths::event_id_t m_region_creation_event_id;
   style_manager &m_sm;
   const theme &m_theme;
   logger *m_logger;
@@ -2662,7 +2656,7 @@ direction_widget::paint_to_canvas (canvas &canvas)
    an access_diagram_impl.  */
 
 access_diagram::access_diagram (const access_operation &op,
-				diagnostic_event_id_t region_creation_event_id,
+				diagnostics::paths::event_id_t region_creation_event_id,
 				style_manager &sm,
 				const theme &theme,
 				logger *logger)

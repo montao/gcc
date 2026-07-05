@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -58,11 +58,27 @@ typedef struct cblc_field_t
     size_t occurs_upper;        // non-zero for a table
     unsigned long long attr;    // See cbl_field_attr_t
     signed char type;           // A one-byte copy of cbl_field_type_t
-    signed char level;          // This variable's level in the naming heirarchy
+    signed char level;          // This variable's level in the naming hierarchy
     signed char digits;         // Digits specified in PIC string; e.g. 5 for 99v999
     signed char rdigits;        // Digits to the right of the decimal point. 3 for 99v999
-    int    dummy;               // GCC seems to want an even number of 32-bit values
+    cbl_encoding_t encoding;    //
+    int            alphabet;    // Same as cbl_field_t::codeset::language
     } cblc_field_t;
+
+typedef struct cblc_referlet_t
+    {
+    cblc_field_t        *field;
+    size_t               offset;
+    size_t               size;
+    } cblc_referlet_t;
+
+typedef struct cblc_refer_t
+    {
+    cblc_field_t        *field;
+    size_t               offset;
+    size_t               size;
+    int                  flags;
+    } cblc_refer_t;
 
 /*
  * Implementation details
@@ -80,6 +96,7 @@ enum cblc_file_prior_op_t
   file_op_rewrite,
   file_op_delete,
   file_op_close,
+  file_op_remove,
   };
 
 /* end implementation details */
@@ -100,6 +117,10 @@ typedef struct cblc_file_t
     size_t               symbol_table_index;  // of the related cbl_field_t structure
     char                *filename;         // The name of the file to be opened
     FILE                *file_pointer;     // The FILE *pointer
+    size_t               file_fpos;        // Calculated file position
+    char                *buffer;           // read buffer
+    size_t               buffer_pos;       // next character from the buffer
+    size_t               buffer_len;       // number of characters in the buffer
     cblc_field_t        *default_record;   // The record_area
     size_t               record_area_min;  // The size of the smallest 01 record in the FD
     size_t               record_area_max;  // The size of the largest  01 record in the FD
@@ -121,34 +142,16 @@ typedef struct cblc_file_t
     int                  errnum;           // most recent errno; can't reuse "errno" as the name
     file_status_t        io_status;        // See 2014 standard, section 9.1.12
     int                  padding;          // Actually a char
-    int                  delimiter;        // ends a record; defaults to '\n'.
+    uint32_t             delimiter;        // ends a record; defaults to '\n'.
+    int                  stride;           // Width of a character
     int                  flags;            // cblc_file_flags_t
-    int                  recent_char;      // This is the most recent char sent to the file
+    uint32_t             recent_char;      // This is the most recent char sent to the file
     int                  recent_key;
     cblc_file_prior_op_t prior_op;         // run-time type is INT
-    int                  dummy;
+    cbl_encoding_t       encoding;         // We assume size int
+    int                  alphabet;         // Actually cbl_encoding_t
     } cblc_file_t;
 
-
-/*  In various arithmetic routines implemented in libgcobol, it is oftent the
-    case that complicates lists of variables need to be conveyed.  For example,
-    "ADD A B C D GIVING E" and "ADD A TO B C D" are valid instructions.
-    
-    These treeplets (triplets of trees) were created to handle that.  */
-
-extern cblc_field_t ** __gg__treeplet_1f;
-extern size_t       *  __gg__treeplet_1o;
-extern size_t       *  __gg__treeplet_1s;
-extern cblc_field_t ** __gg__treeplet_2f;
-extern size_t       *  __gg__treeplet_2o;
-extern size_t       *  __gg__treeplet_2s;
-extern cblc_field_t ** __gg__treeplet_3f;
-extern size_t       *  __gg__treeplet_3o;
-extern size_t       *  __gg__treeplet_3s;
-extern cblc_field_t ** __gg__treeplet_4f;
-extern size_t       *  __gg__treeplet_4o;
-extern size_t       *  __gg__treeplet_4s;
-
-extern int *        __gg__fourplet_flags;
+#define FILE_BUFFER_SIZE (64 * 1024)
 
 #endif

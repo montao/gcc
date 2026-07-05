@@ -1,6 +1,6 @@
 /* The libgomp plugin API.
 
-   Copyright (C) 2014-2025 Free Software Foundation, Inc.
+   Copyright (C) 2014-2026 Free Software Foundation, Inc.
 
    Contributed by Mentor Embedded.
 
@@ -134,7 +134,11 @@ enum gomp_interop_flag
    must be stringified).  */
 #define GOMP_ADDITIONAL_ICVS __gomp_additional_icvs
 
+/* GOMP_INDIRECT_ADDR_HMAP points to a hash table and is to be used by
+   newer libgomp, while GOMP_INDIRECT_ADDR_MAP points to a linear table
+   and exists for backward compatibility.  */
 #define GOMP_INDIRECT_ADDR_MAP __gomp_indirect_addr_map
+#define GOMP_INDIRECT_ADDR_HMAP __gomp_indirect_addr_hmap
 
 /* Miscellaneous functions.  */
 extern void *GOMP_PLUGIN_malloc (size_t) __attribute__ ((malloc));
@@ -155,6 +159,10 @@ extern void GOMP_PLUGIN_target_rev (uint64_t, uint64_t, uint64_t, uint64_t,
 /* Prototypes for functions implemented by libgomp plugins.  */
 extern const char *GOMP_OFFLOAD_get_name (void);
 extern const char *GOMP_OFFLOAD_get_uid (int);
+extern int GOMP_OFFLOAD_get_numa_node (int);
+extern int GOMP_OFFLOAD_supported_teams_dim (int, int);
+extern int GOMP_OFFLOAD_supported_threads_dim (int, int);
+
 extern unsigned int GOMP_OFFLOAD_get_caps (void);
 extern int GOMP_OFFLOAD_get_type (void);
 extern int GOMP_OFFLOAD_get_num_devices (unsigned int);
@@ -167,6 +175,11 @@ extern int GOMP_OFFLOAD_load_image (int, unsigned, const void *,
 extern bool GOMP_OFFLOAD_unload_image (int, unsigned, const void *);
 extern void *GOMP_OFFLOAD_alloc (int, size_t);
 extern bool GOMP_OFFLOAD_free (int, void *);
+extern void *GOMP_OFFLOAD_managed_alloc (int, size_t);
+extern bool GOMP_OFFLOAD_managed_free (int, void *);
+extern int GOMP_OFFLOAD_is_accessible_ptr (int, const void *, size_t);
+extern bool GOMP_OFFLOAD_page_locked_host_alloc (void **, size_t);
+extern bool GOMP_OFFLOAD_page_locked_host_free (void *);
 extern bool GOMP_OFFLOAD_dev2host (int, void *, const void *, size_t);
 extern bool GOMP_OFFLOAD_host2dev (int, void *, const void *, size_t);
 extern bool GOMP_OFFLOAD_dev2dev (int, void *, const void *, size_t);
@@ -178,12 +191,80 @@ extern int GOMP_OFFLOAD_memcpy3d (int, int, size_t, size_t, size_t, void *,
 				  const void *, size_t, size_t, size_t, size_t,
 				  size_t);
 extern bool GOMP_OFFLOAD_memset (int, void *, int, size_t);
+extern int GOMP_OFFLOAD_memspace_validate (omp_memspace_handle_t, unsigned int);
 extern bool GOMP_OFFLOAD_can_run (void *);
-extern void GOMP_OFFLOAD_run (int, void *, void *, void **);
-extern void GOMP_OFFLOAD_async_run (int, void *, void *, void **, void *);
 
-extern void GOMP_OFFLOAD_openacc_exec (void (*) (void *), size_t, void **,
-				       void **, unsigned *, void *);
+/* An opaque type, encapsulating the state required to launch a single
+   'target' region.  This type is expected to have alignment no greater than
+   the alignment 'malloc' and 'alloca' can provide.
+
+   The lifetime of the memory reserved for an offload session is managed by
+   libgomp.  It will ensure that it is deallocated only after a kernel is done
+   executing.
+
+   Per offload session, exactly one of GOMP_OFFLOAD{,_async}_run or
+   GOMP_OFFLOAD_openacc{,_async}_exec will be called.  This is also the last
+   operation performed on a session.  */
+struct gomp_offload_session;
+
+/* Validate that a 'struct gomp_offload_session' declaration is acceptable.  */
+#define GOMP_OFFLOAD_check_session_struct()				\
+  _Static_assert (_Alignof (struct gomp_offload_session) <= __BIGGEST_ALIGNMENT__, \
+		 "gomp_offload_session requires too high alignment")
+
+/* Return size of a gomp_offload_session instance.  libgomp takes care of
+   allocating and deallocating enough memory to store the session.  */
+[[gnu::const]] extern size_t GOMP_OFFLOAD_session_size (void);
+
+/* Check that the 'struct gomp_offload_session' declaration is acceptable, and
+   implement GOMP_OFFLOAD_session_size.  Call this in the plugin after defining
+   the aforementioned struct.  */
+#define GOMP_OFFLOAD_session_boilerplate()		\
+  GOMP_OFFLOAD_check_session_struct ();			\
+  [[gnu::const]] size_t					\
+  GOMP_OFFLOAD_session_size (void)			\
+  { return sizeof (struct gomp_offload_session); }
+
+/* Initialize SESSION for executing a kernel on DEVICE.  */
+extern void GOMP_OFFLOAD_session_start (struct gomp_offload_session *session,
+					int device);
+
+/* Attempt to allocate a target variable table in host memory for SESSION.
+   This table must be of at least table_size bytes and aligned to
+   __BIGGEST_ALIGNMENT__.
+
+   This function will be called at most once per SESSION.
+
+   If this function returns NULL, or if libgomp never calls it,
+   GOMP_OFFLOAD_session_set_target_var_table will be called instead, with
+   memory allocated by libgomp for the purpose.
+
+   If this function is omitted, libgomp will behave as if it always returns
+   NULL.  */
+extern void **GOMP_OFFLOAD_session_allocate_target_var_table
+  (struct gomp_offload_session *session, size_t table_size);
+
+/* Set TABLE, a device pointer, as the pointer to the target variable table.
+   It may be NULL, in which case there's no target variable table.
+
+   Before dispatching the offload kernel associated with this session, exactly
+   one of a successful call to GOMP_OFFLOAD_session_allocate_target_var_table
+   or a call to this function must happen, but not both.  */
+extern void GOMP_OFFLOAD_session_set_target_var_table
+  (struct gomp_offload_session *session, void **table);
+
+extern void GOMP_OFFLOAD_run (struct gomp_offload_session *session,
+			      void *fn_ptr,
+			      void **args);
+extern void GOMP_OFFLOAD_async_run (struct gomp_offload_session *session,
+				    void *tgt_fn,
+				    void **args,
+				    void *async_data);
+
+extern void GOMP_OFFLOAD_openacc_exec (struct gomp_offload_session *session,
+				       void (*tgt_fn) (void *),
+				       size_t mapnum, void **hostaddrs,
+				       unsigned *dims, void *targ_mem_desc);
 extern void *GOMP_OFFLOAD_openacc_create_thread_data (int);
 extern void GOMP_OFFLOAD_openacc_destroy_thread_data (void *);
 extern struct goacc_asyncqueue *GOMP_OFFLOAD_openacc_async_construct (int);
@@ -194,9 +275,11 @@ extern bool GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *,
 						  struct goacc_asyncqueue *);
 extern void GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *,
 						       void (*)(void *), void *);
-extern void GOMP_OFFLOAD_openacc_async_exec (void (*) (void *), size_t, void **,
-					     void **, unsigned *, void *,
-					     struct goacc_asyncqueue *);
+extern void GOMP_OFFLOAD_openacc_async_exec (struct gomp_offload_session *session,
+					     void (*fn_ptr) (void *),
+					     size_t mapnum, void **hostaddrs,
+					     unsigned *dims, void *targ_mem_desc,
+					     struct goacc_asyncqueue *aq);
 extern bool GOMP_OFFLOAD_openacc_async_dev2host (int, void *, const void *, size_t,
 						 struct goacc_asyncqueue *);
 extern bool GOMP_OFFLOAD_openacc_async_host2dev (int, void *, const void *, size_t,
@@ -227,6 +310,18 @@ extern const char *GOMP_OFFLOAD_get_interop_str (struct interop_obj_t *obj,
 extern const char *GOMP_OFFLOAD_get_interop_type_desc (struct interop_obj_t *,
 						       omp_interop_property_t);
 #endif
+
+/* simple-allocator.c  */
+
+typedef struct gomp_simple_alloc_context *gomp_simple_alloc_ctx_p;
+
+gomp_simple_alloc_ctx_p gomp_simple_alloc_init_context ();
+void gomp_simple_alloc_register_memory (gomp_simple_alloc_ctx_p ctx,
+				        char *base, size_t size);
+void *gomp_simple_alloc (gomp_simple_alloc_ctx_p ctx, size_t size);
+void gomp_simple_free (gomp_simple_alloc_ctx_p ctx, void *addr);
+void *gomp_simple_realloc (gomp_simple_alloc_ctx_p ctx, void *addr,
+			   size_t newsize);
 
 #ifdef __cplusplus
 }

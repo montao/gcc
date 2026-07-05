@@ -1,5 +1,5 @@
 /* Subroutines for insn-output.cc for SPARC.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
    64-bit SPARC-V9 support by Michael Tiemann, Jim Wilson, and Doug Evans,
    at Cygnus Support.
@@ -877,7 +877,7 @@ char sparc_hard_reg_printed[8];
 #define TARGET_STACK_PROTECT_GUARD hook_tree_void_null
 #endif
 
-#if TARGET_GNU_TLS && defined(HAVE_AS_SPARC_UA_PCREL)
+#if !HAVE_SOLARIS_AS
 #undef TARGET_ASM_OUTPUT_DWARF_DTPREL
 #define TARGET_ASM_OUTPUT_DWARF_DTPREL sparc_output_dwarf_dtprel
 #endif
@@ -1891,18 +1891,6 @@ sparc_option_override (void)
 
   target_flags &= ~cpu->disable;
   target_flags |= (cpu->enable
-#ifndef HAVE_AS_FMAF_HPC_VIS3
-		   & ~(MASK_FMAF | MASK_VIS3)
-#endif
-#ifndef HAVE_AS_SPARC4
-		   & ~MASK_CBCOND
-#endif
-#ifndef HAVE_AS_SPARC5_VIS4
-		   & ~(MASK_VIS4 | MASK_SUBXC)
-#endif
-#ifndef HAVE_AS_SPARC6
-		   & ~(MASK_VIS4B)
-#endif
 #ifndef HAVE_AS_LEON
 		   & ~(MASK_LEON | MASK_LEON3)
 #endif
@@ -3590,7 +3578,7 @@ emit_scc_insn (rtx operands[])
       return true;
     }
 
-  /* All the posibilities to use addx/subx based sequences has been
+  /* All the possibilities to use addx/subx based sequences has been
      exhausted, try for a 3 instruction sequence using v9 conditional
      moves.  */
   if (TARGET_V9 && gen_v9_scc (operands[0], code, x, y))
@@ -4701,7 +4689,7 @@ sparc_tls_got (void)
 
   /* In non-PIC mode, Sun as (unlike GNU as) emits PC-relative relocations for
      the GOT symbol with the 32-bit ABI, so we reload the GOT register.  */
-  if (TARGET_SUN_TLS && TARGET_ARCH32)
+  if (HAVE_SOLARIS_AS && TARGET_ARCH32)
     {
       load_got_register ();
       return got_register_rtx;
@@ -4805,7 +4793,7 @@ sparc_legitimize_tls_address (rtx addr)
 	  emit_insn (gen_tie_ld32 (temp3, got, temp2, addr));
 	else
 	  emit_insn (gen_tie_ld64 (temp3, got, temp2, addr));
-        if (TARGET_SUN_TLS)
+	if (HAVE_SOLARIS_AS)
 	  {
 	    ret = gen_reg_rtx (Pmode);
 	    emit_insn (gen_tie_add (Pmode, ret, gen_rtx_REG (Pmode, 7),
@@ -12775,7 +12763,7 @@ sparc_emit_membar_for_model (enum memmodel model,
 	 are followed by an implied StoreStore.  */
       implied |= StoreStore;
 
-      /* If we're not looking for a raw barrer (before+after), then atomic
+      /* If we're not looking for a raw barrier (before+after), then atomic
 	 operations get the benefit of being both load and store.  */
       if (load_store == 3 && before_after == 1)
 	implied |= StoreLoad;
@@ -12786,7 +12774,7 @@ sparc_emit_membar_for_model (enum memmodel model,
 	 are followed by an implied LoadLoad | LoadStore.  */
       implied |= LoadLoad | LoadStore;
 
-      /* If we're not looking for a raw barrer (before+after), then atomic
+      /* If we're not looking for a raw barrier (before+after), then atomic
 	 operations get the benefit of being both load and store.  */
       if (load_store == 3 && before_after == 2)
 	implied |= StoreLoad | StoreStore;

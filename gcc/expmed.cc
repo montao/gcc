@@ -1,6 +1,6 @@
 /* Medium-level subroutines: convert bit-field store and extract
    and shifts, multiplies and divides to rtl instructions.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -663,7 +663,7 @@ store_bit_field_using_insv (const extraction_insn *insv, rtx op0,
   /* There are similar overflow check at the start of store_bit_field_1,
      but that only check the situation where the field lies completely
      outside the register, while there do have situation where the field
-     lies partialy in the register, we need to adjust bitsize for this
+     lies partially in the register, we need to adjust bitsize for this
      partial overflow situation.  Without this fix, pr48335-2.c on big-endian
      will broken on those arch support bit insert instruction, like arm, aarch64
      etc.  */
@@ -1064,9 +1064,21 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 				 value, value_mode, reverse);
 	  return true;
 	}
-      op0 = simplify_gen_subreg (word_mode, op0, op0_mode.require (),
-				 bitnum / BITS_PER_WORD * UNITS_PER_WORD);
-      gcc_assert (op0);
+      rtx new_op0
+	= simplify_gen_subreg (word_mode, op0, op0_mode.require (),
+			       bitnum / BITS_PER_WORD * UNITS_PER_WORD);
+      if (!new_op0)
+	{
+	  /* No valid word-mode SUBREG of op0 at this offset.  Defer to
+	     store_split_bit_field, which addresses op0 a word at a time.  */
+	  if (!fallback_p)
+	    return false;
+	  store_split_bit_field (op0, op0_mode, bitsize, bitnum,
+				 bitregion_start, bitregion_end,
+				 value, value_mode, reverse);
+	  return true;
+	}
+      op0 = new_op0;
       op0_mode = word_mode;
       bitnum %= BITS_PER_WORD;
     }
@@ -2962,6 +2974,30 @@ synth_mult (struct algorithm *alg_out, unsigned HOST_WIDE_INT t,
 		}
 	    }
 	}
+      else if (2 * BITS_PER_WORD <= HOST_BITS_PER_WIDE_INT
+	       && GET_MODE_BITSIZE (imode) == 2 * BITS_PER_WORD
+	       && m >= BITS_PER_WORD
+	       && imode == mode)
+	{
+	  q = t >> m;
+	  int op1_cost = shift_cost (speed, mode, m - BITS_PER_WORD);
+	  int op2_cost = zero_cost (speed);
+	  op_latency = MAX (op1_cost, op2_cost);
+	  op_cost = op1_cost + op2_cost;
+
+	  new_limit.cost = best_cost.cost - op_cost;
+	  new_limit.latency = best_cost.latency - op_latency;
+	  synth_mult (alg_in, q, &new_limit, mode);
+	  alg_in->cost.cost += op_cost;
+	  alg_in->cost.latency += op_latency;
+	  if (CHEAPER_MULT_COST (&alg_in->cost, &best_cost))
+	    {
+	      best_cost = alg_in->cost;
+	      std::swap (alg_in, best_alg);
+	      best_alg->log[best_alg->ops] = m;
+	      best_alg->op[best_alg->ops] = alg_shift;
+	    }
+	}
       if (cache_hit)
 	goto done;
     }
@@ -3521,7 +3557,7 @@ expand_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
 
       /* If mode is integer vector mode, check if the backend supports
 	 vector lshift (by scalar or vector) at all.  If not, we can't use
-	 synthetized multiply.  */
+	 synthesized multiply.  */
       if (GET_MODE_CLASS (mode) == MODE_VECTOR_INT
 	  && optab_handler (vashl_optab, mode) == CODE_FOR_nothing
 	  && optab_handler (ashl_optab, mode) == CODE_FOR_nothing)
@@ -5393,6 +5429,9 @@ make_tree (tree type, rtx x)
       t = wide_int_to_tree (type, rtx_mode_t (x, TYPE_MODE (type)));
       return t;
 
+    case CONST_POLY_INT:
+      return wide_int_to_tree (type, const_poly_int_value (x));
+
     case CONST_DOUBLE:
       STATIC_ASSERT (HOST_BITS_PER_WIDE_INT * 2 <= MAX_BITSIZE_MODE_ANY_INT);
       if (TARGET_SUPPORTS_WIDE_INT == 0 && GET_MODE (x) == VOIDmode)
@@ -5484,9 +5523,6 @@ make_tree (tree type, rtx x)
       /* fall through.  */
 
     default:
-      if (CONST_POLY_INT_P (x))
-	return wide_int_to_tree (t, const_poly_int_value (x));
-
       t = build_decl (RTL_LOCATION (x), VAR_DECL, NULL_TREE, type);
 
       /* If TYPE is a POINTER_TYPE, we might need to convert X from
@@ -6285,7 +6321,7 @@ emit_store_flag_force (rtx target, enum rtx_code code, rtx op0, rtx op1,
 }
 
 /* Expand a vector (left) rotate of MODE of X by an immediate AMT as a vector
-   permute operation.  Emit code to put the result in DST if successfull and
+   permute operation.  Emit code to put the result in DST if successful and
    return it.  Otherwise return NULL.  This is intended to implement vector
    rotates by byte amounts using vector permutes when the target does not offer
    native vector rotate operations.  */
@@ -6360,7 +6396,7 @@ equivalent_cmp_code (enum rtx_code code)
     }
 }
 
-/* Choose the more appropiate immediate in scalar integer comparisons.  The
+/* Choose the more appropriate immediate in scalar integer comparisons.  The
    purpose of this is to end up with an immediate which can be loaded into a
    register in fewer moves, if possible.
 
