@@ -1,8 +1,34 @@
 #! /bin/sh -e
 
 #
-# COPYRIGHT
-# The gcobc program is in public domain.
+# Copyright (c) 2021-2026 Symas Corporation
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+# * Redistributions of source code must retain the above copyright
+#   notice, this list of conditions and the following disclaimer.
+# * Redistributions in binary form must reproduce the above
+#   copyright notice, this list of conditions and the following disclaimer
+#   in the documentation and/or other materials provided with the
+#   distribution.
+# * Neither the name of the Symas Corporation nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
 # If it breaks then you get to keep both pieces.
 #
 # This file emulates the GnuCOBOL cobc compiler to a limited degree.
@@ -35,6 +61,20 @@
 ##    output set the mode variable.  Everything else is appended to the
 ##    opts variable.
 ##
+##  - -fPIC is added to the command line unless we're producing an
+##    executable.  That option applies only to "certain machines", per
+##    the gcc info manual. For this script to be portable across
+##    machines, -fPIC would have to be set more judiciously.
+
+# To override the default gcobol, set the "gcobol" environment variable.
+gcobol="${gcobol:-${0%/*}/gcobol}"
+
+# If invoked as "gcobcx", execute with tracing enabled. 
+if [ gcobcx = ${0##*/} ]
+then
+    #cho "parsing args: $@" >&2
+    set -x
+fi
 
 if [ "$COBCPY" ]
 then
@@ -74,6 +114,7 @@ fi
 exit_status=0
 skip_arg=
 opts="$copydir $includes"
+cflags=-fPIC
 mode=-shared
 
 incomparable="has no comparable gcobol option"
@@ -121,25 +162,24 @@ $0 recognizes the following GnuCOBOL cobc compilation options:
         -std=mvs -std=mvs-strict
         -std=mf  -std=mf-strict
         -std=cobol85 -std=cobol2002 -std=cobol2014
- Options that are the same in gcobol and cobc are passed through verbatim.
- Options that have no analog in gcobol produce a warning message.
- To produce this message, use -HELP.
+Options that are the same in gcobol and cobc are passed through verbatim.
+Options that have no analog in gcobol produce a warning message.
+To produce this message, use -HELP.
 To see the constructed cobc command-line, use -echo.
 To override the default cobc, set the "cobc" environment variable.
 By default, gcobc invokes the gcobol the same directory the gcobc resides.
 To override, set the gcobol environment variable.
- EOF
- }
+EOF
+}
 
-dialect="gnu"
+dialect="mf gnu"
 out_set=""
 first=""
 
- #
- # Simply iterate over the command-line tokens.  We can't use getopts
- # here because it's not designed for single-dash words (e.g. -shared).
 #
-
+# Iterate over the command-line tokens.  We can't use getopts here
+# because it's not designed for single-dash words (e.g. -shared).
+#
 for opt in "$@"
 do
     if [ "$skip_arg" ]
@@ -181,23 +221,24 @@ do
          -C) error "$opt $incomparable"
              ;;
         -d | -debug | --debug) opts="$opts -fcobol-exceptions=EC-ALL"
-                       warn "$opt implies -fstack-check:"
                        ;;
         # define for preprocessor, note: -D* is directly passed
         -D)
             pending_arg=$opt
             ;;
-         -E) opts="$opts $opt -fsyntax-only"
-             ;;
-         -echo) echo="echo"
+        -E) opts="$opts $opt -fsyntax-only"
+            ;;
+        -echo) echo="echo"
                ;;
 
         -fec=* | -fno-ec=*)
             opt="$(echo "$opt" | sed -E 's/-f(no-)?ec=/-f\1cobol-exceptions=EC-/g')"
              opts="$opts $opt"
              ;;
+        -fno-ec=*)
+             ;;  # just ignore for now to work around "sorry unimplemented" errors
          -ext)
-            pending_arg="$opt "
+            pending_arg="-copyext "
              ;;
          -ext=*) opts="$opts $(echo "$opt" | sed 's/-ext=/-copyext ./')"
                  ;;
@@ -227,7 +268,7 @@ do
         -fwrite-after) warn "$opt" ;;
         -fmfcomment) warn "$opt" ;;
         -facucomment) warn "$opt" ;;
-        -fno-trunc) no_warn "$opt" ;;
+        -ftrunc | -fno-trunc | -fnotrunc) no_warn "$opt" ;;
         -fsingle-quote) warn "$opt" ;;
         -foptional-file) warn "$opt" ;;
         -fstatic-call | -fno-static-call)
@@ -381,8 +422,9 @@ do
         -fformat=auto) ;; # gcobol and gnucobol default
 
         -fixed | --fixed | -fformat=fixed | -fformat=variable | -fformat=xcard)
-                    # note: variable + xcard are only _more similar_ to fixed than free,
-                    # (with changing right-column to 250/255, which isn't supported in gcobol, yet)
+                    # note: variable + xcard are only _more similar_
+                    # to fixed than free, (with changing right-column
+                    # to 250/255, which isn't supported in gcobol
                      opts="$opts -ffixed-form"
                      ;;
 
@@ -397,8 +439,26 @@ do
                ;;
         -i | --info) warn "$opt"
                      ;;
-
-        # -I
+        -include )
+            pending_arg=$opt
+            ;;
+        # no-space version: just concatenate
+        -include* )
+            opts="$opts $opt"
+            ;;
+        #
+        # Options that may have a space  before the argument, or not
+        #
+        # Note that -B is not supported as per cobc syntax, but it might
+        # still be required by gcc users.
+        -B | -I | -L | -MF | -MT )
+            pending_arg=$opt
+            ;;
+        # no-space version: just concatenate
+        -B* | -I* | -L* | -MF* | -MT* )
+            opts="$opts $opt"
+            ;;
+        
         -fimplicit-init) warn "$opt"
                          ;;
         -j | -job)  warn "$opt"
@@ -408,7 +468,6 @@ do
         -K*) warn "$opt"
             ;;
         # -l
-        # -L
         --list*) warn "$opt"
                  ;;
         -m) mode="-shared"
@@ -422,9 +481,6 @@ do
              opts="$opts $opt"
             ;;
 
-        # -O0, -Ox
-        -O | -O2 | -Os) warn "$opt"
-                        ;;
         -S) mode="$opt"
             ;;
         -save-temps=*) opt="$(echo "$opt" | sed -E 's/^.+=//')"
@@ -437,11 +493,13 @@ do
         -std=mvs | -std=mvs-strict | -std=ibm | -std=ibm-strict) dialect=ibm
                   ;;
         -std=mf | -std=mf-strict)  dialect=mf
-                  ;;
-        -std=default)  dialect=gnu  # that's GnuCOBOL's default and GCC's dialect for GnuCOBOL
-                   ;;
-        -std=cobol*)    dialect=""   # GCC COBOL targets COBOL2024 "mostly backward to COBOL85"
-                   ;;
+                                   ;;
+                      # GnuCOBOL's default and GCC's dialect for GnuCOBOL
+        -std=default) dialect="mf gnu"
+                      ;;
+                      # GCC COBOL targets COBOL2024 "mostly backward to COBOL85"
+        -std=cobol*)  dialect="" 
+                      ;;
         -std=*)
             dialect=""
             warn "$opt (unkown dialect)"
@@ -458,27 +516,37 @@ do
          -v | --verbose) opts="$opts -V"
                          ;;
          # note: we want -dumpversion to be passed to gcc
-         -V | --version | -version) opts="$opts --version"
+         -V | --version | -version)
+             $gcobol --version |
+                 awk '1 == NR { ver = $3; 
+                                $3 = "3.1"
+                                $5 = "(GnuCOBOL emulation using " ver ")" } 1'
+             exit
+             # opts="$opts --version"
             ;;
         # pass through, strangely -Wall is not supported
-        -w | -W | -Wextra) opts="$opts $opt"
+        # note that cobc does not support gcc's -Wl options, but they
+        # might be passed anyway for different reasons e.g.: -Wl,rpath.
+        -w | -W | -Wextra | -Wl,*) opts="$opts $opt"
              ;;
         -Wno-*) no_warn "$opt"
              ;;
 
-        -W*) ignore_arg "$opt"
+        -W*) warn "$opt"
              ;;
 
         -x) mode=
+            cflags=
             ;;
 
         -) output_name=a.out # nonnull to prevent overriding gcc default
            opts="$opts /dev/stdin"
            ;;
 
-        *) if [ -z "$output_name" ]  # first non-option argument is source file name
+           # First file name argument is default output filename.
+        *) if [ -z "$output_name" -a -e "$opt" ]  
            then
-               output_name=$(basename ${opt%.*})
+               output_name=$(basename "${opt%.*}")
                case $mode in
                    -c) output_name="$output_name".o
                        ;;
@@ -486,7 +554,7 @@ do
                        output_name="$output_name".so
                        ;;
                esac
-               opts="$opts -o $output_name"
+               opts="$opts $cflags -o $output_name"
            fi    
            opts="$opts $opt" # pass through
            ;;
@@ -496,7 +564,7 @@ done
 # cobc default:
 if [ "$static_used" = "" ]
 then
-    opts="$opts -fno-static-call";
+    opts="-fno-static-call $opts";
 fi
 
 if [ "$exit_status" -gt 0 ]
@@ -504,12 +572,14 @@ then
     exit $exit_status
 fi
 
-# To override the default gcobol, set the "gcobol" environment variable.
-gcobol="${gcobol:-${0%/*}/gcobol}"
+if [ "$dialect" ]
+then
+    dialect=$(echo $dialect | sed -E 's/[[:alnum:]]+/-dialect &/g')
+fi
 
 if [ "$echo" ]
 then
-    echo $gcobol $mode $opts
+    echo $gcobol $mode $dialect $opts
     exit
 fi
 
@@ -518,4 +588,4 @@ then
     set -x
 fi
 
-exec $gcobol $mode $opts
+exec $gcobol $mode $dialect $opts

@@ -1,6 +1,6 @@
 /* Lower GIMPLE_SWITCH expressions to something more efficient than
    a jump table.
-   Copyright (C) 2006-2025 Free Software Foundation, Inc.
+   Copyright (C) 2006-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -105,7 +105,7 @@ can_log2 (tree type, optimization_type opt_type)
 
 /* Assume that OP is a power of two.  Build a sequence of gimple statements
    efficiently computing the base two logarithm of OP using special optabs.
-   Return the ssa name represeting the result of the logarithm through RESULT.
+   Return the ssa name representing the result of the logarithm through RESULT.
 
    Before computing the logarithm, OP may have to be converted to another type.
    This should be specified in TYPE.  Use can_log2 to decide what this type
@@ -431,7 +431,7 @@ switch_conversion::exp_index_transform (gswitch *swtch)
   gsi_insert_after (&gsi, stmt_cond, GSI_NEW_STMT);
 
   /* We just added an edge going to default bb so fix PHI nodes in that bb:
-     For each PHI add new PHI arg.  It will be the same arg as when comming to
+     For each PHI add new PHI arg.  It will be the same arg as when coming to
      the default bb from the switch bb.  */
   edge default_edge = find_edge (swtch_bb, default_bb);
   for (gphi_iterator gsi = gsi_start_phis (default_bb);
@@ -894,7 +894,7 @@ switch_conversion::array_value_type (tree type, int num)
   type = TYPE_MAIN_VARIANT (type);
 
   if (!INTEGRAL_TYPE_P (type)
-      || (TREE_CODE (type) == BITINT_TYPE
+      || (BITINT_TYPE_P (type)
 	  && (TYPE_PRECISION (type) > MAX_FIXED_MODE_SIZE
 	      || TYPE_MODE (type) == BLKmode)))
     return type;
@@ -971,7 +971,6 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
   tree name;
   gimple *load;
   gimple_stmt_iterator gsi = gsi_for_stmt (m_switch);
-  location_t loc = gimple_location (m_switch);
 
   gcc_assert (m_default_values[num]);
 
@@ -1008,6 +1007,16 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
       default_type = TREE_TYPE (m_default_values[num]);
       value_type = array_value_type (default_type, num);
       array_type = build_array_type (value_type, arr_index_type);
+      addr_space_t as
+	= targetm.addr_space.for_artificial_rodata (array_type,
+						    ARTIFICIAL_RODATA_CSWITCH);
+      if (!ADDR_SPACE_GENERIC_P (as))
+	{
+	  int quals = (TYPE_QUALS_NO_ADDR_SPACE (value_type)
+		       | ENCODE_QUAL_ADDR_SPACE (as));
+	  value_type = build_qualified_type (value_type, quals);
+	  array_type = build_array_type (value_type, arr_index_type);
+	}
       if (default_type != value_type)
 	{
 	  unsigned int i;
@@ -1020,7 +1029,7 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
       TREE_CONSTANT (ctor) = true;
       TREE_STATIC (ctor) = true;
 
-      decl = build_decl (loc, VAR_DECL, NULL_TREE, array_type);
+      decl = build_decl (UNKNOWN_LOCATION, VAR_DECL, NULL_TREE, array_type);
       TREE_STATIC (decl) = 1;
       DECL_INITIAL (decl) = ctor;
 
@@ -1030,9 +1039,10 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
       TREE_CONSTANT (decl) = 1;
       TREE_READONLY (decl) = 1;
       DECL_IGNORED_P (decl) = 1;
-      /* The decl is mergable since we don't take the address ever and
+      /* The decl is mergeable since we don't take the address ever and
 	 just reading from it. */
       DECL_MERGEABLE (decl) = 1;
+
       if (offloading_function_p (cfun->decl))
 	DECL_ATTRIBUTES (decl)
 	  = tree_cons (get_identifier ("omp declare target"), NULL_TREE,
@@ -1063,7 +1073,7 @@ void
 switch_conversion::build_arrays ()
 {
   tree arr_index_type;
-  tree tidx, sub, utype, tidxtype;
+  tree tidx, uidx, sub, utype, tidxtype;
   gimple *stmt;
   gimple_stmt_iterator gsi;
   gphi_iterator gpi;
@@ -1076,7 +1086,7 @@ switch_conversion::build_arrays ()
   utype = TREE_TYPE (m_index_expr);
   if (TREE_TYPE (utype))
     utype = lang_hooks.types.type_for_mode (TYPE_MODE (TREE_TYPE (utype)), 1);
-  else if (TREE_CODE (utype) == BITINT_TYPE
+  else if (BITINT_TYPE_P (utype)
 	   && (TYPE_PRECISION (utype) > MAX_FIXED_MODE_SIZE
 	       || TYPE_MODE (utype) == BLKmode))
     utype = unsigned_type_for (utype);
@@ -1088,18 +1098,24 @@ switch_conversion::build_arrays ()
     tidxtype = utype;
 
   arr_index_type = build_index_type (m_range_size);
-  tidx = make_ssa_name (tidxtype);
+  uidx = make_ssa_name (utype);
   sub = fold_build2_loc (loc, MINUS_EXPR, utype,
 			 fold_convert_loc (loc, utype, m_index_expr),
 			 fold_convert_loc (loc, utype, m_range_min));
-  sub = fold_convert (tidxtype, sub);
   sub = force_gimple_operand_gsi (&gsi, sub,
 				  false, NULL, true, GSI_SAME_STMT);
-  stmt = gimple_build_assign (tidx, sub);
+  stmt = gimple_build_assign (uidx, sub);
 
   gsi_insert_before (&gsi, stmt, GSI_SAME_STMT);
-  update_stmt (stmt);
   m_arr_ref_first = stmt;
+
+  tidx = uidx;
+  if (tidxtype != utype)
+    {
+      tidx = make_ssa_name (tidxtype);
+      stmt = gimple_build_assign (tidx, NOP_EXPR, uidx);
+      gsi_insert_before (&gsi, stmt, GSI_SAME_STMT);
+    }
 
   for (gpi = gsi_start_phis (m_final_bb), i = 0;
        !gsi_end_p (gpi); gsi_next (&gpi))
@@ -1532,7 +1548,7 @@ jump_table_cluster::emit (tree index_expr, tree,
   /* For large/huge _BitInt, subtract low from index_expr, cast to unsigned
      DImode type (get_range doesn't support ranges larger than 64-bits)
      and subtract low from all case values as well.  */
-  if (TREE_CODE (TREE_TYPE (index_expr)) == BITINT_TYPE
+  if (BITINT_TYPE_P (TREE_TYPE (index_expr))
       && TYPE_PRECISION (TREE_TYPE (index_expr)) > GET_MODE_PRECISION (DImode))
     {
       bitint = true;
@@ -1934,8 +1950,8 @@ case_bit_test::cmp (const void *p1, const void *p2)
     return d2->bits - d1->bits;
 
   /* Stabilize the sort.  */
-  return (LABEL_DECL_UID (CASE_LABEL (d2->label))
-	  - LABEL_DECL_UID (CASE_LABEL (d1->label)));
+  return (d2->target_bb->index
+	  - d1->target_bb->index);
 }
 
 /*  Expand a switch statement by a short sequence of bit-wise
@@ -1994,7 +2010,6 @@ bit_test_cluster::emit (tree index_expr, tree index_type,
 	  gcc_checking_assert (count < m_max_case_bit_tests);
 	  test[k].mask = wi::zero (prec);
 	  test[k].target_bb = n->m_case_bb;
-	  test[k].label = n->m_case_label_expr;
 	  test[k].bits = 0;
 	  test[k].prob = profile_probability::never ();
 	  count++;

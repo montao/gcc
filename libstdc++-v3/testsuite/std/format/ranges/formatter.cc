@@ -4,6 +4,13 @@
 #include <format>
 #include <testsuite_hooks.h>
 #include <vector>
+#include <span>
+
+#ifdef __glibcxx_constexpr_format
+# define CONSTEXPR constexpr
+#else
+# define CONSTEXPR
+#endif
 
 #define WIDEN_(C, S) ::std::__format::_Widen<C>(S, L##S)
 #define WIDEN(S) WIDEN_(CharT, S)
@@ -31,7 +38,7 @@ struct std::formatter<MyVector<T, Formatter>, CharT>
   { return _formatter.parse(pc);  }
 
   template<typename Out>
-  typename std::basic_format_context<Out, CharT>::iterator
+  CONSTEXPR std::basic_format_context<Out, CharT>::iterator
   format(const MyVector<T, Formatter>& mv,
 	 std::basic_format_context<Out, CharT>& fc) const
   { return _formatter.format(mv, fc); }
@@ -41,7 +48,7 @@ private:
 };
 
 template<typename CharT, template<typename, typename> class Formatter>
-void
+CONSTEXPR void
 test_default()
 {
   MyVector<int, Formatter> vec{1, 2, 3};
@@ -93,7 +100,7 @@ test_default()
 }
 
 template<typename CharT, template<typename, typename> class Formatter>
-void
+CONSTEXPR void
 test_override()
 {
   MyVector<CharT, Formatter> vc{'a', 'b', 'c', 'd'};
@@ -114,7 +121,8 @@ test_override()
 }
 
 template<template<typename, typename> class Formatter>
-void test_outputs()
+CONSTEXPR void
+test_outputs()
 {
   test_default<char, Formatter>();
   test_default<wchar_t, Formatter>();
@@ -122,7 +130,7 @@ void test_outputs()
   test_override<wchar_t, Formatter>();
 }
 
-void
+CONSTEXPR void
 test_nested()
 {
   MyVector<MyVector<int>> v
@@ -145,13 +153,14 @@ struct MyFlatMap : std::flat_map<int, int>
 
 template<typename CharT>
 struct std::formatter<MyFlatMap, CharT>
-  // This cannot apply format BitVector const&, because formatted type would
+  // We cannot format MyFlatMap const&, because formatted type would
   // be std::pair<int const&, int const&>, and formatter for
   // pair<int const&, int> cannot format it.
   : std::range_formatter<MyFlatMap::reference>
 {};
 
-void test_const_ref_type_mismatch()
+CONSTEXPR void
+test_const_ref_type_mismatch()
 {
   MyFlatMap m{{1, 11}, {2, 22}};
   std::string res = std::format("{:m}", m);
@@ -161,10 +170,34 @@ void test_const_ref_type_mismatch()
 template<typename T, typename CharT>
 using VectorFormatter = std::formatter<std::vector<T>, CharT>;
 
-int main()
+template<template<typename> typename Range>
+CONSTEXPR void
+test_nonblocking()
+{
+  static_assert(!std::enable_nonlocking_formatter_optimization<
+		  Range<int>>);
+}
+
+CONSTEXPR bool
+test_all()
 {
   test_outputs<std::range_formatter>();
   test_outputs<VectorFormatter>();
   test_nested();
   test_const_ref_type_mismatch();
+
+  test_nonblocking<std::span>();
+  test_nonblocking<std::vector>();
+  test_nonblocking<MyVector>();
+
+  return true;
+}
+
+#ifdef __glibcxx_constexpr_format
+static_assert(test_all());
+#endif
+
+int main()
+{
+  test_all();
 }

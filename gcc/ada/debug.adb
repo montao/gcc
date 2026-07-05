@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -143,7 +143,7 @@ package body Debug is
    --  d_c  CUDA compilation : compile for the host
    --  d_d  CUDA compilation : compile for the device
    --  d_e  Ignore entry calls and requeue statements for elaboration
-   --  d_f  Issue info messages related to GNATprove usage
+   --  d_f
    --  d_g  Disable large static aggregates
    --  d_h  Disable the use of (perfect) hash functions for enumeration Value
    --  d_i  Ignore activations and calls to instances for elaboration
@@ -152,7 +152,7 @@ package body Debug is
    --  d_l  Disable strict alignment of array types with aliased component
    --  d_m  Run adareducer on crash
    --  d_n
-   --  d_o
+   --  d_o  Disable Backend_Overflow_Checks_On_Target; used for testing.
    --  d_p  Ignore assertion pragmas for elaboration
    --  d_q  Do not enforce freezing for equality operator of boolean subtype
    --  d_r  Disable the use of the return slot in functions
@@ -169,7 +169,7 @@ package body Debug is
    --  d_B  Warn on build-in-place function calls
    --  d_C
    --  d_D
-   --  d_E  Print diagnostics and switch repository
+   --  d_E
    --  d_F  Encode full invocation paths in ALI files
    --  d_G
    --  d_H
@@ -188,7 +188,7 @@ package body Debug is
    --  d_U  Disable prepending messages with "error:".
    --  d_V  Enable VAST (verifications on the expanded tree)
    --  d_W  Enable VAST in verbose mode
-   --  d_X  Disable assertions to check matching of extra formals
+   --  d_X
    --  d_Y
    --  d_Z
 
@@ -995,6 +995,9 @@ package body Debug is
    --  d_l  The compiler does not enforce the strict alignment of array types
    --       that are declared with an aliased component.
 
+   --  d_o  The compiler disables Backend_Overflow_Checks_On_Target; used to
+   --       test the frontend support on targets without overflow checks.
+
    --  d_p  The compiler ignores calls to subprograms which verify the run-time
    --       semantics of invariants and postconditions in both the static and
    --       dynamic elaboration models.
@@ -1070,10 +1073,6 @@ package body Debug is
 
    --  d_W  Same as d_V, but also prints lots of tracing/debugging output
    --       as it walks the tree.
-
-   --  d_X  Disable assertions to check matching of extra formals; switch added
-   --       temporarily to disable these checks until this work is complete if
-   --       they cause unexpected assertion failures.
 
    --  d1   Error messages have node numbers where possible. Normally error
    --       messages have only source locations. This option is useful when
@@ -1288,15 +1287,15 @@ package body Debug is
    --      display the source file name, the time stamp expected and
    --      the time stamp found.
 
+   subtype Dig  is Character range '1' .. '9';
+   subtype LLet is Character range 'a' .. 'z';
+   subtype ULet is Character range 'A' .. 'Z';
+
    --------------------
    -- Set_Debug_Flag --
    --------------------
 
    procedure Set_Debug_Flag (C : Character; Val : Boolean := True) is
-      subtype Dig  is Character range '1' .. '9';
-      subtype LLet is Character range 'a' .. 'z';
-      subtype ULet is Character range 'A' .. 'Z';
-
    begin
       if C in Dig then
          case Dig (C) is
@@ -1439,10 +1438,6 @@ package body Debug is
    ---------------------------
 
    procedure Set_Dotted_Debug_Flag (C : Character; Val : Boolean := True) is
-      subtype Dig  is Character range '1' .. '9';
-      subtype LLet is Character range 'a' .. 'z';
-      subtype ULet is Character range 'A' .. 'Z';
-
    begin
       if C in Dig then
          case Dig (C) is
@@ -1588,10 +1583,6 @@ package body Debug is
      (C   : Character;
       Val : Boolean := True)
    is
-      subtype Dig  is Character range '1' .. '9';
-      subtype LLet is Character range 'a' .. 'z';
-      subtype ULet is Character range 'A' .. 'Z';
-
    begin
       if C in Dig then
          case Dig (C) is

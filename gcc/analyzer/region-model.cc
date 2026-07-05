@@ -1,5 +1,5 @@
 /* Classes for modeling the state of memory.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -26,7 +26,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "cgraph.h"
 #include "cfg.h"
 #include "sbitmap.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "stor-layout.h"
 #include "stringpool.h"
 #include "attribs.h"
@@ -40,10 +40,14 @@ along with GCC; see the file COPYING3.  If not see
 #include "is-a.h"
 #include "gcc-rich-location.h"
 #include "gcc-urlifier.h"
-#include "diagnostic-format-sarif.h"
+#include "diagnostics/sarif-sink.h"
 #include "tree-pretty-print.h"
 #include "fold-const.h"
 #include "selftest-tree.h"
+#include "context.h"
+#include "channels.h"
+#include "value-relation.h"
+#include "range-op.h"
 
 #include "text-art/tree-widget.h"
 
@@ -65,12 +69,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/feasible-graph.h"
 #include "analyzer/record-layout.h"
 #include "analyzer/function-set.h"
+#include "analyzer/state-transition.h"
 
 #if ENABLE_ANALYZER
 
 namespace ana {
-
-auto_vec<pop_frame_callback> region_model::pop_frame_callbacks;
 
 /* Dump T to PP in language-independent form, for debugging/logging/dumping
    purposes.  */
@@ -159,7 +162,7 @@ region_to_value_map::operator== (const region_to_value_map &other) const
       const region *reg = iter.first;
       const svalue *sval = iter.second;
       const svalue * const *other_slot = other.get (reg);
-      if (other_slot == NULL)
+      if (other_slot == nullptr)
 	return false;
       if (sval != *other_slot)
 	return false;
@@ -403,7 +406,7 @@ exception_node::add_to_reachable_regions (reachable_regions &regs) const
 /* Ctor for region_model: construct an "empty" model.  */
 
 region_model::region_model (region_model_manager *mgr)
-: m_mgr (mgr), m_store (), m_current_frame (NULL),
+: m_mgr (mgr), m_store (), m_current_frame (nullptr),
   m_thrown_exceptions_stack (),
   m_caught_exceptions_stack (),
   m_dynamic_extents ()
@@ -740,292 +743,6 @@ region_model::loop_replay_fixup (const region_model *dst_state)
   m_store.loop_replay_fixup (dst_state->get_store (), m_mgr);
 }
 
-/* A subclass of pending_diagnostic for complaining about uses of
-   poisoned values.  */
-
-class poisoned_value_diagnostic
-: public pending_diagnostic_subclass<poisoned_value_diagnostic>
-{
-public:
-  poisoned_value_diagnostic (tree expr, enum poison_kind pkind,
-			     const region *src_region,
-			     tree check_expr)
-  : m_expr (expr), m_pkind (pkind),
-    m_src_region (src_region),
-    m_check_expr (check_expr)
-  {}
-
-  const char *get_kind () const final override { return "poisoned_value_diagnostic"; }
-
-  bool use_of_uninit_p () const final override
-  {
-    return m_pkind == poison_kind::uninit;
-  }
-
-  bool operator== (const poisoned_value_diagnostic &other) const
-  {
-    return (m_expr == other.m_expr
-	    && m_pkind == other.m_pkind
-	    && m_src_region == other.m_src_region);
-  }
-
-  int get_controlling_option () const final override
-  {
-    switch (m_pkind)
-      {
-      default:
-	gcc_unreachable ();
-      case poison_kind::uninit:
-	return OPT_Wanalyzer_use_of_uninitialized_value;
-      case poison_kind::freed:
-      case poison_kind::deleted:
-	return OPT_Wanalyzer_use_after_free;
-      case poison_kind::popped_stack:
-	return OPT_Wanalyzer_use_of_pointer_in_stale_stack_frame;
-      }
-  }
-
-  bool terminate_path_p () const final override { return true; }
-
-  bool emit (diagnostic_emission_context &ctxt) final override
-  {
-    switch (m_pkind)
-      {
-      default:
-	gcc_unreachable ();
-      case poison_kind::uninit:
-	{
-	  ctxt.add_cwe (457); /* "CWE-457: Use of Uninitialized Variable".  */
-	  return ctxt.warn ("use of uninitialized value %qE",
-			    m_expr);
-	}
-	break;
-      case poison_kind::freed:
-	{
-	  ctxt.add_cwe (416); /* "CWE-416: Use After Free".  */
-	  return ctxt.warn ("use after %<free%> of %qE",
-			    m_expr);
-	}
-	break;
-      case poison_kind::deleted:
-	{
-	  ctxt.add_cwe (416); /* "CWE-416: Use After Free".  */
-	  return ctxt.warn ("use after %<delete%> of %qE",
-			    m_expr);
-	}
-	break;
-      case poison_kind::popped_stack:
-	{
-	  /* TODO: which CWE?  */
-	  return ctxt.warn
-	    ("dereferencing pointer %qE to within stale stack frame",
-	     m_expr);
-	}
-	break;
-      }
-  }
-
-  bool
-  describe_final_event (pretty_printer &pp,
-			const evdesc::final_event &) final override
-  {
-    switch (m_pkind)
-      {
-      default:
-	gcc_unreachable ();
-      case poison_kind::uninit:
-	{
-	  pp_printf (&pp,
-		     "use of uninitialized value %qE here",
-		     m_expr);
-	  return true;
-	}
-      case poison_kind::freed:
-	{
-	  pp_printf (&pp,
-		     "use after %<free%> of %qE here",
-		     m_expr);
-	  return true;
-	}
-      case poison_kind::deleted:
-	{
-	  pp_printf (&pp,
-		     "use after %<delete%> of %qE here",
-		     m_expr);
-	  return true;
-	}
-      case poison_kind::popped_stack:
-	{
-	  pp_printf (&pp,
-		     "dereferencing pointer %qE to within stale stack frame",
-		     m_expr);
-	  return true;
-	}
-      }
-  }
-
-  void mark_interesting_stuff (interesting_t *interest) final override
-  {
-    if (m_src_region)
-      interest->add_region_creation (m_src_region);
-  }
-
-  /* Attempt to suppress false positives.
-     Reject paths where the value of the underlying region isn't poisoned.
-     This can happen due to state merging when exploring the exploded graph,
-     where the more precise analysis during feasibility analysis finds that
-     the region is in fact valid.
-     To do this we need to get the value from the fgraph.  Unfortunately
-     we can't simply query the state of m_src_region (from the enode),
-     since it might be a different region in the fnode state (e.g. with
-     heap-allocated regions, the numbering could be different).
-     Hence we access m_check_expr, if available.  */
-
-  bool check_valid_fpath_p (const feasible_node &fnode,
-			    const gimple *emission_stmt)
-    const final override
-  {
-    if (!m_check_expr)
-      return true;
-
-    /* We've reached the enode, but not necessarily the right function_point.
-       Try to get the state at the correct stmt.  */
-    region_model emission_model (fnode.get_model ().get_manager());
-    if (!fnode.get_state_at_stmt (emission_stmt, &emission_model))
-      /* Couldn't get state; accept this diagnostic.  */
-      return true;
-
-    const svalue *fsval = emission_model.get_rvalue (m_check_expr, NULL);
-    /* Check to see if the expr is also poisoned in FNODE (and in the
-       same way).  */
-    const poisoned_svalue * fspval = fsval->dyn_cast_poisoned_svalue ();
-    if (!fspval)
-      return false;
-    if (fspval->get_poison_kind () != m_pkind)
-      return false;
-    return true;
-  }
-
-  void
-  maybe_add_sarif_properties (sarif_object &result_obj) const final override
-  {
-    sarif_property_bag &props = result_obj.get_or_create_properties ();
-#define PROPERTY_PREFIX "gcc/analyzer/poisoned_value_diagnostic/"
-    props.set (PROPERTY_PREFIX "expr", tree_to_json (m_expr));
-    props.set_string (PROPERTY_PREFIX "kind", poison_kind_to_str (m_pkind));
-    if (m_src_region)
-      props.set (PROPERTY_PREFIX "src_region", m_src_region->to_json ());
-    props.set (PROPERTY_PREFIX "check_expr", tree_to_json (m_check_expr));
-#undef PROPERTY_PREFIX
-  }
-
-private:
-  tree m_expr;
-  enum poison_kind m_pkind;
-  const region *m_src_region;
-  tree m_check_expr;
-};
-
-/* A subclass of pending_diagnostic for complaining about shifts
-   by negative counts.  */
-
-class shift_count_negative_diagnostic
-: public pending_diagnostic_subclass<shift_count_negative_diagnostic>
-{
-public:
-  shift_count_negative_diagnostic (const gassign *assign, tree count_cst)
-  : m_assign (assign), m_count_cst (count_cst)
-  {}
-
-  const char *get_kind () const final override
-  {
-    return "shift_count_negative_diagnostic";
-  }
-
-  bool operator== (const shift_count_negative_diagnostic &other) const
-  {
-    return (m_assign == other.m_assign
-	    && same_tree_p (m_count_cst, other.m_count_cst));
-  }
-
-  int get_controlling_option () const final override
-  {
-    return OPT_Wanalyzer_shift_count_negative;
-  }
-
-  bool emit (diagnostic_emission_context &ctxt) final override
-  {
-    return ctxt.warn ("shift by negative count (%qE)", m_count_cst);
-  }
-
-  bool
-  describe_final_event (pretty_printer &pp,
-			const evdesc::final_event &) final override
-  {
-    pp_printf (&pp,
-	       "shift by negative amount here (%qE)",
-	       m_count_cst);
-    return true;
-  }
-
-private:
-  const gassign *m_assign;
-  tree m_count_cst;
-};
-
-/* A subclass of pending_diagnostic for complaining about shifts
-   by counts >= the width of the operand type.  */
-
-class shift_count_overflow_diagnostic
-: public pending_diagnostic_subclass<shift_count_overflow_diagnostic>
-{
-public:
-  shift_count_overflow_diagnostic (const gassign *assign,
-				   int operand_precision,
-				   tree count_cst)
-  : m_assign (assign), m_operand_precision (operand_precision),
-    m_count_cst (count_cst)
-  {}
-
-  const char *get_kind () const final override
-  {
-    return "shift_count_overflow_diagnostic";
-  }
-
-  bool operator== (const shift_count_overflow_diagnostic &other) const
-  {
-    return (m_assign == other.m_assign
-	    && m_operand_precision == other.m_operand_precision
-	    && same_tree_p (m_count_cst, other.m_count_cst));
-  }
-
-  int get_controlling_option () const final override
-  {
-    return OPT_Wanalyzer_shift_count_overflow;
-  }
-
-  bool emit (diagnostic_emission_context &ctxt) final override
-  {
-    return ctxt.warn ("shift by count (%qE) >= precision of type (%qi)",
-		      m_count_cst, m_operand_precision);
-  }
-
-  bool
-  describe_final_event (pretty_printer &pp,
-			const evdesc::final_event &) final override
-  {
-    pp_printf (&pp,
-	       "shift by count %qE here",
-	       m_count_cst);
-    return true;
-  }
-
-private:
-  const gassign *m_assign;
-  int m_operand_precision;
-  tree m_count_cst;
-};
-
 /* A subclass of pending_diagnostic for complaining about pointer
    subtractions involving unrelated buffers.  */
 
@@ -1139,6 +856,225 @@ private:
   const region *m_base_reg_b;
 };
 
+/* Locate the parameter with the given index within FNDECL.
+   ARGNUM is zero based, -1 indicates the `this' argument of a method.
+   Return the location of the FNDECL itself if there are problems.  */
+
+bool
+callsite_expr::maybe_get_param_location (tree fndecl,
+					 location_t *out_loc) const
+{
+  gcc_assert (fndecl);
+
+  if (DECL_ARTIFICIAL (fndecl))
+    return false;
+
+  tree param = get_param_tree (fndecl);
+  if (!param)
+    return false;
+
+  *out_loc = DECL_SOURCE_LOCATION (param);
+  return true;
+}
+
+/* If this callsite_expr refers to a parameter, get the PARM_DECL from
+   FNDECL.
+   Return NULL_TREE on any problems.  */
+
+tree
+callsite_expr::get_param_tree (tree fndecl) const
+{
+  if (!param_p ())
+    return NULL_TREE;
+
+  int i;
+  tree param;
+
+  /* Locate param by index within DECL_ARGUMENTS (fndecl).  */
+  for (i = 1, param = DECL_ARGUMENTS (fndecl);
+       i < param_num () && param;
+       i++, param = TREE_CHAIN (param))
+    ;
+
+  return param;
+}
+
+class div_by_zero_diagnostic
+: public pending_diagnostic_subclass<div_by_zero_diagnostic>
+{
+public:
+  div_by_zero_diagnostic (const gassign *assign,
+			  const region *divisor_reg)
+  : m_assign (assign),
+    m_divisor_reg (divisor_reg)
+  {}
+
+  const char *get_kind () const final override
+  {
+    return "div_by_zero_diagnostic";
+  }
+
+  bool operator== (const div_by_zero_diagnostic &other) const
+  {
+    return m_assign == other.m_assign;
+  }
+
+  int get_controlling_option () const final override
+  {
+    return OPT_Wanalyzer_div_by_zero;
+  }
+
+  bool emit (diagnostic_emission_context &ctxt) final override
+  {
+    return ctxt.warn ("division by zero");
+  }
+
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
+  {
+    pp_printf (&pp, "division by zero");
+    return true;
+  }
+
+  void
+  mark_interesting_stuff (interesting_t *interest)
+  {
+    interest->add_read_region (m_divisor_reg, "divisor zero value");
+  }
+
+  void
+  add_function_entry_event (const exploded_edge &eedge,
+			    checker_path *emission_path,
+			    const state_transition_at_call *state_trans)
+  {
+    class custom_function_entry_event : public function_entry_event
+    {
+    public:
+      custom_function_entry_event (const event_loc_info &loc_info,
+				   const program_state &state,
+				   const state_transition_at_call *state_trans)
+      : function_entry_event (loc_info,
+			      state,
+			      state_trans)
+      {
+      }
+
+      void print_desc (pretty_printer &pp) const override
+      {
+	if (auto state_trans = get_state_transition_at_call ())
+	  {
+	    auto expr = state_trans->get_callsite_expr ();
+	    if (tree parm = expr.get_param_tree (m_effective_fndecl))
+	      {
+		auto src_event_id = state_trans->get_src_event_id ();
+		if (src_event_id.known_p ())
+		  pp_printf (&pp, "entry to %qE with zero from %@ for %qE",
+			     m_effective_fndecl,
+			     &src_event_id,
+			     parm);
+		else
+		  pp_printf (&pp, "entry to %qE with zero for %qE",
+			     m_effective_fndecl, parm);
+		return;
+	      }
+	  }
+	return function_entry_event::print_desc (pp);
+      }
+    };
+
+    const exploded_node *dst_node = eedge.m_dest;
+    const program_point &dst_point = dst_node->get_point ();
+    const program_state &dst_state = dst_node->get_state ();
+    auto loc_info {event_loc_info_for_function_entry (dst_point, state_trans)};
+    emission_path->add_event
+      (std::make_unique<custom_function_entry_event> (loc_info,
+						      dst_state,
+						      state_trans));
+  }
+
+  bool
+  describe_origin_of_state (pretty_printer &pp,
+			    const evdesc::origin_of_state &) final override
+  {
+    pp_printf (&pp, "zero value originates here");
+    return true;
+  }
+
+  bool
+  describe_call_with_state (pretty_printer &pp,
+			    const evdesc::call_with_state &evd) final override
+  {
+    if (evd.m_state_trans)
+      {
+	callsite_expr expr = evd.m_state_trans->get_callsite_expr ();
+	if (expr.param_p ())
+	  {
+	    if (evd.m_src_event_id.known_p ())
+	      pp_printf (&pp, "passing zero from %@ from %qE to %qE via parameter %i",
+			 &evd.m_src_event_id,
+			 evd.m_caller_fndecl,
+			 evd.m_callee_fndecl,
+			 expr.param_num ());
+	    else
+	      pp_printf (&pp, "passing zero from %qE to %qE via parameter %i",
+			 evd.m_caller_fndecl,
+			 evd.m_callee_fndecl,
+			 expr.param_num ());
+	    return true;
+	  }
+      }
+
+    return false;
+  }
+
+  bool
+  describe_return_of_state (pretty_printer &pp,
+			    const evdesc::return_of_state &evd) final override
+  {
+    if (evd.m_src_event_id.known_p ())
+      pp_printf (&pp, "returning zero from %@ from %qE here",
+		 &evd.m_src_event_id,
+		 evd.m_callee_fndecl);
+    else
+      pp_printf (&pp, "returning zero from %qE here",
+	       evd.m_callee_fndecl);
+    return true;
+  }
+
+  bool
+  describe_copy_of_state (pretty_printer &pp,
+			  const evdesc::copy_of_state &evd) final override
+  {
+    if (evd.m_src_event_id.known_p ())
+      pp_printf (&pp, "copying zero value from %@ from %qE to %qE",
+		 &evd.m_src_event_id,
+		 evd.m_src_reg_expr, evd.m_dst_reg_expr);
+    else
+      pp_printf (&pp, "copying zero value from %qE to %qE",
+		 evd.m_src_reg_expr, evd.m_dst_reg_expr);
+    return true;
+  }
+
+  bool
+  describe_use_of_state (pretty_printer &pp,
+			 const evdesc::use_of_state &evd) final override
+  {
+    if (evd.m_src_event_id.known_p ())
+      pp_printf (&pp, "using zero value from %@ from %qE",
+		 &evd.m_src_event_id,
+		 evd.m_src_reg_expr);
+    else
+      pp_printf (&pp, "using zero value from %qE",
+		 evd.m_src_reg_expr);
+    return true;
+  }
+
+private:
+  const gassign *m_assign;
+  const region *m_divisor_reg;
+};
+
 /* Check the pointer subtraction SVAL_A - SVAL_B at ASSIGN and add
    a warning to CTXT if they're not within the same base region.  */
 
@@ -1173,7 +1109,7 @@ check_for_invalid_ptrdiff (const gassign *assign,
 /* If ASSIGN is a stmt that can be modelled via
      set_value (lhs_reg, SVALUE, CTXT)
    for some SVALUE, get the SVALUE.
-   Otherwise return NULL.  */
+   Otherwise return nullptr.  */
 
 const svalue *
 region_model::get_gassign_result (const gassign *assign,
@@ -1196,7 +1132,7 @@ region_model::get_gassign_result (const gassign *assign,
   switch (op)
     {
     default:
-      return NULL;
+      return nullptr;
 
     case POINTER_PLUS_EXPR:
       {
@@ -1345,17 +1281,54 @@ region_model::get_gassign_result (const gassign *assign,
 		  && INTEGRAL_TYPE_P (TREE_TYPE (rhs1)))
 		{
 		  if (tree_int_cst_sgn (rhs2_cst) < 0)
-		    ctxt->warn
-		      (std::make_unique<shift_count_negative_diagnostic>
-			 (assign, rhs2_cst));
+		    {
+		      const region *rhs2_reg
+			= get_lvalue (gimple_assign_rhs2 (assign), nullptr);
+		      ctxt->warn
+			(make_shift_count_negative_diagnostic (assign,
+							       rhs2_cst,
+							       rhs2_reg));
+		    }
 		  else if (compare_tree_int (rhs2_cst,
 					     TYPE_PRECISION (TREE_TYPE (rhs1)))
 			   >= 0)
-		    ctxt->warn
-		      (std::make_unique<shift_count_overflow_diagnostic>
-			 (assign,
-			  int (TYPE_PRECISION (TREE_TYPE (rhs1))),
-			  rhs2_cst));
+		    {
+		      const region *rhs2_reg
+			= get_lvalue (gimple_assign_rhs2 (assign), nullptr);
+		      ctxt->warn (make_shift_count_overflow_diagnostic
+				  (assign,
+				   int (TYPE_PRECISION (TREE_TYPE (rhs1))),
+				   rhs2_cst,
+				   rhs2_reg));
+		    }
+		}
+	  }
+
+	if (op == TRUNC_DIV_EXPR
+	    || op == CEIL_DIV_EXPR
+	    || op == FLOOR_DIV_EXPR
+	    || op == ROUND_DIV_EXPR
+	    || op == TRUNC_MOD_EXPR
+	    || op == CEIL_MOD_EXPR
+	    || op == FLOOR_MOD_EXPR
+	    || op == ROUND_MOD_EXPR
+	    || op == RDIV_EXPR
+	    || op == EXACT_DIV_EXPR)
+	  {
+	    value_range rhs_vr;
+	    if (rhs2_sval->maybe_get_value_range (rhs_vr))
+	      if (rhs_vr.zero_p ())
+		{
+		  if (ctxt)
+		    {
+		      const region *rhs2_reg
+			= get_lvalue (gimple_assign_rhs2 (assign), nullptr);
+		      ctxt->warn
+			(std::make_unique<div_by_zero_diagnostic> (assign,
+								   rhs2_reg));
+		      ctxt->terminate_path ();
+		    }
+		  return nullptr;
 		}
 	  }
 
@@ -1461,8 +1434,8 @@ within_short_circuited_stmt_p (const region_model *model,
      that implies that the value of the second arg doesn't matter, i.e.
      1 for bitwise or, 0 for bitwise and.  */
   tree other_arg = gimple_assign_rhs1 (use_assign);
-  /* Use a NULL ctxt here to avoid generating warnings.  */
-  const svalue *other_arg_sval = model->get_rvalue (other_arg, NULL);
+  /* Use a nullptr ctxt here to avoid generating warnings.  */
+  const svalue *other_arg_sval = model->get_rvalue (other_arg, nullptr);
   tree other_arg_cst = other_arg_sval->maybe_get_constant ();
   if (!other_arg_cst)
     return false;
@@ -1529,7 +1502,7 @@ due_to_ifn_deferred_init_p (const gassign *assign_stmt)
 /* Check for SVAL being poisoned, adding a warning to CTXT.
    Return SVAL, or, if a warning is added, another value, to avoid
    repeatedly complaining about the same poisoned value in followup code.
-   SRC_REGION is a hint about where SVAL came from, and can be NULL.  */
+   SRC_REGION is a hint about where SVAL came from, and can be nullptr.  */
 
 const svalue *
 region_model::check_for_poison (const svalue *sval,
@@ -1572,7 +1545,7 @@ region_model::check_for_poison (const svalue *sval,
 	 the tree other than via the def stmts, using
 	 fixup_tree_for_diagnostic.  */
       tree diag_arg = fixup_tree_for_diagnostic (expr);
-      if (src_region == NULL && pkind == poison_kind::uninit)
+      if (src_region == nullptr && pkind == poison_kind::uninit)
 	src_region = get_region_for_poisoned_expr (expr);
 
       /* Can we reliably get the poisoned value from "expr"?
@@ -1581,16 +1554,15 @@ region_model::check_for_poison (const svalue *sval,
 	 Hence we only query its value now, and only use it if we get the
 	 poisoned value back again.  */
       tree check_expr = expr;
-      const svalue *foo_sval = get_rvalue (expr, NULL);
+      const svalue *foo_sval = get_rvalue (expr, nullptr);
       if (foo_sval == sval)
 	check_expr = expr;
       else
-	check_expr = NULL;
-      if (ctxt->warn
-	    (std::make_unique<poisoned_value_diagnostic> (diag_arg,
-							  pkind,
-							  src_region,
-							  check_expr)))
+	check_expr = nullptr;
+      if (ctxt->warn (make_poisoned_value_diagnostic (diag_arg,
+						      pkind,
+						      src_region,
+						      check_expr)))
 	{
 	  /* We only want to report use of a poisoned value at the first
 	     place it gets used; return an unknown value to avoid generating
@@ -1606,7 +1578,7 @@ region_model::check_for_poison (const svalue *sval,
 
 /* Attempt to get a region for describing EXPR, the source of region of
    a poisoned_svalue for use in a poisoned_value_diagnostic.
-   Return NULL if there is no good region to use.  */
+   Return nullptr if there is no good region to use.  */
 
 const region *
 region_model::get_region_for_poisoned_expr (tree expr) const
@@ -1617,9 +1589,9 @@ region_model::get_region_for_poisoned_expr (tree expr) const
       if (decl && DECL_P (decl))
 	expr = decl;
       else
-	return NULL;
+	return nullptr;
     }
-  return get_lvalue (expr, NULL);
+  return get_lvalue (expr, nullptr);
 }
 
 /* Update this model for the ASSIGN stmt, using CTXT to report any
@@ -1648,7 +1620,7 @@ region_model::on_assignment (const gassign *assign, region_model_context *ctxt)
   if (const svalue *sval = get_gassign_result (assign, ctxt))
     {
       tree expr = get_diagnostic_tree_for_gassign (assign);
-      check_for_poison (sval, expr, NULL, ctxt);
+      check_for_poison (sval, expr, nullptr, ctxt);
       set_value (lhs_reg, sval, ctxt);
       return;
     }
@@ -1708,7 +1680,8 @@ region_model::on_assignment (const gassign *assign, region_model_context *ctxt)
 	/* e.g. "struct s2 x = {{'A', 'B', 'C', 'D'}};".  */
 	const svalue *rhs_sval = get_rvalue (rhs1, ctxt);
 	m_store.set_value (m_mgr->get_store_manager(), lhs_reg, rhs_sval,
-			   ctxt ? ctxt->get_uncertainty () : NULL);
+			   ctxt ? ctxt->get_uncertainty () : nullptr,
+			   *this);
       }
       break;
     }
@@ -1914,6 +1887,24 @@ region_model::update_for_zero_return (const call_details &cd,
   update_for_int_cst_return (cd, 0, unmergeable);
 }
 
+/* Update this model for an outcome of a call that returns a NULL
+   pointer.
+   If UNMERGEABLE, then make the result unmergeable, e.g. to prevent
+   the state-merger code from merging success and failure outcomes.  */
+
+void
+region_model::update_for_null_return (const call_details &cd, bool unmergeable)
+{
+  if (!cd.get_lhs_type ())
+    return;
+  if (!POINTER_TYPE_P (cd.get_lhs_type ()))
+    return;
+  const svalue *result = m_mgr->get_or_create_null_ptr (cd.get_lhs_type ());
+  if (unmergeable)
+    result = m_mgr->get_or_create_unmergeable (result);
+  set_value (cd.get_lhs_region (), result, cd.get_ctxt ());
+}
+
 /* Update this model for an outcome of a call that returns non-zero.
    Specifically, assign an svalue to the LHS, and add a constraint that
    that svalue is non-zero.  */
@@ -1939,7 +1930,7 @@ region_model::update_for_nonzero_return (const call_details &cd)
    to set an upper bound on the size of a copy_to_user.
    Attempt to simplify such sizes by trying to get the upper bound as a
    constant.
-   Return the simplified svalue if possible, or NULL otherwise.  */
+   Return the simplified svalue if possible, or nullptr otherwise.  */
 
 static const svalue *
 maybe_simplify_upper_bound (const svalue *num_bytes_sval,
@@ -1957,7 +1948,7 @@ maybe_simplify_upper_bound (const svalue *num_bytes_sval,
 	     when recording the diagnostic, or note that we're using
 	     the upper bound.  */
 	}
-  return NULL;
+  return nullptr;
 }
 
 /* Attempt to get an upper bound for the size of a copy when simulating a
@@ -1968,7 +1959,7 @@ maybe_simplify_upper_bound (const svalue *num_bytes_sval,
    that, use the size of SRC_REG if constant.
 
    Return a symbolic value for an upper limit on the number of bytes
-   copied, or NULL if no such value could be determined.  */
+   copied, or nullptr if no such value could be determined.  */
 
 const svalue *
 region_model::maybe_get_copy_bounds (const region *src_reg,
@@ -1994,7 +1985,7 @@ region_model::maybe_get_copy_bounds (const region *src_reg,
     return num_bytes_sval;
 
   /* Non-constant: give up. */
-  return NULL;
+  return nullptr;
 }
 
 /* Get any known_function for FNDECL for call CD.
@@ -2002,7 +1993,7 @@ region_model::maybe_get_copy_bounds (const region *src_reg,
    The call must match all assumptions made by the known_function (such as
    e.g. "argument 1's type must be a pointer type").
 
-   Return NULL if no known_function is found, or it does not match the
+   Return nullptr if no known_function is found, or it does not match the
    assumption(s).  */
 
 const known_function *
@@ -2012,7 +2003,7 @@ region_model::get_known_function (tree fndecl, const call_details &cd) const
   return known_fn_mgr->get_match (fndecl, cd);
 }
 
-/* Get any known_function for IFN, or NULL.  */
+/* Get any known_function for IFN, or nullptr.  */
 
 const known_function *
 region_model::get_known_function (enum internal_fn ifn) const
@@ -2022,12 +2013,12 @@ region_model::get_known_function (enum internal_fn ifn) const
 }
 
 /* Get any builtin_known_function for CALL and emit any warning to CTXT
-   if not NULL.
+   if not nullptr.
 
    The call must match all assumptions made by the known_function (such as
    e.g. "argument 1's type must be a pointer type").
 
-   Return NULL if no builtin_known_function is found, or it does
+   Return nullptr if no builtin_known_function is found, or it does
    not match the assumption(s).
 
    Internally calls get_known_function to find a known_function and cast it
@@ -2063,18 +2054,18 @@ region_model::get_known_function (enum internal_fn ifn) const
 
 const builtin_known_function *
 region_model::get_builtin_kf (const gcall &call,
-			       region_model_context *ctxt /* = NULL */) const
+			       region_model_context *ctxt /* = nullptr */) const
 {
   region_model *mut_this = const_cast <region_model *> (this);
   tree callee_fndecl = mut_this->get_fndecl_for_call (call, ctxt);
   if (! callee_fndecl)
-    return NULL;
+    return nullptr;
 
   call_details cd (call, mut_this, ctxt);
   if (const known_function *kf = get_known_function (callee_fndecl, cd))
     return kf->dyn_cast_builtin_kf ();
 
-  return NULL;
+  return nullptr;
 }
 
 /* Subclass of custom_edge_info for use by exploded_edges that represent
@@ -2138,7 +2129,9 @@ public:
 
   void
   add_events_to_path (checker_path *emission_path,
-		      const exploded_edge &eedge) const final override
+		      const exploded_edge &eedge,
+		      pending_diagnostic &,
+		      const state_transition *) const final override
   {
     const exploded_node *dst_node = eedge.m_dest;
     const program_point &dst_point = dst_node->get_point ();
@@ -2205,6 +2198,13 @@ can_throw_p (const gcall &call, tree fndecl)
   if (!flag_exceptions)
     return false;
 
+  /* Compatibility flag to allow the user to assume external functions
+     never throw exceptions.  This may be useful when using the analyzer
+     on C code that is compiled with -fexceptions, but for which the headers
+     haven't yet had "nothrow" attributes systematically added.  */
+  if (flag_analyzer_assume_nothrow)
+    return false;
+
   if (gimple_call_nothrow_p (&call))
     return false;
 
@@ -2241,6 +2241,46 @@ region_model::check_for_throw_inside_call (const gcall &call,
   ctxt->bifurcate (std::move (throws_exception));
 }
 
+/* A subclass of pending_diagnostic for complaining about jumps through NULL
+   function pointers.  */
+
+class jump_through_null : public pending_diagnostic_subclass<jump_through_null>
+{
+public:
+  jump_through_null (const gcall &call)
+  : m_call (call)
+  {}
+
+  const char *get_kind () const final override
+  {
+    return "jump_through_null";
+  }
+
+  bool operator== (const jump_through_null &other) const
+  {
+    return &m_call == &other.m_call;
+  }
+
+  int get_controlling_option () const final override
+  {
+    return OPT_Wanalyzer_jump_through_null;
+  }
+
+  bool emit (diagnostic_emission_context &ctxt) final override
+  {
+    return ctxt.warn ("jump through null pointer");
+  }
+
+  bool describe_final_event (pretty_printer &pp,
+			     const evdesc::final_event &) final override
+  {
+    pp_string (&pp, "jump through null pointer here");
+    return true;
+  }
+
+private:
+  const gcall &m_call;
+};
 /* Update this model for the CALL stmt, using CTXT to report any
    diagnostics - the first half.
 
@@ -2286,6 +2326,20 @@ region_model::on_call_pre (const gcall &call, region_model_context *ctxt)
 
   if (!callee_fndecl)
     {
+      /* Check for jump through nullptr.  */
+      if (ctxt)
+	if (tree fn_ptr = gimple_call_fn (&call))
+	  {
+	    const svalue *fn_ptr_sval = get_rvalue (fn_ptr, ctxt);
+	    if (fn_ptr_sval->all_zeroes_p ())
+	      {
+		ctxt->warn
+		  (std::make_unique<jump_through_null> (call));
+		ctxt->terminate_path ();
+		return true;
+	      }
+	  }
+
       check_for_throw_inside_call (call, NULL_TREE, ctxt);
       cd.set_any_lhs_with_defaults ();
       return true; /* Unknown side effects.  */
@@ -2568,7 +2622,7 @@ check_one_function_attr_null_terminated_string_arg (const gcall &call,
 }
 
 /* Check CALL a call to external function CALLEE_FNDECL for any uses
-   of __attribute__ ((null_terminated_string_arg)), compaining
+   of __attribute__ ((null_terminated_string_arg)), complaining
    to CTXT about any issues.
 
    Use RDWR_IDX for tracking uses of __attribute__ ((access, ....).  */
@@ -2677,7 +2731,7 @@ region_model::handle_unrecognized_call (const gcall &call,
       }
   }
 
-  uncertainty_t *uncertainty = ctxt ? ctxt->get_uncertainty () : NULL;
+  uncertainty_t *uncertainty = ctxt ? ctxt->get_uncertainty () : nullptr;
 
   /* Purge sm-state for the svalues that were reachable,
      both in non-mutable and mutable form.  */
@@ -2786,125 +2840,6 @@ region_model::on_return (const greturn *return_stmt, region_model_context *ctxt)
       const region *ret_reg = get_lvalue (lhs, ctxt);
       set_value (ret_reg, sval, ctxt);
     }
-}
-
-/* Update this model for a call and return of setjmp/sigsetjmp at CALL within
-   ENODE, using CTXT to report any diagnostics.
-
-   This is for the initial direct invocation of setjmp/sigsetjmp (which returns
-   0), as opposed to any second return due to longjmp/sigsetjmp.  */
-
-void
-region_model::on_setjmp (const gcall &call, const exploded_node *enode,
-			 region_model_context *ctxt)
-{
-  const svalue *buf_ptr = get_rvalue (gimple_call_arg (&call, 0), ctxt);
-  const region *buf_reg = deref_rvalue (buf_ptr, gimple_call_arg (&call, 0),
-					 ctxt);
-
-  /* Create a setjmp_svalue for this call and store it in BUF_REG's
-     region.  */
-  if (buf_reg)
-    {
-      setjmp_record r (enode, call);
-      const svalue *sval
-	= m_mgr->get_or_create_setjmp_svalue (r, buf_reg->get_type ());
-      set_value (buf_reg, sval, ctxt);
-    }
-
-  /* Direct calls to setjmp return 0.  */
-  if (tree lhs = gimple_call_lhs (&call))
-    {
-      const svalue *new_sval
-	= m_mgr->get_or_create_int_cst (TREE_TYPE (lhs), 0);
-      const region *lhs_reg = get_lvalue (lhs, ctxt);
-      set_value (lhs_reg, new_sval, ctxt);
-    }
-}
-
-/* Update this region_model for rewinding from a "longjmp" at LONGJMP_CALL
-   to a "setjmp" at SETJMP_CALL where the final stack depth should be
-   SETJMP_STACK_DEPTH.  Pop any stack frames.  Leak detection is *not*
-   done, and should be done by the caller.  */
-
-void
-region_model::on_longjmp (const gcall &longjmp_call, const gcall &setjmp_call,
-			   int setjmp_stack_depth, region_model_context *ctxt)
-{
-  /* Evaluate the val, using the frame of the "longjmp".  */
-  tree fake_retval = gimple_call_arg (&longjmp_call, 1);
-  const svalue *fake_retval_sval = get_rvalue (fake_retval, ctxt);
-
-  /* Pop any frames until we reach the stack depth of the function where
-     setjmp was called.  */
-  gcc_assert (get_stack_depth () >= setjmp_stack_depth);
-  while (get_stack_depth () > setjmp_stack_depth)
-    pop_frame (NULL, NULL, ctxt, nullptr, false);
-
-  gcc_assert (get_stack_depth () == setjmp_stack_depth);
-
-  /* Assign to LHS of "setjmp" in new_state.  */
-  if (tree lhs = gimple_call_lhs (&setjmp_call))
-    {
-      /* Passing 0 as the val to longjmp leads to setjmp returning 1.  */
-      const svalue *zero_sval
-	= m_mgr->get_or_create_int_cst (TREE_TYPE (fake_retval), 0);
-      tristate eq_zero = eval_condition (fake_retval_sval, EQ_EXPR, zero_sval);
-      /* If we have 0, use 1.  */
-      if (eq_zero.is_true ())
-	{
-	  const svalue *one_sval
-	    = m_mgr->get_or_create_int_cst (TREE_TYPE (fake_retval), 1);
-	  fake_retval_sval = one_sval;
-	}
-      else
-	{
-	  /* Otherwise note that the value is nonzero.  */
-	  m_constraints->add_constraint (fake_retval_sval, NE_EXPR, zero_sval);
-	}
-
-      /* Decorate the return value from setjmp as being unmergeable,
-	 so that we don't attempt to merge states with it as zero
-	 with states in which it's nonzero, leading to a clean distinction
-	 in the exploded_graph betweeen the first return and the second
-	 return.  */
-      fake_retval_sval = m_mgr->get_or_create_unmergeable (fake_retval_sval);
-
-      const region *lhs_reg = get_lvalue (lhs, ctxt);
-      set_value (lhs_reg, fake_retval_sval, ctxt);
-    }
-}
-
-/* Update this region_model for a phi stmt of the form
-     LHS = PHI <...RHS...>.
-   where RHS is for the appropriate edge.
-   Get state from OLD_STATE so that all of the phi stmts for a basic block
-   are effectively handled simultaneously.  */
-
-void
-region_model::handle_phi (const gphi *phi,
-			  tree lhs, tree rhs,
-			  const region_model &old_state,
-			  hash_set<const svalue *> &svals_changing_meaning,
-			  region_model_context *ctxt)
-{
-  /* For now, don't bother tracking the .MEM SSA names.  */
-  if (tree var = SSA_NAME_VAR (lhs))
-    if (TREE_CODE (var) == VAR_DECL)
-      if (VAR_DECL_IS_VIRTUAL_OPERAND (var))
-	return;
-
-  const svalue *src_sval = old_state.get_rvalue (rhs, ctxt);
-  const region *dst_reg = old_state.get_lvalue (lhs, ctxt);
-
-  const svalue *sval = old_state.get_rvalue (lhs, nullptr);
-  if (sval->get_kind () == SK_WIDENING)
-    svals_changing_meaning.add (sval);
-
-  set_value (dst_reg, src_sval, ctxt);
-
-  if (ctxt)
-    ctxt->on_phi (phi, rhs);
 }
 
 /* Implementation of region_model::get_lvalue; the latter adds type-checking.
@@ -3040,7 +2975,7 @@ const region *
 region_model::get_lvalue (path_var pv, region_model_context *ctxt) const
 {
   if (pv.m_tree == NULL_TREE)
-    return NULL;
+    return nullptr;
 
   const region *result_reg = get_lvalue_1 (pv, ctxt);
   assert_compat_types (result_reg->get_type (), TREE_TYPE (pv.m_tree));
@@ -3185,13 +3120,13 @@ const svalue *
 region_model::get_rvalue (path_var pv, region_model_context *ctxt) const
 {
   if (pv.m_tree == NULL_TREE)
-    return NULL;
+    return nullptr;
 
   const svalue *result_sval = get_rvalue_1 (pv, ctxt);
 
   assert_compat_types (result_sval->get_type (), TREE_TYPE (pv.m_tree));
 
-  result_sval = check_for_poison (result_sval, pv.m_tree, NULL, ctxt);
+  result_sval = check_for_poison (result_sval, pv.m_tree, nullptr, ctxt);
 
   return result_sval;
 }
@@ -3392,7 +3327,7 @@ region_model::deref_rvalue (const svalue *ptr_sval, tree ptr_tree,
 	  {
 	  case POINTER_PLUS_EXPR:
 	    {
-	      /* If we have a symbolic value expressing pointer arithmentic,
+	      /* If we have a symbolic value expressing pointer arithmetic,
 		 try to convert it to a suitable region.  */
 	      const region *parent_region
 		= deref_rvalue (binop_sval->get_arg0 (), NULL_TREE, ctxt);
@@ -3421,7 +3356,7 @@ region_model::deref_rvalue (const svalue *ptr_sval, tree ptr_tree,
 		const poisoned_svalue *poisoned_sval
 		  = as_a <const poisoned_svalue *> (ptr_sval);
 		enum poison_kind pkind = poisoned_sval->get_poison_kind ();
-		ctxt->warn (std::make_unique<poisoned_value_diagnostic>
+		ctxt->warn (make_poisoned_value_diagnostic
 			      (ptr, pkind, nullptr, nullptr));
 	      }
 	  }
@@ -3448,138 +3383,13 @@ region_model::get_rvalue_for_bits (tree type,
   return m_mgr->get_or_create_bits_within (type, bits, sval);
 }
 
-/* A subclass of pending_diagnostic for complaining about writes to
-   constant regions of memory.  */
-
-class write_to_const_diagnostic
-: public pending_diagnostic_subclass<write_to_const_diagnostic>
-{
-public:
-  write_to_const_diagnostic (const region *reg, tree decl)
-  : m_reg (reg), m_decl (decl)
-  {}
-
-  const char *get_kind () const final override
-  {
-    return "write_to_const_diagnostic";
-  }
-
-  bool operator== (const write_to_const_diagnostic &other) const
-  {
-    return (m_reg == other.m_reg
-	    && m_decl == other.m_decl);
-  }
-
-  int get_controlling_option () const final override
-  {
-    return OPT_Wanalyzer_write_to_const;
-  }
-
-  bool emit (diagnostic_emission_context &ctxt) final override
-  {
-    auto_diagnostic_group d;
-    bool warned;
-    switch (m_reg->get_kind ())
-      {
-      default:
-	warned = ctxt.warn ("write to %<const%> object %qE", m_decl);
-	break;
-      case RK_FUNCTION:
-	warned = ctxt.warn ("write to function %qE", m_decl);
-	break;
-      case RK_LABEL:
-	warned = ctxt.warn ("write to label %qE", m_decl);
-	break;
-      }
-    if (warned)
-      inform (DECL_SOURCE_LOCATION (m_decl), "declared here");
-    return warned;
-  }
-
-  bool
-  describe_final_event (pretty_printer &pp,
-			const evdesc::final_event &) final override
-  {
-    switch (m_reg->get_kind ())
-      {
-      default:
-	{
-	  pp_printf (&pp,
-		     "write to %<const%> object %qE here", m_decl);
-	  return true;
-	}
-      case RK_FUNCTION:
-	{
-	  pp_printf (&pp,
-		     "write to function %qE here", m_decl);
-	  return true;
-	}
-      case RK_LABEL:
-	{
-	  pp_printf (&pp,
-		     "write to label %qE here", m_decl);
-	  return true;
-	}
-      }
-  }
-
-private:
-  const region *m_reg;
-  tree m_decl;
-};
-
-/* A subclass of pending_diagnostic for complaining about writes to
-   string literals.  */
-
-class write_to_string_literal_diagnostic
-: public pending_diagnostic_subclass<write_to_string_literal_diagnostic>
-{
-public:
-  write_to_string_literal_diagnostic (const region *reg)
-  : m_reg (reg)
-  {}
-
-  const char *get_kind () const final override
-  {
-    return "write_to_string_literal_diagnostic";
-  }
-
-  bool operator== (const write_to_string_literal_diagnostic &other) const
-  {
-    return m_reg == other.m_reg;
-  }
-
-  int get_controlling_option () const final override
-  {
-    return OPT_Wanalyzer_write_to_string_literal;
-  }
-
-  bool emit (diagnostic_emission_context &ctxt) final override
-  {
-    return ctxt.warn ("write to string literal");
-    /* Ideally we would show the location of the STRING_CST as well,
-       but it is not available at this point.  */
-  }
-
-  bool
-  describe_final_event (pretty_printer &pp,
-			const evdesc::final_event &) final override
-  {
-    pp_string (&pp, "write to string literal here");
-    return true;
-  }
-
-private:
-  const region *m_reg;
-};
-
 /* Use CTXT to warn If DEST_REG is a region that shouldn't be written to.  */
 
 void
 region_model::check_for_writable_region (const region* dest_reg,
 					 region_model_context *ctxt) const
 {
-  /* Fail gracefully if CTXT is NULL.  */
+  /* Fail gracefully if CTXT is nullptr.  */
   if (!ctxt)
     return;
 
@@ -3592,18 +3402,14 @@ region_model::check_for_writable_region (const region* dest_reg,
       {
 	const function_region *func_reg = as_a <const function_region *> (base_reg);
 	tree fndecl = func_reg->get_fndecl ();
-	ctxt->warn
-	  (std::make_unique<write_to_const_diagnostic>
-	     (func_reg, fndecl));
+	ctxt->warn (make_write_to_const_diagnostic (func_reg, fndecl));
       }
       break;
     case RK_LABEL:
       {
 	const label_region *label_reg = as_a <const label_region *> (base_reg);
 	tree label = label_reg->get_label ();
-	ctxt->warn
-	  (std::make_unique<write_to_const_diagnostic>
-	     (label_reg, label));
+	ctxt->warn (make_write_to_const_diagnostic (label_reg, label));
       }
       break;
     case RK_DECL:
@@ -3616,13 +3422,11 @@ region_model::check_for_writable_region (const region* dest_reg,
 	   "this" param is "T* const").  */
 	if (TREE_READONLY (decl)
 	    && is_global_var (decl))
-	  ctxt->warn
-	    (std::make_unique<write_to_const_diagnostic> (dest_reg, decl));
+	  ctxt->warn (make_write_to_const_diagnostic (dest_reg, decl));
       }
       break;
     case RK_STRING:
-      ctxt->warn
-	(std::make_unique<write_to_string_literal_diagnostic> (dest_reg));
+      ctxt->warn (make_write_to_string_literal_diagnostic (dest_reg));
       break;
     }
 }
@@ -3644,13 +3448,13 @@ region_model::get_capacity (const region *reg) const
 	  {
 	    tree type = TREE_TYPE (decl);
 	    tree size = TYPE_SIZE (type);
-	    return get_rvalue (size, NULL);
+	    return get_rvalue (size, nullptr);
 	  }
 	else
 	  {
 	    tree size = decl_init_size (decl, false);
 	    if (size)
-	      return get_rvalue (size, NULL);
+	      return get_rvalue (size, nullptr);
 	  }
       }
       break;
@@ -3727,7 +3531,7 @@ bool
 region_model::check_region_for_read (const region *src_reg,
 				     region_model_context *ctxt) const
 {
-  return check_region_access (src_reg, access_direction::read, NULL, ctxt);
+  return check_region_access (src_reg, access_direction::read, nullptr, ctxt);
 }
 
 /* Concrete subclass for casts of pointers that lead to trailing bytes.  */
@@ -3835,10 +3639,11 @@ public:
     interest->add_region_creation (m_rhs);
   }
 
-  void maybe_add_sarif_properties (sarif_object &result_obj)
+  void
+  maybe_add_sarif_properties (diagnostics::sarif_object &result_obj)
     const final override
   {
-    sarif_property_bag &props = result_obj.get_or_create_properties ();
+    auto &props = result_obj.get_or_create_properties ();
 #define PROPERTY_PREFIX "gcc/analyzer/dubious_allocation_size/"
     props.set (PROPERTY_PREFIX "lhs", m_lhs->to_json ());
     props.set (PROPERTY_PREFIX "rhs", m_rhs->to_json ());
@@ -4115,7 +3920,7 @@ void
 region_model::check_region_size (const region *lhs_reg, const svalue *rhs_sval,
 				 region_model_context *ctxt) const
 {
-  if (!ctxt || ctxt->get_stmt () == NULL)
+  if (!ctxt || ctxt->get_stmt () == nullptr)
     return;
   /* Only report warnings on assignments that actually change the type.  */
   if (!is_any_cast_p (ctxt->get_stmt ()))
@@ -4208,7 +4013,8 @@ region_model::set_value (const region *lhs_reg, const svalue *rhs_sval,
   check_region_for_write (lhs_reg, rhs_sval, ctxt);
 
   m_store.set_value (m_mgr->get_store_manager(), lhs_reg, rhs_sval,
-		     ctxt ? ctxt->get_uncertainty () : NULL);
+		     ctxt ? ctxt->get_uncertainty () : nullptr,
+		     *this);
 }
 
 /* Set the value of the region given by LHS to the value given by RHS.  */
@@ -4491,21 +4297,17 @@ public:
   {
     if (!cluster)
       return;
-    for (auto iter : *cluster)
+    for (auto iter : cluster->get_map ().get_concrete_bindings ())
       {
-	const binding_key *key = iter.first;
+	const bit_range &bits = iter.first;
 	const svalue *sval = iter.second;
 
-	if (const concrete_binding *concrete_key
-	    = key->dyn_cast_concrete_binding ())
-	  {
-	    byte_range fragment_bytes (0, 0);
-	    if (concrete_key->get_byte_range (&fragment_bytes))
-	      m_fragments.safe_push (fragment (fragment_bytes, sval));
-	  }
-	else
-	  m_symbolic_bindings.safe_push (key);
+	byte_range fragment_bytes (0, 0);
+	if (bits.as_byte_range (&fragment_bytes))
+	  m_fragments.safe_push (fragment (fragment_bytes, sval));
       }
+    for (auto iter : cluster->get_map ().get_symbolic_bindings ())
+      m_symbolic_bindings.safe_push (iter);
     m_fragments.qsort (fragment::cmp_ptrs);
   }
 
@@ -4544,14 +4346,14 @@ public:
       {
 	if (&iter != m_symbolic_bindings.begin ())
 	  pp_string (pp, ", ");
-	(*iter).dump_to_pp (pp, true);
+	iter.m_region->dump_to_pp (pp, true);
       }
     pp_string (pp, "])");
   }
 
 private:
   auto_vec<fragment> m_fragments;
-  auto_vec<const binding_key *> m_symbolic_bindings;
+  auto_vec<binding_map::symbolic_binding> m_symbolic_bindings;
 };
 
 /* Simulate reading the bytes at BYTES from BASE_REG.
@@ -4638,7 +4440,6 @@ region_model::scan_for_null_terminator_1 (const region *reg,
 					  region_model_context *ctxt) const
 {
   logger *logger = ctxt ? ctxt->get_logger () : nullptr;
-  store_manager *store_mgr = m_mgr->get_store_manager ();
 
   region_offset offset = reg->get_offset (m_mgr);
   if (offset.symbolic_p ())
@@ -4666,24 +4467,31 @@ region_model::scan_for_null_terminator_1 (const region *reg,
   if (const string_region *str_reg = base_reg->dyn_cast_string_region ())
     {
       tree string_cst = str_reg->get_string_cst ();
-      if (const void *p = memchr (TREE_STRING_POINTER (string_cst),
-				  0,
-				  TREE_STRING_LENGTH (string_cst)))
+      if (src_byte_offset >= 0
+	  && src_byte_offset < TREE_STRING_LENGTH (string_cst)
+	  && wi::fits_shwi_p (src_byte_offset))
 	{
-	  size_t num_bytes_read
-	    = (const char *)p - TREE_STRING_POINTER (string_cst) + 1;
-	  /* Simulate the read.  */
-	  byte_range bytes_to_read (0, num_bytes_read);
-	  const svalue *sval = get_store_bytes (reg, bytes_to_read, ctxt);
-	  if (out_sval)
-	    *out_sval = sval;
-	  if (logger)
-	    logger->log ("using string_cst");
-	  return m_mgr->get_or_create_int_cst (size_type_node,
-					       num_bytes_read);
+	  HOST_WIDE_INT str_byte_offset = src_byte_offset.to_shwi ();
+	  const char *effective_start
+	    = TREE_STRING_POINTER (string_cst) + str_byte_offset;
+	  size_t effective_len
+	    = TREE_STRING_LENGTH (string_cst) - str_byte_offset;
+	  if (const void *p = memchr (effective_start, 0, effective_len))
+	    {
+	      size_t num_bytes_read
+		= (const char *)p - effective_start + 1;
+	      /* Simulate the read.  */
+	      byte_range bytes_to_read (0, num_bytes_read);
+	      const svalue *sval = get_store_bytes (reg, bytes_to_read, ctxt);
+	      if (out_sval)
+		*out_sval = sval;
+	      if (logger)
+		logger->log ("using string_cst");
+	      return m_mgr->get_or_create_int_cst (size_type_node,
+						   num_bytes_read);
+	    }
 	}
     }
-
   const binding_cluster *cluster = m_store.get_cluster (base_reg);
   iterable_cluster c (cluster);
   if (logger)
@@ -4694,7 +4502,7 @@ region_model::scan_for_null_terminator_1 (const region *reg,
       logger->end_log_line ();
     }
 
-  binding_map result;
+  concrete_binding_map result;
 
   while (1)
     {
@@ -4739,9 +4547,7 @@ region_model::scan_for_null_terminator_1 (const region *reg,
 	  if (out_sval)
 	    {
 	      byte_range bytes_to_write (dst_byte_offset, fragment_bytes_read);
-	      const binding_key *key
-		= store_mgr->get_concrete_binding (bytes_to_write);
-	      result.put (key, sval);
+	      result.insert (bytes_to_write, sval);
 	    }
 
 	  src_byte_offset += fragment_bytes_read;
@@ -4751,7 +4557,7 @@ region_model::scan_for_null_terminator_1 (const region *reg,
 	    {
 	      if (out_sval)
 		*out_sval = m_mgr->get_or_create_compound_svalue (NULL_TREE,
-								  result);
+								  std::move (result));
 	      if (logger)
 		logger->log ("got terminator");
 	      return m_mgr->get_or_create_int_cst (size_type_node,
@@ -4814,7 +4620,11 @@ region_model::scan_for_null_terminator (const region *reg,
       reg->dump_to_pp (pp, true);
       logger->end_log_line ();
     }
+  if (out_sval)
+    *out_sval = nullptr;
   const svalue *sval = scan_for_null_terminator_1 (reg, expr, out_sval, ctxt);
+  if (sval && out_sval)
+    gcc_assert (*out_sval);
   if (logger)
     {
       pretty_printer *pp = logger->get_printer ();
@@ -4845,9 +4655,9 @@ region_model::scan_for_null_terminator (const region *reg,
    Simulate scanning through the buffer, reading until we find a 0 byte
    (equivalent to calling strlen).
 
-   Complain and return NULL if:
+   Complain and return nullptr if:
    - the buffer pointed to isn't null-terminated
-   - the buffer pointed to has any uninitalized bytes before any 0-terminator
+   - the buffer pointed to has any uninitialized bytes before any 0-terminator
    - any of the reads aren't within the bounds of the underlying base region
 
    Otherwise, return a svalue for strlen of the buffer (*not* including
@@ -4873,16 +4683,16 @@ region_model::check_for_null_terminated_string_arg (const call_details &cd,
    Simulate scanning through the buffer, reading until we find a 0 byte
    (equivalent to calling strlen).
 
-   Complain and return NULL if:
+   Complain and return nullptr if:
    - the buffer pointed to isn't null-terminated
-   - the buffer pointed to has any uninitalized bytes before any 0-terminator
+   - the buffer pointed to has any uninitialized bytes before any 0-terminator
    - any of the reads aren't within the bounds of the underlying base region
 
    Otherwise, return a svalue.  This will be the number of bytes read
    (including the null terminator) if INCLUDE_TERMINATOR is true, or strlen
    of the buffer (not including the null terminator) if it is false.
 
-   Also, when returning an svalue, if OUT_SVAL is non-NULL, write to
+   Also, when returning an svalue, if OUT_SVAL is non-nullptr, write to
    *OUT_SVAL with an svalue representing the content of the buffer up to
    and including the terminator.
 
@@ -4998,6 +4808,8 @@ region_model::check_for_null_terminated_string_arg (const call_details &cd,
 				  out_sval,
 				  &my_ctxt))
     {
+      if (out_sval)
+	gcc_assert (*out_sval);
       if (include_terminator)
 	return num_bytes_read_sval;
       else
@@ -5116,7 +4928,8 @@ region_model::mark_region_as_unknown (const region *reg,
   svalue_set maybe_live_values;
   m_store.mark_region_as_unknown (m_mgr->get_store_manager(), reg,
 				  uncertainty, &maybe_live_values);
-  m_store.on_maybe_live_values (maybe_live_values);
+  m_store.on_maybe_live_values (*m_mgr->get_store_manager (),
+				maybe_live_values);
 }
 
 /* Determine what is known about the condition "LHS_SVAL OP RHS_SVAL" within
@@ -5174,7 +4987,8 @@ region_model::eval_condition (const svalue *lhs,
   if (const region_svalue *lhs_ptr = lhs->dyn_cast_region_svalue ())
     if (const region_svalue *rhs_ptr = rhs->dyn_cast_region_svalue ())
       {
-	tristate res = region_svalue::eval_condition (lhs_ptr, op, rhs_ptr);
+	tristate res = region_svalue::eval_condition (lhs_ptr, op, rhs_ptr,
+						      *this);
 	if (res.is_known ())
 	  return res;
 	/* Otherwise, only known through constraints.  */
@@ -5317,6 +5131,30 @@ region_model::eval_condition (const svalue *lhs,
 	  }
 	  break;
 	}
+    }
+
+  /* Try range_op, but avoid cases where we have been sloppy about types.  */
+  if (lhs->get_type ()
+      && rhs->get_type ()
+      && range_compatible_p (lhs->get_type (), rhs->get_type ()))
+    {
+      value_range lhs_vr, rhs_vr;
+      if (lhs->maybe_get_value_range (lhs_vr))
+	if (rhs->maybe_get_value_range (rhs_vr))
+	  {
+	    range_op_handler handler (op);
+	    if (handler)
+	      {
+		int_range_max out;
+		if (handler.fold_range (out, boolean_type_node, lhs_vr, rhs_vr))
+		  {
+		    if (out.zero_p ())
+		      return tristate::TS_FALSE;
+		    if (out.nonzero_p ())
+		      return tristate::TS_TRUE;
+		  }
+	      }
+	  }
     }
 
   /* Attempt to unwrap cast if there is one, and the types match.  */
@@ -5723,7 +5561,12 @@ region_model::add_constraint (tree lhs, enum tree_code op, tree rhs,
 {
   bool sat = add_constraint (lhs, op, rhs, ctxt);
   if (!sat && out)
-    *out = std::make_unique <rejected_op_constraint> (*this, lhs, op, rhs);
+    {
+      const svalue *lhs_sval = get_rvalue (lhs, nullptr);
+      const svalue *rhs_sval = get_rvalue (rhs, nullptr);
+      *out = std::make_unique <rejected_op_constraint> (*this,
+							lhs_sval, op, rhs_sval);
+    }
   return sat;
 }
 
@@ -5845,7 +5688,7 @@ region_model::get_representative_path_var (const svalue *sval,
 					   svalue_set *visited,
 					   logger *logger) const
 {
-  if (sval == NULL)
+  if (sval == nullptr)
     return path_var (NULL_TREE, 0);
 
   LOG_SCOPE (logger);
@@ -6118,130 +5961,6 @@ region_model::get_representative_path_var (const region *reg,
   return result;
 }
 
-/* Update this model for any phis in SNODE, assuming we came from
-   LAST_CFG_SUPEREDGE.  */
-
-void
-region_model::update_for_phis (const supernode *snode,
-			       const cfg_superedge *last_cfg_superedge,
-			       region_model_context *ctxt)
-{
-  gcc_assert (last_cfg_superedge);
-
-  /* Copy this state and pass it to handle_phi so that all of the phi stmts
-     are effectively handled simultaneously.  */
-  const region_model old_state (*this);
-
-  hash_set<const svalue *> svals_changing_meaning;
-
-  for (gphi_iterator gpi = const_cast<supernode *>(snode)->start_phis ();
-       !gsi_end_p (gpi); gsi_next (&gpi))
-    {
-      gphi *phi = gpi.phi ();
-
-      tree src = last_cfg_superedge->get_phi_arg (phi);
-      tree lhs = gimple_phi_result (phi);
-
-      /* Update next_state based on phi and old_state.  */
-      handle_phi (phi, lhs, src, old_state, svals_changing_meaning, ctxt);
-    }
-
-  for (auto iter : svals_changing_meaning)
-    m_constraints->purge_state_involving (iter);
-}
-
-/* Attempt to update this model for taking EDGE (where the last statement
-   was LAST_STMT), returning true if the edge can be taken, false
-   otherwise.
-   When returning false, if OUT is non-NULL, write a new rejected_constraint
-   to it.
-
-   For CFG superedges where LAST_STMT is a conditional or a switch
-   statement, attempt to add the relevant conditions for EDGE to this
-   model, returning true if they are feasible, or false if they are
-   impossible.
-
-   For call superedges, push frame information and store arguments
-   into parameters.
-
-   For return superedges, pop frame information and store return
-   values into any lhs.
-
-   Rejection of call/return superedges happens elsewhere, in
-   program_point::on_edge (i.e. based on program point, rather
-   than program state).  */
-
-bool
-region_model::maybe_update_for_edge (const superedge &edge,
-				     const gimple *last_stmt,
-				     region_model_context *ctxt,
-				     std::unique_ptr<rejected_constraint> *out)
-{
-  /* Handle frame updates for interprocedural edges.  */
-  switch (edge.m_kind)
-    {
-    default:
-      break;
-
-    case SUPEREDGE_CALL:
-      {
-	const call_superedge *call_edge = as_a <const call_superedge *> (&edge);
-	update_for_call_superedge (*call_edge, ctxt);
-      }
-      break;
-
-    case SUPEREDGE_RETURN:
-      {
-	const return_superedge *return_edge
-	  = as_a <const return_superedge *> (&edge);
-	update_for_return_superedge (*return_edge, ctxt);
-      }
-      break;
-
-    case SUPEREDGE_INTRAPROCEDURAL_CALL:
-      /* This is a no-op for call summaries; we should already
-	 have handled the effect of the call summary at the call stmt.  */
-      break;
-    }
-
-  if (last_stmt == NULL)
-    return true;
-
-  /* Apply any constraints for conditionals/switch/computed-goto statements.  */
-
-  if (const gcond *cond_stmt = dyn_cast <const gcond *> (last_stmt))
-    {
-      const cfg_superedge *cfg_sedge = as_a <const cfg_superedge *> (&edge);
-      return apply_constraints_for_gcond (*cfg_sedge, cond_stmt, ctxt, out);
-    }
-
-  if (const gswitch *switch_stmt = dyn_cast <const gswitch *> (last_stmt))
-    {
-      const switch_cfg_superedge *switch_sedge
-	= as_a <const switch_cfg_superedge *> (&edge);
-      return apply_constraints_for_gswitch (*switch_sedge, switch_stmt,
-					    ctxt, out);
-    }
-
-  if (const geh_dispatch *eh_dispatch_stmt
-	= dyn_cast <const geh_dispatch *> (last_stmt))
-    {
-      const eh_dispatch_cfg_superedge *eh_dispatch_cfg_sedge
-	= as_a <const eh_dispatch_cfg_superedge *> (&edge);
-      return apply_constraints_for_eh_dispatch (*eh_dispatch_cfg_sedge,
-						eh_dispatch_stmt,
-						ctxt, out);
-    }
-
-  if (const ggoto *goto_stmt = dyn_cast <const ggoto *> (last_stmt))
-    {
-      const cfg_superedge *cfg_sedge = as_a <const cfg_superedge *> (&edge);
-      return apply_constraints_for_ggoto (*cfg_sedge, goto_stmt, ctxt);
-    }
-
-  return true;
-}
-
 /* Push a new frame_region on to the stack region.
    Populate the frame_region with child regions for the function call's
    parameters, using values from the arguments at the callsite in the
@@ -6285,29 +6004,7 @@ region_model::update_for_return_gcall (const gcall &call_stmt,
      so that pop_frame can determine the region with respect to the
      *caller* frame.  */
   tree lhs = gimple_call_lhs (&call_stmt);
-  pop_frame (lhs, NULL, ctxt, &call_stmt);
-}
-
-/* Extract calling information from the superedge and update the model for the
-   call  */
-
-void
-region_model::update_for_call_superedge (const call_superedge &call_edge,
-					 region_model_context *ctxt)
-{
-  const gcall &call_stmt = call_edge.get_call_stmt ();
-  update_for_gcall (call_stmt, ctxt, call_edge.get_callee_function ());
-}
-
-/* Extract calling information from the return superedge and update the model
-   for the returning call */
-
-void
-region_model::update_for_return_superedge (const return_superedge &return_edge,
-					   region_model_context *ctxt)
-{
-  const gcall &call_stmt = return_edge.get_call_stmt ();
-  update_for_return_gcall (call_stmt, ctxt);
+  pop_frame (lhs, nullptr, ctxt, &call_stmt);
 }
 
 /* Attempt to use R to replay SUMMARY into this object.
@@ -6343,376 +6040,6 @@ region_model::replay_call_summary (call_summary_replay &r,
   return true;
 }
 
-/* Given a true or false edge guarded by conditional statement COND_STMT,
-   determine appropriate constraints for the edge to be taken.
-
-   If they are feasible, add the constraints and return true.
-
-   Return false if the constraints contradict existing knowledge
-   (and so the edge should not be taken).
-   When returning false, if OUT is non-NULL, write a new rejected_constraint
-   to it.  */
-
-bool
-region_model::
-apply_constraints_for_gcond (const cfg_superedge &sedge,
-			     const gcond *cond_stmt,
-			     region_model_context *ctxt,
-			     std::unique_ptr<rejected_constraint> *out)
-{
-  ::edge cfg_edge = sedge.get_cfg_edge ();
-  gcc_assert (cfg_edge != NULL);
-  gcc_assert (cfg_edge->flags & (EDGE_TRUE_VALUE | EDGE_FALSE_VALUE));
-
-  enum tree_code op = gimple_cond_code (cond_stmt);
-  tree lhs = gimple_cond_lhs (cond_stmt);
-  tree rhs = gimple_cond_rhs (cond_stmt);
-  if (cfg_edge->flags & EDGE_FALSE_VALUE)
-    op = invert_tree_comparison (op, false /* honor_nans */);
-  return add_constraint (lhs, op, rhs, ctxt, out);
-}
-
-/* Return true iff SWITCH_STMT has a non-default label that contains
-   INT_CST.  */
-
-static bool
-has_nondefault_case_for_value_p (const gswitch *switch_stmt, tree int_cst)
-{
-  /* We expect the initial label to be the default; skip it.  */
-  gcc_assert (CASE_LOW (gimple_switch_label (switch_stmt, 0)) == NULL);
-  unsigned min_idx = 1;
-  unsigned max_idx = gimple_switch_num_labels (switch_stmt) - 1;
-
-  /* Binary search: try to find the label containing INT_CST.
-     This requires the cases to be sorted by CASE_LOW (done by the
-     gimplifier).  */
-  while (max_idx >= min_idx)
-    {
-      unsigned case_idx = (min_idx + max_idx) / 2;
-      tree label =  gimple_switch_label (switch_stmt, case_idx);
-      tree low = CASE_LOW (label);
-      gcc_assert (low);
-      tree high = CASE_HIGH (label);
-      if (!high)
-	high = low;
-      if (tree_int_cst_compare (int_cst, low) < 0)
-	{
-	  /* INT_CST is below the range of this label.  */
-	  gcc_assert (case_idx > 0);
-	  max_idx = case_idx - 1;
-	}
-      else if (tree_int_cst_compare (int_cst, high) > 0)
-	{
-	  /* INT_CST is above the range of this case.  */
-	  min_idx = case_idx + 1;
-	}
-      else
-	/* This case contains INT_CST.  */
-	return true;
-    }
-  /* Not found.  */
-  return false;
-}
-
-/* Return true iff SWITCH_STMT (which must be on an enum value)
-   has nondefault cases handling all values in the enum.  */
-
-static bool
-has_nondefault_cases_for_all_enum_values_p (const gswitch *switch_stmt,
-					    tree type)
-{
-  gcc_assert (switch_stmt);
-  gcc_assert (TREE_CODE (type) == ENUMERAL_TYPE);
-
-  for (tree enum_val_iter = TYPE_VALUES (type);
-       enum_val_iter;
-       enum_val_iter = TREE_CHAIN (enum_val_iter))
-    {
-      tree enum_val = TREE_VALUE (enum_val_iter);
-      gcc_assert (TREE_CODE (enum_val) == CONST_DECL);
-      gcc_assert (TREE_CODE (DECL_INITIAL (enum_val)) == INTEGER_CST);
-      if (!has_nondefault_case_for_value_p (switch_stmt,
-					    DECL_INITIAL (enum_val)))
-	return false;
-    }
-  return true;
-}
-
-/* Given an EDGE guarded by SWITCH_STMT, determine appropriate constraints
-   for the edge to be taken.
-
-   If they are feasible, add the constraints and return true.
-
-   Return false if the constraints contradict existing knowledge
-   (and so the edge should not be taken).
-   When returning false, if OUT is non-NULL, write a new rejected_constraint
-   to it.  */
-
-bool
-region_model::
-apply_constraints_for_gswitch (const switch_cfg_superedge &edge,
-			       const gswitch *switch_stmt,
-			       region_model_context *ctxt,
-			       std::unique_ptr<rejected_constraint> *out)
-{
-  tree index  = gimple_switch_index (switch_stmt);
-  const svalue *index_sval = get_rvalue (index, ctxt);
-  bool check_index_type = true;
-
-  /* With -fshort-enum, there may be a type cast.  */
-  if (ctxt && index_sval->get_kind () == SK_UNARYOP
-      && TREE_CODE (index_sval->get_type ()) == INTEGER_TYPE)
-    {
-      const unaryop_svalue *unaryop = as_a <const unaryop_svalue *> (index_sval);
-      if (unaryop->get_op () == NOP_EXPR
-	  && is_a <const initial_svalue *> (unaryop->get_arg ()))
-	if (const initial_svalue *initvalop = (as_a <const initial_svalue *>
-					       (unaryop->get_arg ())))
-	  if (initvalop->get_type ()
-	      && TREE_CODE (initvalop->get_type ()) == ENUMERAL_TYPE)
-	    {
-	      index_sval = initvalop;
-	      check_index_type = false;
-	    }
-    }
-
-  /* If we're switching based on an enum type, assume that the user is only
-     working with values from the enum.  Hence if this is an
-     implicitly-created "default", assume it doesn't get followed.
-     This fixes numerous "uninitialized" false positives where we otherwise
-     consider jumping past the initialization cases.  */
-
-  if (/* Don't check during feasibility-checking (when ctxt is NULL).  */
-      ctxt
-      /* Must be an enum value.  */
-      && index_sval->get_type ()
-      && (!check_index_type
-	  || TREE_CODE (TREE_TYPE (index)) == ENUMERAL_TYPE)
-      && TREE_CODE (index_sval->get_type ()) == ENUMERAL_TYPE
-      /* If we have a constant, then we can check it directly.  */
-      && index_sval->get_kind () != SK_CONSTANT
-      && edge.implicitly_created_default_p ()
-      && has_nondefault_cases_for_all_enum_values_p (switch_stmt,
-						     index_sval->get_type ())
-      /* Don't do this if there's a chance that the index is
-	 attacker-controlled.  */
-      && !ctxt->possibly_tainted_p (index_sval))
-    {
-      if (out)
-	*out = std::make_unique <rejected_default_case> (*this);
-      return false;
-    }
-
-  bounded_ranges_manager *ranges_mgr = get_range_manager ();
-  const bounded_ranges *all_cases_ranges
-    = ranges_mgr->get_or_create_ranges_for_switch (&edge, switch_stmt);
-  bool sat = m_constraints->add_bounded_ranges (index_sval, all_cases_ranges);
-  if (!sat && out)
-    *out = std::make_unique <rejected_ranges_constraint>
-      (*this, index, all_cases_ranges);
-  if (sat && ctxt && !all_cases_ranges->empty_p ())
-    ctxt->on_bounded_ranges (*index_sval, *all_cases_ranges);
-  return sat;
-}
-
-class rejected_eh_dispatch : public rejected_constraint
-{
-public:
-  rejected_eh_dispatch (const region_model &model)
-  : rejected_constraint (model)
-  {}
-
-  void dump_to_pp (pretty_printer *pp) const final override
-  {
-    pp_printf (pp, "rejected_eh_dispatch");
-  }
-};
-
-static bool
-exception_matches_type_p (tree exception_type,
-			  tree catch_type)
-{
-  if (catch_type == exception_type)
-    return true;
-
-  /* TODO (PR analyzer/119697): we should also handle subclasses etc;
-     see the rules in https://en.cppreference.com/w/cpp/language/catch
-
-     It looks like we should be calling (or emulating)
-     can_convert_eh from the C++ FE, but that's specific to the C++ FE.  */
-
-  return false;
-}
-
-static bool
-matches_any_exception_type_p (eh_catch ehc, tree exception_type)
-{
-  if (ehc->type_list == NULL_TREE)
-    /* All exceptions are caught here.  */
-    return true;
-
-  for (tree iter = ehc->type_list; iter; iter = TREE_CHAIN (iter))
-    if (exception_matches_type_p (TREE_VALUE (iter),
-				  exception_type))
-      return true;
-  return false;
-}
-
-bool
-region_model::
-apply_constraints_for_eh_dispatch (const eh_dispatch_cfg_superedge &edge,
-				   const geh_dispatch *,
-				   region_model_context *ctxt,
-				   std::unique_ptr<rejected_constraint> *out)
-{
-  const exception_node *current_node = get_current_thrown_exception ();
-  gcc_assert (current_node);
-  tree curr_exception_type = current_node->maybe_get_type ();
-  if (!curr_exception_type)
-    /* We don't know the specific type.  */
-    return true;
-
-  return edge.apply_constraints (this, ctxt, curr_exception_type, out);
-}
-
-bool
-region_model::
-apply_constraints_for_eh_dispatch_try (const eh_dispatch_try_cfg_superedge &edge,
-				       region_model_context */*ctxt*/,
-				       tree exception_type,
-				       std::unique_ptr<rejected_constraint> *out)
-{
-  /* TODO: can we rely on this ordering?
-     or do we need to iterate through prev_catch ?  */
-  /* The exception must not match any of the previous edges.  */
-  for (auto sibling_sedge : edge.m_src->m_succs)
-    {
-      if (sibling_sedge == &edge)
-	break;
-
-      const eh_dispatch_try_cfg_superedge *sibling_eh_sedge
-	= as_a <const eh_dispatch_try_cfg_superedge *> (sibling_sedge);
-      if (eh_catch ehc = sibling_eh_sedge->get_eh_catch ())
-	if (matches_any_exception_type_p (ehc, exception_type))
-	  {
-	    /* The earlier sibling matches, so the "unhandled" edge is
-	       not taken.  */
-	    if (out)
-	      *out = std::make_unique<rejected_eh_dispatch> (*this);
-	    return false;
-	  }
-    }
-
-  if (eh_catch ehc = edge.get_eh_catch ())
-    {
-      /* We have an edge that tried to match one or more types.  */
-
-      /* The exception must not match any of the previous edges.  */
-
-      /* It must match this type.  */
-      if (matches_any_exception_type_p (ehc, exception_type))
-	return true;
-      else
-	{
-	  /* Exception type doesn't match.  */
-	  if (out)
-	    *out = std::make_unique<rejected_eh_dispatch> (*this);
-	  return false;
-	}
-    }
-  else
-    {
-      /* This is the "unhandled exception" edge.
-	 If we get here then no sibling edges matched;
-	 we will follow this edge.  */
-      return true;
-    }
-}
-
-bool
-region_model::
-apply_constraints_for_eh_dispatch_allowed (const eh_dispatch_allowed_cfg_superedge &edge,
-					   region_model_context */*ctxt*/,
-					   tree exception_type,
-					   std::unique_ptr<rejected_constraint> *out)
-{
-  auto curr_thrown_exception_node = get_current_thrown_exception ();
-  gcc_assert (curr_thrown_exception_node);
-  tree curr_exception_type = curr_thrown_exception_node->maybe_get_type ();
-  eh_region eh_reg = edge.get_eh_region ();
-  tree type_list = eh_reg->u.allowed.type_list;
-
-  switch (edge.get_eh_kind ())
-    {
-    default:
-      gcc_unreachable ();
-    case eh_dispatch_allowed_cfg_superedge::eh_kind::expected:
-      if (!curr_exception_type)
-	{
-	  /* We don't know the specific type;
-	     assume we have one of an expected type.  */
-	  return true;
-	}
-      for (tree iter = type_list; iter; iter = TREE_CHAIN (iter))
-	if (exception_matches_type_p (TREE_VALUE (iter),
-				      exception_type))
-	  return true;
-      if (out)
-	*out = std::make_unique<rejected_eh_dispatch> (*this);
-      return false;
-
-    case eh_dispatch_allowed_cfg_superedge::eh_kind::unexpected:
-      if (!curr_exception_type)
-	{
-	  /* We don't know the specific type;
-	     assume we don't have one of an expected type.  */
-	  if (out)
-	    *out = std::make_unique<rejected_eh_dispatch> (*this);
-	  return false;
-	}
-      for (tree iter = type_list; iter; iter = TREE_CHAIN (iter))
-	if (exception_matches_type_p (TREE_VALUE (iter),
-				      exception_type))
-	  {
-	    if (out)
-	      *out = std::make_unique<rejected_eh_dispatch> (*this);
-	    return false;
-	  }
-      return true;
-    }
-}
-
-/* Given an edge reached by GOTO_STMT, determine appropriate constraints
-   for the edge to be taken.
-
-   If they are feasible, add the constraints and return true.
-
-   Return false if the constraints contradict existing knowledge
-   (and so the edge should not be taken).  */
-
-bool
-region_model::apply_constraints_for_ggoto (const cfg_superedge &edge,
-					   const ggoto *goto_stmt,
-					   region_model_context *ctxt)
-{
-  tree dest = gimple_goto_dest (goto_stmt);
-  const svalue *dest_sval = get_rvalue (dest, ctxt);
-
-  /* If we know we were jumping to a specific label.  */
-  if (tree dst_label = edge.m_dest->get_label ())
-    {
-      const label_region *dst_label_reg
-	= m_mgr->get_region_for_label (dst_label);
-      const svalue *dst_label_ptr
-	= m_mgr->get_ptr_svalue (ptr_type_node, dst_label_reg);
-
-      if (!add_constraint (dest_sval, EQ_EXPR, dst_label_ptr, ctxt))
-	return false;
-    }
-
-  return true;
-}
-
 /* For use with push_frame when handling a top-level call within the analysis.
    PARAM has a defined but unknown initial value.
    Anything it points to has escaped, since the calling context "knows"
@@ -6731,7 +6058,8 @@ region_model::on_top_level_param (tree param,
       const svalue *init_ptr_sval
 	= m_mgr->get_or_create_initial_value (param_reg);
       const region *pointee_reg = m_mgr->get_symbolic_region (init_ptr_sval);
-      m_store.mark_as_escaped (pointee_reg);
+      store_manager *store_mgr = m_mgr->get_store_manager ();
+      m_store.mark_as_escaped (*store_mgr, pointee_reg);
       if (nonnull)
 	{
 	  const svalue *null_ptr_sval
@@ -6825,13 +6153,14 @@ region_model::push_frame (const function &fun,
 
 	    /* Get region for default val of DECL_RESULT within the
 	       callee.  */
-	    tree result_default_ssa = get_ssa_default_def (fun, result);
-	    gcc_assert (result_default_ssa);
-	    const region *callee_result_reg
-	      = get_lvalue (result_default_ssa, ctxt);
+	    if (tree result_default_ssa = get_ssa_default_def (fun, result))
+	      {
+		const region *callee_result_reg
+		  = get_lvalue (result_default_ssa, ctxt);
 
-	    /* Set the callee's reference to refer to the caller's lhs.  */
-	    set_value (callee_result_reg, ref_sval, ctxt);
+		/* Set the callee's reference to refer to the caller's lhs.  */
+		set_value (callee_result_reg, ref_sval, ctxt);
+	      }
 	  }
     }
   else
@@ -6892,46 +6221,21 @@ public:
       m_call_stmt (call_stmt),
       m_caller_frame (caller_frame)
   {}
-  bool warn (std::unique_ptr<pending_diagnostic> d,
-	     const stmt_finder *custom_finder) override
-  {
-    if (m_inner && custom_finder == nullptr)
-      {
-	/* Custom stmt_finder to use m_call_stmt for the
-	   diagnostic.  */
-	class my_finder : public stmt_finder
-	{
-	public:
-	  my_finder (const gcall *call_stmt,
-		     const frame_region &caller_frame)
-	    : m_call_stmt (call_stmt),
-	      m_caller_frame (caller_frame)
-	  {}
-	  std::unique_ptr<stmt_finder> clone () const override
-	  {
-	    return std::make_unique<my_finder> (m_call_stmt, m_caller_frame);
-	  }
-	  const gimple *find_stmt (const exploded_path &) override
-	  {
-	    return m_call_stmt;
-	  }
-	  void update_event_loc_info (event_loc_info &loc_info) final override
-	  {
-	    loc_info.m_fndecl = m_caller_frame.get_fndecl ();
-	    loc_info.m_depth = m_caller_frame.get_stack_depth ();
-	  }
 
-	private:
-	  const gcall *m_call_stmt;
-	  const frame_region &m_caller_frame;
-	};
-	my_finder finder (m_call_stmt, m_caller_frame);
-	return m_inner->warn (std::move (d), &finder);
-      }
-    else
-      return region_model_context_decorator::warn (std::move (d),
-						   custom_finder);
+  pending_location
+  get_pending_location_for_diag () const override
+  {
+    pending_location ploc
+      = region_model_context_decorator::get_pending_location_for_diag ();
+
+    ploc.m_event_loc_info
+      = event_loc_info (m_call_stmt->location,
+			m_caller_frame.get_fndecl (),
+			m_caller_frame.get_stack_depth ());
+
+    return ploc;
   }
+
   const gimple *get_stmt () const override
   {
     return m_call_stmt;
@@ -6981,7 +6285,7 @@ region_model::pop_frame (tree result_lvalue,
   /* Evaluate the result, within the callee frame.  */
   tree fndecl = m_current_frame->get_function ().decl;
   tree result = DECL_RESULT (fndecl);
-  const svalue *retval = NULL;
+  const svalue *retval = nullptr;
   if (result
       && TREE_TYPE (result) != void_type_node
       && eval_return_svalue)
@@ -7015,7 +6319,13 @@ region_model::pop_frame (tree result_lvalue,
     }
 
   unbind_region_and_descendents (frame_reg,poison_kind::popped_stack);
-  notify_on_pop_frame (this, &pre_popped_model, retval, ctxt);
+
+  if (auto chan = g->get_channels ().analyzer_events_channel.get_if_active ())
+    {
+      gcc::topics::analyzer_events::on_frame_popped msg
+	{this, &pre_popped_model, retval, ctxt};
+      chan->publish (msg);
+    }
 }
 
 /* Get the number of frames in this region_model's stack.  */
@@ -7083,52 +6393,39 @@ region_model::unbind_region_and_descendents (const region *reg,
     }
 }
 
-/* Implementation of BindingVisitor.
-   Update the bound svalues for regions below REG to use poisoned
-   values instead.  */
-
-struct bad_pointer_finder
-{
-  bad_pointer_finder (const region *reg, enum poison_kind pkind,
-		      region_model_manager *mgr)
-  : m_reg (reg), m_pkind (pkind), m_mgr (mgr), m_count (0)
-  {}
-
-  void on_binding (const binding_key *, const svalue *&sval)
-  {
-    if (const region_svalue *ptr_sval = sval->dyn_cast_region_svalue ())
-      {
-	const region *ptr_dst = ptr_sval->get_pointee ();
-	/* Poison ptrs to descendents of REG, but not to REG itself,
-	   otherwise double-free detection doesn't work (since sm-state
-	   for "free" is stored on the original ptr svalue).  */
-	if (ptr_dst->descendent_of_p (m_reg)
-	    && ptr_dst != m_reg)
-	  {
-	    sval = m_mgr->get_or_create_poisoned_svalue (m_pkind,
-							 sval->get_type ());
-	    ++m_count;
-	  }
-      }
-  }
-
-  const region *m_reg;
-  enum poison_kind m_pkind;
-  region_model_manager *const m_mgr;
-  int m_count;
-};
-
 /* Find any pointers to REG or its descendents; convert them to
-   poisoned values of kind PKIND.
-   Return the number of pointers that were poisoned.  */
+   poisoned values of kind PKIND.  */
 
-int
+void
 region_model::poison_any_pointers_to_descendents (const region *reg,
-						   enum poison_kind pkind)
+						  enum poison_kind pkind)
 {
-  bad_pointer_finder bv (reg, pkind, m_mgr);
-  m_store.for_each_binding (bv);
-  return bv.m_count;
+  for (const auto &cluster_iter : m_store)
+    {
+      binding_cluster *cluster = cluster_iter.second;
+      for (auto iter = cluster->begin ();
+	   iter != cluster->end ();
+	   ++iter)
+	{
+	  auto bp = *iter;
+	  const svalue *sval = bp.m_sval;
+	  if (const region_svalue *ptr_sval = sval->dyn_cast_region_svalue ())
+	    {
+	      const region *ptr_dst = ptr_sval->get_pointee ();
+	      /* Poison ptrs to descendents of REG, but not to REG itself,
+		 otherwise double-free detection doesn't work (since sm-state
+		 for "free" is stored on the original ptr svalue).  */
+	      if (ptr_dst->descendent_of_p (reg)
+		  && ptr_dst != reg)
+		{
+		  const svalue *new_sval
+		    = m_mgr->get_or_create_poisoned_svalue (pkind,
+							    sval->get_type ());
+		  cluster->get_map ().overwrite (iter, new_sval);
+		}
+	    }
+	}
+    }
 }
 
 /* Attempt to merge THIS with OTHER_MODEL, writing the result
@@ -7312,7 +6609,7 @@ private:
 class contains_floating_point_visitor : public visitor
 {
 public:
-  contains_floating_point_visitor (const svalue *root_sval) : m_result (NULL)
+  contains_floating_point_visitor (const svalue *root_sval) : m_result (nullptr)
   {
     root_sval->accept (this);
   }
@@ -7325,7 +6622,7 @@ public:
   void visit_constant_svalue (const constant_svalue *sval) final override
   {
     /* At the point the analyzer runs, constant integer operands in a floating
-       point expression are already implictly converted to floating-points.
+       point expression are already implicitly converted to floating-points.
        Thus, we do prefer to report non-constants such that the diagnostic
        always reports a floating-point operand.  */
     tree type = sval->get_type ();
@@ -7406,9 +6703,9 @@ region_model::get_or_create_region_for_heap_alloc (const svalue *size_in_bytes,
 
 	if (update_state_machine && cd)
 		{
-			const svalue *ptr_sval
-			= m_mgr->get_ptr_svalue (cd->get_lhs_type (), reg);
-      transition_ptr_sval_non_null (ctxt, ptr_sval);
+		  const svalue *ptr_sval
+		    = m_mgr->get_ptr_svalue (cd->get_lhs_type (), reg);
+		  transition_ptr_sval_non_null (ctxt, ptr_sval);
 		}
 
   return reg;
@@ -7476,7 +6773,7 @@ region_model::set_dynamic_extents (const region *reg,
   m_dynamic_extents.put (reg, size_in_bytes);
 }
 
-/* Get the recording of REG in bytes, or NULL if no dynamic size was
+/* Get the recording of REG in bytes, or nullptr if no dynamic size was
    recorded.  */
 
 const svalue *
@@ -7484,7 +6781,7 @@ region_model::get_dynamic_extents (const region *reg) const
 {
   if (const svalue * const *slot = m_dynamic_extents.get (reg))
     return *slot;
-  return NULL;
+  return nullptr;
 }
 
 /* Unset any recorded dynamic size of REG.  */
@@ -7595,9 +6892,10 @@ public:
   }
 
   void
-  maybe_add_sarif_properties (sarif_object &result_obj) const final override
+  maybe_add_sarif_properties (diagnostics::sarif_object &result_obj)
+    const final override
   {
-    sarif_property_bag &props = result_obj.get_or_create_properties ();
+    auto &props = result_obj.get_or_create_properties ();
 #define PROPERTY_PREFIX "gcc/-Wanalyzer-exposure-through-uninit-copy/"
     props.set (PROPERTY_PREFIX "src_region", m_src_region->to_json ());
     props.set (PROPERTY_PREFIX "dest_region", m_dest_region->to_json ());
@@ -7642,18 +6940,15 @@ private:
 	    = as_a <const compound_svalue *> (m_copied_sval);
 	  bit_size_t result = 0;
 	  /* Find keys for uninit svals.  */
-	  for (auto iter : *compound_sval)
+	  for (auto iter : compound_sval->get_concrete_bindings ())
 	    {
 	      const svalue *sval = iter.second;
 	      if (const poisoned_svalue *psval
 		  = sval->dyn_cast_poisoned_svalue ())
 		if (psval->get_poison_kind () == poison_kind::uninit)
 		  {
-		    const binding_key *key = iter.first;
-		    const concrete_binding *ckey
-		      = key->dyn_cast_concrete_binding ();
-		    gcc_assert (ckey);
-		    result += ckey->get_size_in_bits ();
+		    const bit_range &bits = iter.first;
+		    result += bits.m_size_in_bits;
 		  }
 	    }
 	  return result;
@@ -7693,23 +6988,15 @@ private:
 	= m_copied_sval->dyn_cast_compound_svalue ())
       {
 	/* Find keys for uninit svals.  */
-	auto_vec<const concrete_binding *> uninit_keys;
-	for (auto iter : *compound_sval)
+	auto_vec<bit_range> uninit_bit_ranges;
+	for (auto iter : compound_sval->get_concrete_bindings ())
 	  {
 	    const svalue *sval = iter.second;
 	    if (const poisoned_svalue *psval
 		= sval->dyn_cast_poisoned_svalue ())
 	      if (psval->get_poison_kind () == poison_kind::uninit)
-		{
-		  const binding_key *key = iter.first;
-		  const concrete_binding *ckey
-		    = key->dyn_cast_concrete_binding ();
-		  gcc_assert (ckey);
-		  uninit_keys.safe_push (ckey);
-		}
+		uninit_bit_ranges.safe_push (iter.first);
 	  }
-	/* Complain about them in sorted order.  */
-	uninit_keys.qsort (concrete_binding::cmp_ptr_ptr);
 
 	std::unique_ptr<record_layout> layout;
 
@@ -7723,11 +7010,11 @@ private:
 	  }
 
 	unsigned i;
-	const concrete_binding *ckey;
-	FOR_EACH_VEC_ELT (uninit_keys, i, ckey)
+	bit_range *bits;
+	FOR_EACH_VEC_ELT (uninit_bit_ranges, i, bits)
 	  {
-	    bit_offset_t start_bit = ckey->get_start_bit_offset ();
-	    bit_offset_t next_bit = ckey->get_next_bit_offset ();
+	    bit_offset_t start_bit = bits->get_start_bit_offset ();
+	    bit_offset_t next_bit = bits->get_next_bit_offset ();
 	    complain_about_uninit_range (loc, start_bit, next_bit,
 					 layout.get ());
 	  }
@@ -7909,11 +7196,12 @@ contains_uninit_p (const svalue *sval)
 	const compound_svalue *compound_sval
 	  = as_a <const compound_svalue *> (sval);
 
-	for (auto iter : *compound_sval)
+	for (auto iter = compound_sval->begin ();
+	     iter != compound_sval->end (); ++iter)
 	  {
-	    const svalue *sval = iter.second;
+	    const svalue *inner_sval = iter->second;
 	    if (const poisoned_svalue *psval
-		= sval->dyn_cast_poisoned_svalue ())
+		= inner_sval->dyn_cast_poisoned_svalue ())
 	      if (psval->get_poison_kind () == poison_kind::uninit)
 		return true;
 	  }
@@ -7930,7 +7218,7 @@ contains_uninit_p (const svalue *sval)
    Check that COPIED_SVAL is fully initialized.  If not, complain about
    an infoleak to CTXT.
 
-   SRC_REG can be NULL; if non-NULL it is used as a hint in the diagnostic
+   SRC_REG can be nullptr; if non-NULL it is used as a hint in the diagnostic
    as to where COPIED_SVAL came from.  */
 
 void
@@ -7962,6 +7250,18 @@ region_model::set_errno (const call_details &cd)
     = m_mgr->get_or_create_int_cst (integer_type_node, 0);
   add_constraint (new_errno_sval, GT_EXPR, zero, cd.get_ctxt ());
   set_value (errno_reg, new_errno_sval, cd.get_ctxt ());
+}
+
+// class region_model_context
+
+bool
+region_model_context::
+warn (std::unique_ptr<pending_diagnostic> d,
+      std::unique_ptr<pending_location::fixer_for_epath> ploc_fixer)
+{
+  pending_location ploc (get_pending_location_for_diag ());
+  ploc.m_fixer_for_epath = std::move (ploc_fixer);
+  return warn_at (std::move (d), std::move (ploc));
 }
 
 /* class noop_region_model_context : public region_model_context.  */
@@ -8042,7 +7342,7 @@ model_merger::mergeable_svalue_p (const svalue *sval) const
 {
   if (m_ext_state)
     {
-      /* Reject merging svalues that have non-purgable sm-state,
+      /* Reject merging svalues that have non-purgeable sm-state,
 	 to avoid falsely reporting memory leaks by merging them
 	 with something else.  For example, given a local var "p",
 	 reject the merger of a:
@@ -8083,11 +7383,9 @@ void
 rejected_op_constraint::dump_to_pp (pretty_printer *pp) const
 {
   region_model m (m_model);
-  const svalue *lhs_sval = m.get_rvalue (m_lhs, NULL);
-  const svalue *rhs_sval = m.get_rvalue (m_rhs, NULL);
-  lhs_sval->dump_to_pp (pp, true);
+  m_lhs->dump_to_pp (pp, true);
   pp_printf (pp, " %s ", op_symbol_code (m_op));
-  rhs_sval->dump_to_pp (pp, true);
+  m_rhs->dump_to_pp (pp, true);
 }
 
 /* class rejected_default_case : public rejected_constraint.  */
@@ -8104,7 +7402,7 @@ void
 rejected_ranges_constraint::dump_to_pp (pretty_printer *pp) const
 {
   region_model m (m_model);
-  const svalue *sval = m.get_rvalue (m_expr, NULL);
+  const svalue *sval = m.get_rvalue (m_expr, nullptr);
   sval->dump_to_pp (pp, true);
   pp_string (pp, " in ");
   m_ranges->dump_to_pp (pp, true);
@@ -8114,8 +7412,10 @@ rejected_ranges_constraint::dump_to_pp (pretty_printer *pp) const
 
 /* engine's ctor.  */
 
-engine::engine (const supergraph *sg, logger *logger)
-: m_sg (sg), m_mgr (logger)
+engine::engine (region_model_manager &mgr,
+		const supergraph *sg)
+: m_mgr (mgr),
+  m_sg (sg)
 {
 }
 
@@ -8205,7 +7505,7 @@ assert_condition (const location &loc,
 		  tree lhs, tree_code op, tree rhs,
 		  tristate expected)
 {
-  tristate actual = model.eval_condition (lhs, op, rhs, NULL);
+  tristate actual = model.eval_condition (lhs, op, rhs, nullptr);
   ASSERT_EQ_AT (loc, actual, expected);
 }
 
@@ -8294,7 +7594,7 @@ make_test_compound_type (const char *name, bool is_struct,
   TYPE_NAME (t) = get_identifier (name);
   TYPE_SIZE (t) = 0;
 
-  tree fieldlist = NULL;
+  tree fieldlist = NULL_TREE;
   int i;
   tree field;
   FOR_EACH_VEC_ELT (*fields, i, field)
@@ -8349,23 +7649,45 @@ test_struct ()
 
   region_model_manager mgr;
   region_model model (&mgr);
-  model.set_value (c_x, int_17, NULL);
-  model.set_value (c_y, int_m3, NULL);
+  /* Set fields in order y, then x.  */
+  model.set_value (c_y, int_m3, nullptr);
+  model.set_value (c_x, int_17, nullptr);
 
   /* Verify get_offset for "c.x".  */
   {
-    const region *c_x_reg = model.get_lvalue (c_x, NULL);
+    const region *c_x_reg = model.get_lvalue (c_x, nullptr);
     region_offset offset = c_x_reg->get_offset (&mgr);
-    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (c, NULL));
+    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (c, nullptr));
     ASSERT_EQ (offset.get_bit_offset (), 0);
   }
 
   /* Verify get_offset for "c.y".  */
   {
-    const region *c_y_reg = model.get_lvalue (c_y, NULL);
+    const region *c_y_reg = model.get_lvalue (c_y, nullptr);
     region_offset offset = c_y_reg->get_offset (&mgr);
-    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (c, NULL));
+    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (c, nullptr));
     ASSERT_EQ (offset.get_bit_offset (), INT_TYPE_SIZE);
+  }
+
+  /* Check iteration order of binding_cluster (and thus of binding_map).  */
+  {
+    std::vector<binding_map::binding_pair> vec;
+    auto cluster
+      = model.get_store ()->get_cluster (model.get_lvalue (c, nullptr));
+    for (auto iter : *cluster)
+      vec.push_back (iter);
+    ASSERT_EQ (vec.size (), 2);
+    /* we should get them back in ascending order in memory (x then y).  */
+    /* x */
+    ASSERT_EQ (vec[0].m_key->dyn_cast_concrete_binding ()->get_bit_range (),
+	       bit_range (0, INT_TYPE_SIZE));
+    ASSERT_TRUE (tree_int_cst_equal(vec[0].m_sval->maybe_get_constant (),
+				    int_17));
+    /* y */
+    ASSERT_EQ (vec[1].m_key->dyn_cast_concrete_binding ()->get_bit_range (),
+	       bit_range (INT_TYPE_SIZE, INT_TYPE_SIZE));
+    ASSERT_TRUE (tree_int_cst_equal(vec[1].m_sval->maybe_get_constant (),
+				    int_m3));
   }
 }
 
@@ -8385,7 +7707,7 @@ test_array_1 ()
   tree a_0 = build4 (ARRAY_REF, char_type_node,
 		     a, int_0, NULL_TREE, NULL_TREE);
   tree char_A = build_int_cst (char_type_node, 'A');
-  model.set_value (a_0, char_A, NULL);
+  model.set_value (a_0, char_A, nullptr);
 }
 
 /* Verify that region_model::get_representative_tree works as expected.  */
@@ -8399,7 +7721,7 @@ test_get_representative_tree ()
   {
     tree string_cst = build_string (4, "foo");
     region_model m (&mgr);
-    const svalue *str_sval = m.get_rvalue (string_cst, NULL);
+    const svalue *str_sval = m.get_rvalue (string_cst, nullptr);
     tree rep = m.get_representative_tree (str_sval);
     ASSERT_EQ (rep, string_cst);
   }
@@ -8408,7 +7730,7 @@ test_get_representative_tree ()
   {
     tree string_cst_ptr = build_string_literal (4, "foo");
     region_model m (&mgr);
-    const svalue *str_sval = m.get_rvalue (string_cst_ptr, NULL);
+    const svalue *str_sval = m.get_rvalue (string_cst_ptr, nullptr);
     tree rep = m.get_representative_tree (str_sval);
     ASSERT_DUMP_TREE_EQ (rep, "&\"foo\"[0]");
   }
@@ -8533,12 +7855,12 @@ test_unique_unknowns ()
 
   /* Different types (or the NULL type) should have different
      unknown_svalues.  */
-  const svalue *unknown_NULL_type = mgr.get_or_create_unknown_svalue (NULL);
+  const svalue *unknown_NULL_type = mgr.get_or_create_unknown_svalue (nullptr);
   ASSERT_NE (unknown_NULL_type, unknown_int);
 
   /* Repeated calls with NULL for the type should get the same "unknown"
      svalue.  */
-  const svalue *unknown_NULL_type_2 = mgr.get_or_create_unknown_svalue (NULL);
+  const svalue *unknown_NULL_type_2 = mgr.get_or_create_unknown_svalue (nullptr);
   ASSERT_EQ (unknown_NULL_type, unknown_NULL_type_2);
 }
 
@@ -8882,9 +8204,9 @@ test_assignment ()
   region_model model (&mgr);
   ADD_SAT_CONSTRAINT (model, x, EQ_EXPR, int_0);
   ASSERT_CONDITION_UNKNOWN (model, y, EQ_EXPR, int_0);
-  model.set_value (model.get_lvalue (y, NULL),
-		   model.get_rvalue (int_0, NULL),
-		   NULL);
+  model.set_value (model.get_lvalue (y, nullptr),
+		   model.get_rvalue (int_0, nullptr),
+		   nullptr);
   ASSERT_CONDITION_TRUE (model, y, EQ_EXPR, int_0);
   ASSERT_CONDITION_TRUE (model, y, EQ_EXPR, x);
 }
@@ -8912,16 +8234,16 @@ test_compound_assignment ()
 
   region_model_manager mgr;
   region_model model (&mgr);
-  model.set_value (c_x, int_17, NULL);
-  model.set_value (c_y, int_m3, NULL);
+  model.set_value (c_x, int_17, nullptr);
+  model.set_value (c_y, int_m3, nullptr);
 
   /* Copy c to d.  */
-  const svalue *sval = model.get_rvalue (c, NULL);
-  model.set_value (model.get_lvalue (d, NULL), sval, NULL);
+  const svalue *sval = model.get_rvalue (c, nullptr);
+  model.set_value (model.get_lvalue (d, nullptr), sval, nullptr);
 
   /* Check that the fields have the same svalues.  */
-  ASSERT_EQ (model.get_rvalue (c_x, NULL), model.get_rvalue (d_x, NULL));
-  ASSERT_EQ (model.get_rvalue (c_y, NULL), model.get_rvalue (d_y, NULL));
+  ASSERT_EQ (model.get_rvalue (c_x, nullptr), model.get_rvalue (d_x, nullptr));
+  ASSERT_EQ (model.get_rvalue (c_y, nullptr), model.get_rvalue (d_y, nullptr));
 }
 
 /* Verify the details of pushing and popping stack frames.  */
@@ -9011,7 +8333,7 @@ test_stack_frames ()
   model.set_value (p_in_globals_reg,
 		   mgr.get_ptr_svalue (ptr_type_node, x_in_child_reg),
 		   &ctxt);
-  ASSERT_EQ (p_in_globals_reg->maybe_get_frame_region (), NULL);
+  ASSERT_EQ (p_in_globals_reg->maybe_get_frame_region (), nullptr);
 
   /* Point another global pointer at p: q = &p.  */
   const region *q_in_globals_reg = model.get_lvalue (q, &ctxt);
@@ -9025,13 +8347,13 @@ test_stack_frames ()
   ASSERT_FALSE (a_in_parent_reg->descendent_of_p (child_frame_reg));
 
   /* Pop the "child_fn" frame from the stack.  */
-  model.pop_frame (NULL, NULL, &ctxt, nullptr);
+  model.pop_frame (nullptr, nullptr, &ctxt, nullptr);
   ASSERT_FALSE (model.region_exists_p (child_frame_reg));
   ASSERT_TRUE (model.region_exists_p (parent_frame_reg));
 
   /* Verify that p (which was pointing at the local "x" in the popped
      frame) has been poisoned.  */
-  const svalue *new_p_sval = model.get_rvalue (p, NULL);
+  const svalue *new_p_sval = model.get_rvalue (p, nullptr);
   ASSERT_EQ (new_p_sval->get_kind (), SK_POISONED);
   ASSERT_EQ (new_p_sval->dyn_cast_poisoned_svalue ()->get_poison_kind (),
 	     poison_kind::popped_stack);
@@ -9109,7 +8431,7 @@ test_get_representative_path_var ()
       }
       /* ...and that we can lookup lvalues for locals for all frames,
 	 not just the top.  */
-      ASSERT_EQ (model.get_lvalue (path_var (n, depth), NULL),
+      ASSERT_EQ (model.get_lvalue (path_var (n, depth), nullptr),
 		 parm_regs[depth]);
       /* ...and that we can locate the svalues.  */
       {
@@ -9138,22 +8460,22 @@ test_equality_1 ()
 
   /* Verify that setting state in model1 makes the models non-equal.  */
   tree x = build_global_decl ("x", integer_type_node);
-  model0.set_value (x, int_42, NULL);
-  ASSERT_EQ (model0.get_rvalue (x, NULL)->maybe_get_constant (), int_42);
+  model0.set_value (x, int_42, nullptr);
+  ASSERT_EQ (model0.get_rvalue (x, nullptr)->maybe_get_constant (), int_42);
   ASSERT_NE (model0, model1);
 
   /* Verify the copy-ctor.  */
   region_model model2 (model0);
   ASSERT_EQ (model0, model2);
-  ASSERT_EQ (model2.get_rvalue (x, NULL)->maybe_get_constant (), int_42);
+  ASSERT_EQ (model2.get_rvalue (x, nullptr)->maybe_get_constant (), int_42);
   ASSERT_NE (model1, model2);
 
   /* Verify that models obtained from copy-ctor are independently editable
      w/o affecting the original model.  */
-  model2.set_value (x, int_17, NULL);
+  model2.set_value (x, int_17, nullptr);
   ASSERT_NE (model0, model2);
-  ASSERT_EQ (model2.get_rvalue (x, NULL)->maybe_get_constant (), int_17);
-  ASSERT_EQ (model0.get_rvalue (x, NULL)->maybe_get_constant (), int_42);
+  ASSERT_EQ (model2.get_rvalue (x, nullptr)->maybe_get_constant (), int_17);
+  ASSERT_EQ (model0.get_rvalue (x, nullptr)->maybe_get_constant (), int_42);
 }
 
 /* Verify that region models for
@@ -9172,20 +8494,20 @@ test_canonicalization_2 ()
 
   region_model_manager mgr;
   region_model model0 (&mgr);
-  model0.set_value (model0.get_lvalue (x, NULL),
-		    model0.get_rvalue (int_42, NULL),
-		    NULL);
-  model0.set_value (model0.get_lvalue (y, NULL),
-		    model0.get_rvalue (int_113, NULL),
-		    NULL);
+  model0.set_value (model0.get_lvalue (x, nullptr),
+		    model0.get_rvalue (int_42, nullptr),
+		    nullptr);
+  model0.set_value (model0.get_lvalue (y, nullptr),
+		    model0.get_rvalue (int_113, nullptr),
+		    nullptr);
 
   region_model model1 (&mgr);
-  model1.set_value (model1.get_lvalue (y, NULL),
-		    model1.get_rvalue (int_113, NULL),
-		    NULL);
-  model1.set_value (model1.get_lvalue (x, NULL),
-		    model1.get_rvalue (int_42, NULL),
-		    NULL);
+  model1.set_value (model1.get_lvalue (y, nullptr),
+		    model1.get_rvalue (int_113, nullptr),
+		    nullptr);
+  model1.set_value (model1.get_lvalue (x, nullptr),
+		    model1.get_rvalue (int_42, nullptr),
+		    nullptr);
 
   ASSERT_EQ (model0, model1);
 }
@@ -9206,12 +8528,12 @@ test_canonicalization_3 ()
 
   region_model_manager mgr;
   region_model model0 (&mgr);
-  model0.add_constraint (x, GT_EXPR, int_3, NULL);
-  model0.add_constraint (y, GT_EXPR, int_42, NULL);
+  model0.add_constraint (x, GT_EXPR, int_3, nullptr);
+  model0.add_constraint (y, GT_EXPR, int_42, nullptr);
 
   region_model model1 (&mgr);
-  model1.add_constraint (y, GT_EXPR, int_42, NULL);
-  model1.add_constraint (x, GT_EXPR, int_3, NULL);
+  model1.add_constraint (y, GT_EXPR, int_42, nullptr);
+  model1.add_constraint (x, GT_EXPR, int_3, nullptr);
 
   model0.canonicalize ();
   model1.canonicalize ();
@@ -9231,16 +8553,16 @@ test_canonicalization_4 ()
   region_model model (&mgr);
 
   for (tree cst : csts)
-    model.get_rvalue (cst, NULL);
+    model.get_rvalue (cst, nullptr);
 
   model.canonicalize ();
 }
 
 /* Assert that if we have two region_model instances
    with values VAL_A and VAL_B for EXPR that they are
-   mergable.  Write the merged model to *OUT_MERGED_MODEL,
+   mergeable.  Write the merged model to *OUT_MERGED_MODEL,
    and the merged svalue ptr to *OUT_MERGED_SVALUE.
-   If VAL_A or VAL_B are NULL_TREE, don't populate EXPR
+   If VAL_A or VAL_B are nullptr_TREE, don't populate EXPR
    for that region_model.  */
 
 static void
@@ -9431,8 +8753,8 @@ test_state_merging ()
     region_model model0 (&mgr);
     model0.push_frame (*DECL_STRUCT_FUNCTION (test_fndecl),
 		       nullptr, nullptr, nullptr);
-    model0.set_value (model0.get_lvalue (p, NULL),
-		      model0.get_rvalue (addr_of_a, NULL), NULL);
+    model0.set_value (model0.get_lvalue (p, nullptr),
+		      model0.get_rvalue (addr_of_a, nullptr), nullptr);
 
     region_model model1 (model0);
     ASSERT_EQ (model0, model1);
@@ -9456,21 +8778,27 @@ test_state_merging ()
     const region_svalue *merged_p_ptr
       = merged_p_sval->dyn_cast_region_svalue ();
     const region *merged_p_star_reg = merged_p_ptr->get_pointee ();
-    ASSERT_EQ (merged_p_star_reg, merged.get_lvalue (y, NULL));
+    ASSERT_EQ (merged_p_star_reg, merged.get_lvalue (y, nullptr));
   }
 
-  /* Pointers: non-NULL ptrs to different globals: should be unknown.  */
+  /* Pointers: non-NULL ptrs to different globals should not merge;
+     see e.g. gcc.dg/analyzer/torture/uninit-pr108725.c  */
   {
-    region_model merged (&mgr);
+    region_model merged_model (&mgr);
+    program_point point (program_point::origin (mgr));
+    test_region_model_context ctxt;
     /* x == &y vs x == &z in the input models; these are actually casts
        of the ptrs to "int".  */
-    const svalue *merged_x_sval;
-    // TODO:
-    assert_region_models_merge (x, addr_of_y, addr_of_z, &merged,
-				&merged_x_sval);
-
-    /* We should get x == unknown in the merged model.  */
-    ASSERT_EQ (merged_x_sval->get_kind (), SK_UNKNOWN);
+    region_model model0 (&mgr);
+    region_model model1 (&mgr);
+    model0.set_value (model0.get_lvalue (x, &ctxt),
+		      model0.get_rvalue (addr_of_y, &ctxt),
+		      &ctxt);
+    model1.set_value (model1.get_lvalue (x, &ctxt),
+		      model1.get_rvalue (addr_of_z, &ctxt),
+		      &ctxt);
+    /* They should not be mergeable.  */
+    ASSERT_FALSE (model0.can_merge_with_p (model1, point, &merged_model));
   }
 
   /* Pointers: non-NULL and non-NULL: ptr to a heap region.  */
@@ -9571,7 +8899,7 @@ test_state_merging ()
     region_model model0 (&mgr);
     model0.push_frame (*DECL_STRUCT_FUNCTION (test_fndecl),
 		       nullptr, nullptr, nullptr);
-    const region *q_in_first_frame = model0.get_lvalue (q, NULL);
+    const region *q_in_first_frame = model0.get_lvalue (q, nullptr);
 
     /* Push a second frame.  */
     const region *reg_2nd_frame
@@ -9580,8 +8908,8 @@ test_state_merging ()
 
     /* Have a pointer in the older frame point to a local in the
        more recent frame.  */
-    const svalue *sval_ptr = model0.get_rvalue (addr_of_a, NULL);
-    model0.set_value (q_in_first_frame, sval_ptr, NULL);
+    const svalue *sval_ptr = model0.get_rvalue (addr_of_a, nullptr);
+    model0.set_value (q_in_first_frame, sval_ptr, nullptr);
 
     /* Verify that it's pointing at the newer frame.  */
     const region *reg_pointee = sval_ptr->maybe_get_region ();
@@ -9605,8 +8933,8 @@ test_state_merging ()
     region_model model0 (&mgr);
     model0.push_frame (*DECL_STRUCT_FUNCTION (test_fndecl),
 		       nullptr, nullptr, nullptr);
-    model0.set_value (model0.get_lvalue (q, NULL),
-		      model0.get_rvalue (addr_of_y, NULL), NULL);
+    model0.set_value (model0.get_lvalue (q, nullptr),
+		      model0.get_rvalue (addr_of_y, nullptr), nullptr);
 
     region_model model1 (model0);
     ASSERT_EQ (model0, model1);
@@ -9638,14 +8966,14 @@ test_constraint_merging ()
   /* model0: 0 <= (x == y) < n.  */
   region_model model0 (&mgr);
   model0.add_constraint (x, EQ_EXPR, y, &ctxt);
-  model0.add_constraint (x, GE_EXPR, int_0, NULL);
-  model0.add_constraint (x, LT_EXPR, n, NULL);
+  model0.add_constraint (x, GE_EXPR, int_0, nullptr);
+  model0.add_constraint (x, LT_EXPR, n, nullptr);
 
   /* model1: z != 5 && (0 <= x < n).  */
   region_model model1 (&mgr);
-  model1.add_constraint (z, NE_EXPR, int_5, NULL);
-  model1.add_constraint (x, GE_EXPR, int_0, NULL);
-  model1.add_constraint (x, LT_EXPR, n, NULL);
+  model1.add_constraint (z, NE_EXPR, int_5, nullptr);
+  model1.add_constraint (x, GE_EXPR, int_0, nullptr);
+  model1.add_constraint (x, LT_EXPR, n, nullptr);
 
   /* They should be mergeable; the merged constraints should
      be: (0 <= x < n).  */
@@ -9671,7 +8999,7 @@ static void
 test_widening_constraints ()
 {
   region_model_manager mgr;
-  function_point point (program_point::origin (mgr).get_function_point ());
+  const supernode *snode = nullptr;
   tree int_0 = integer_zero_node;
   tree int_m1 = build_int_cst (integer_type_node, -1);
   tree int_1 = integer_one_node;
@@ -9680,7 +9008,7 @@ test_widening_constraints ()
   const svalue *int_0_sval = mgr.get_or_create_constant_svalue (int_0);
   const svalue *int_1_sval = mgr.get_or_create_constant_svalue (int_1);
   const svalue *w_zero_then_one_sval
-    = mgr.get_or_create_widening_svalue (integer_type_node, point,
+    = mgr.get_or_create_widening_svalue (integer_type_node, snode,
 					  int_0_sval, int_1_sval);
   const widening_svalue *w_zero_then_one
     = w_zero_then_one_sval->dyn_cast_widening_svalue ();
@@ -9870,17 +9198,17 @@ test_malloc_constraints ()
   const svalue *size_in_bytes
     = mgr.get_or_create_unknown_svalue (size_type_node);
   const region *reg
-    = model.get_or_create_region_for_heap_alloc (size_in_bytes, NULL);
+    = model.get_or_create_region_for_heap_alloc (size_in_bytes, nullptr);
   const svalue *sval = mgr.get_ptr_svalue (ptr_type_node, reg);
-  model.set_value (model.get_lvalue (p, NULL), sval, NULL);
-  model.set_value (q, p, NULL);
+  model.set_value (model.get_lvalue (p, nullptr), sval, nullptr);
+  model.set_value (q, p, nullptr);
 
   ASSERT_CONDITION_UNKNOWN (model, p, NE_EXPR, null_ptr);
   ASSERT_CONDITION_UNKNOWN (model, p, EQ_EXPR, null_ptr);
   ASSERT_CONDITION_UNKNOWN (model, q, NE_EXPR, null_ptr);
   ASSERT_CONDITION_UNKNOWN (model, q, EQ_EXPR, null_ptr);
 
-  model.add_constraint (p, NE_EXPR, null_ptr, NULL);
+  model.add_constraint (p, NE_EXPR, null_ptr, nullptr);
 
   ASSERT_CONDITION_TRUE (model, p, NE_EXPR, null_ptr);
   ASSERT_CONDITION_FALSE (model, p, EQ_EXPR, null_ptr);
@@ -9902,25 +9230,25 @@ test_var ()
   region_model_manager mgr;
   region_model model (&mgr);
 
-  const region *i_reg = model.get_lvalue (i, NULL);
+  const region *i_reg = model.get_lvalue (i, nullptr);
   ASSERT_EQ (i_reg->get_kind (), RK_DECL);
 
   /* Reading "i" should give a symbolic "initial value".  */
-  const svalue *sval_init = model.get_rvalue (i, NULL);
+  const svalue *sval_init = model.get_rvalue (i, nullptr);
   ASSERT_EQ (sval_init->get_kind (), SK_INITIAL);
   ASSERT_EQ (sval_init->dyn_cast_initial_svalue ()->get_region (), i_reg);
   /* ..and doing it again should give the same "initial value".  */
-  ASSERT_EQ (model.get_rvalue (i, NULL), sval_init);
+  ASSERT_EQ (model.get_rvalue (i, nullptr), sval_init);
 
   /* "i = 17;".  */
-  model.set_value (i, int_17, NULL);
-  ASSERT_EQ (model.get_rvalue (i, NULL),
-	     model.get_rvalue (int_17, NULL));
+  model.set_value (i, int_17, nullptr);
+  ASSERT_EQ (model.get_rvalue (i, nullptr),
+	     model.get_rvalue (int_17, nullptr));
 
   /* "i = -3;".  */
-  model.set_value (i, int_m3, NULL);
-  ASSERT_EQ (model.get_rvalue (i, NULL),
-	     model.get_rvalue (int_m3, NULL));
+  model.set_value (i, int_m3, nullptr);
+  ASSERT_EQ (model.get_rvalue (i, nullptr),
+	     model.get_rvalue (int_m3, nullptr));
 
   /* Verify get_offset for "i".  */
   {
@@ -9959,38 +9287,41 @@ test_array_2 ()
   region_model_manager mgr;
   region_model model (&mgr);
   /* "arr[0] = 17;".  */
-  model.set_value (arr_0, int_17, NULL);
+  model.set_value (arr_0, int_17, nullptr);
   /* "arr[1] = -3;".  */
-  model.set_value (arr_1, int_m3, NULL);
+  model.set_value (arr_1, int_m3, nullptr);
 
-  ASSERT_EQ (model.get_rvalue (arr_0, NULL), model.get_rvalue (int_17, NULL));
-  ASSERT_EQ (model.get_rvalue (arr_1, NULL), model.get_rvalue (int_m3, NULL));
+  ASSERT_EQ (model.get_rvalue (arr_0, nullptr),
+	     model.get_rvalue (int_17, nullptr));
+  ASSERT_EQ (model.get_rvalue (arr_1, nullptr),
+	     model.get_rvalue (int_m3, nullptr));
 
   /* Overwrite a pre-existing binding: "arr[1] = 42;".  */
-  model.set_value (arr_1, int_42, NULL);
-  ASSERT_EQ (model.get_rvalue (arr_1, NULL), model.get_rvalue (int_42, NULL));
+  model.set_value (arr_1, int_42, nullptr);
+  ASSERT_EQ (model.get_rvalue (arr_1, nullptr),
+	     model.get_rvalue (int_42, nullptr));
 
   /* Verify get_offset for "arr[0]".  */
   {
-    const region *arr_0_reg = model.get_lvalue (arr_0, NULL);
+    const region *arr_0_reg = model.get_lvalue (arr_0, nullptr);
     region_offset offset = arr_0_reg->get_offset (&mgr);
-    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, NULL));
+    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, nullptr));
     ASSERT_EQ (offset.get_bit_offset (), 0);
   }
 
   /* Verify get_offset for "arr[1]".  */
   {
-    const region *arr_1_reg = model.get_lvalue (arr_1, NULL);
+    const region *arr_1_reg = model.get_lvalue (arr_1, nullptr);
     region_offset offset = arr_1_reg->get_offset (&mgr);
-    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, NULL));
+    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, nullptr));
     ASSERT_EQ (offset.get_bit_offset (), INT_TYPE_SIZE);
   }
 
   /* Verify get_offset for "arr[i]".  */
   {
-    const region *arr_i_reg = model.get_lvalue (arr_i, NULL);
+    const region *arr_i_reg = model.get_lvalue (arr_i, nullptr);
     region_offset offset = arr_i_reg->get_offset (&mgr);
-    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, NULL));
+    ASSERT_EQ (offset.get_base_region (), model.get_lvalue (arr, nullptr));
     const svalue *offset_sval = offset.get_symbolic_byte_offset ();
     if (const svalue *cast = offset_sval->maybe_undo_cast ())
       offset_sval = cast;
@@ -9998,14 +9329,15 @@ test_array_2 ()
   }
 
   /* "arr[i] = i;" - this should remove the earlier bindings.  */
-  model.set_value (arr_i, i, NULL);
-  ASSERT_EQ (model.get_rvalue (arr_i, NULL), model.get_rvalue (i, NULL));
-  ASSERT_EQ (model.get_rvalue (arr_0, NULL)->get_kind (), SK_UNKNOWN);
+  model.set_value (arr_i, i, nullptr);
+  ASSERT_EQ (model.get_rvalue (arr_i, nullptr), model.get_rvalue (i, nullptr));
+  ASSERT_EQ (model.get_rvalue (arr_0, nullptr)->get_kind (), SK_UNKNOWN);
 
   /* "arr[0] = 17;" - this should remove the arr[i] binding.  */
-  model.set_value (arr_0, int_17, NULL);
-  ASSERT_EQ (model.get_rvalue (arr_0, NULL), model.get_rvalue (int_17, NULL));
-  ASSERT_EQ (model.get_rvalue (arr_i, NULL)->get_kind (), SK_UNKNOWN);
+  model.set_value (arr_0, int_17, nullptr);
+  ASSERT_EQ (model.get_rvalue (arr_0, nullptr),
+	     model.get_rvalue (int_17, nullptr));
+  ASSERT_EQ (model.get_rvalue (arr_i, nullptr)->get_kind (), SK_UNKNOWN);
 }
 
 /* Smoketest of dereferencing a pointer via MEM_REF.  */
@@ -10032,12 +9364,12 @@ test_mem_ref ()
   region_model model (&mgr);
 
   /* "x = 17;".  */
-  model.set_value (x, int_17, NULL);
+  model.set_value (x, int_17, nullptr);
 
   /* "p = &x;".  */
-  model.set_value (p, addr_of_x, NULL);
+  model.set_value (p, addr_of_x, nullptr);
 
-  const svalue *sval = model.get_rvalue (star_p, NULL);
+  const svalue *sval = model.get_rvalue (star_p, nullptr);
   ASSERT_EQ (sval->maybe_get_constant (), int_17);
 }
 
@@ -10083,8 +9415,8 @@ test_POINTER_PLUS_EXPR_then_MEM_REF ()
   region_model m (&mgr);
 
   tree int_42 = build_int_cst (integer_type_node, 42);
-  m.set_value (mem_ref, int_42, NULL);
-  ASSERT_EQ (m.get_rvalue (mem_ref, NULL)->maybe_get_constant (), int_42);
+  m.set_value (mem_ref, int_42, nullptr);
+  ASSERT_EQ (m.get_rvalue (mem_ref, nullptr)->maybe_get_constant (), int_42);
 }
 
 /* Verify that malloc works.  */
@@ -10147,8 +9479,8 @@ test_alloca ()
 
   /* Verify that the pointers to the alloca region are replaced by
      poisoned values when the frame is popped.  */
-  model.pop_frame (NULL, NULL, &ctxt, nullptr);
-  ASSERT_EQ (model.get_rvalue (p, NULL)->get_kind (), SK_POISONED);
+  model.pop_frame (nullptr, nullptr, &ctxt, nullptr);
+  ASSERT_EQ (model.get_rvalue (p, nullptr)->get_kind (), SK_POISONED);
 }
 
 /* Verify that svalue::involves_p works.  */

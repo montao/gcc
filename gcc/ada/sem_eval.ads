@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -97,7 +97,7 @@ package Sem_Eval is
 
    --  For most legality checking purposes the flag Is_Static_Expression
    --  defined in Sinfo should be used. This package also provides a routine
-   --  called Is_OK_Static_Expression which in addition of checking that an
+   --  called Is_OK_Static_Expression which in addition to checking that an
    --  expression is static in the RM 4.9 sense, it checks that the expression
    --  does not raise constraint error. In fact for certain legality checks not
    --  only do we need to ascertain that the expression is static, but we must

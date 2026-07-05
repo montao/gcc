@@ -1,5 +1,5 @@
 /* Interprocedural Identical Code Folding pass
-   Copyright (C) 2014-2025 Free Software Foundation, Inc.
+   Copyright (C) 2014-2026 Free Software Foundation, Inc.
 
    Contributed by Jan Hubicka <hubicka@ucw.cz> and Martin Liska <mliska@suse.cz>
 
@@ -533,6 +533,10 @@ sem_function::equals_wpa (sem_item *item,
   cgraph_node *cnode2 = dyn_cast <cgraph_node *> (item->node);
 
   m_compared_func = static_cast<sem_function *> (item);
+
+  if (cnode->must_remain_in_tu_name || cnode2->must_remain_in_tu_name
+      || cnode->must_remain_in_tu_body || cnode2->must_remain_in_tu_body)
+    return return_false_with_msg ("must remain in TU");
 
   if (cnode->thunk != cnode2->thunk)
     return return_false_with_msg ("thunk mismatch");
@@ -1469,7 +1473,7 @@ sem_function::hash_stmt (gimple *stmt, inchash::hash &hstate)
 					  (&map, gimple_op (stmt, i));
 	    m_checker->hash_operand (gimple_op (stmt, i), hstate, 0,
 				     access_type);
-	    /* For memory accesses when hasing for LTO stremaing record
+	    /* For memory accesses when hashing for LTO streaming record
 	       base and ref alias ptr types so we can compare them at WPA
 	       time without having to read actual function body.  */
 	    if (access_type == func_checker::OP_MEMORY
@@ -1650,6 +1654,10 @@ sem_variable::equals_wpa (sem_item *item,
 			  hash_map <symtab_node *, sem_item *> &ignored_nodes)
 {
   gcc_assert (item->type == VAR);
+
+  if (node->must_remain_in_tu_name || item->node->must_remain_in_tu_name
+      || node->must_remain_in_tu_body || item->node->must_remain_in_tu_body)
+    return return_false_with_msg ("must remain in TU");
 
   if (node->num_references () != item->node->num_references ())
     return return_false_with_msg ("different number of references");
@@ -2166,7 +2174,9 @@ sem_item_optimizer::write_summary (void)
        !lsei_end_p (lsei);
        lsei_next_in_partition (&lsei))
     {
-      symtab_node *node = lsei_node (lsei);
+      symtab_node *node = dyn_cast <symtab_node *> (lsei_node (lsei));
+      if (!node)
+	continue;
 
       if (m_symtab_node_map.get (node))
 	count++;
@@ -2179,7 +2189,9 @@ sem_item_optimizer::write_summary (void)
        !lsei_end_p (lsei);
        lsei_next_in_partition (&lsei))
     {
-      symtab_node *node = lsei_node (lsei);
+      symtab_node *node = dyn_cast <symtab_node *> (lsei_node (lsei));
+      if (!node)
+	continue;
 
       sem_item **item = m_symtab_node_map.get (node);
 
@@ -2233,7 +2245,7 @@ sem_item_optimizer::read_section (lto_file_decl_data *file_data,
   for (i = 0; i < count; i++)
     {
       unsigned int index;
-      symtab_node *node;
+      toplevel_node *node;
       lto_symtab_encoder_t encoder;
 
       index = streamer_read_uhwi (&ib_main);
@@ -2241,12 +2253,11 @@ sem_item_optimizer::read_section (lto_file_decl_data *file_data,
       node = lto_symtab_encoder_deref (encoder, index);
 
       hashval_t hash = streamer_read_uhwi (&ib_main);
-      gcc_assert (node->definition);
+      if (symtab_node *snode = dyn_cast <symtab_node *> (node))
+	gcc_assert (snode->definition);
 
-      if (is_a<cgraph_node *> (node))
+      if (cgraph_node *cnode = dyn_cast <cgraph_node *> (node))
 	{
-	  cgraph_node *cnode = dyn_cast <cgraph_node *> (node);
-
 	  sem_function *fn = new sem_function (cnode, &m_bmstack);
 	  unsigned count = streamer_read_uhwi (&ib_main);
 	  inchash::hash hstate (0);
@@ -2263,10 +2274,8 @@ sem_item_optimizer::read_section (lto_file_decl_data *file_data,
 	  fn->set_hash (hash);
 	  m_items.safe_push (fn);
 	}
-      else
+      else if (varpool_node *vnode = dyn_cast <varpool_node *> (node))
 	{
-	  varpool_node *vnode = dyn_cast <varpool_node *> (node);
-
 	  sem_variable *var = new sem_variable (vnode, &m_bmstack);
 	  var->set_hash (hash);
 	  m_items.safe_push (var);
@@ -2786,7 +2795,7 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 		}
 
 	      // We replace newly created new_vector for the class we've just
-	      // splitted.
+	      // split.
 	      c->members.release ();
 	      c->members.create (new_vector.length ());
 
@@ -2954,7 +2963,7 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
   const congruence_class *splitter_cls = pair->cls;
 
   /* If counted bits are greater than zero and less than the number of members
-     a group will be splitted.  */
+     a group will be split.  */
   unsigned popcount = bitmap_count_bits (b);
 
   if (popcount > 0 && popcount < cls->members.length ())
@@ -3022,7 +3031,7 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
 
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
-	  fprintf (dump_file, "  congruence class splitted:\n");
+	  fprintf (dump_file, "  congruence class split:\n");
 	  cls->dump (dump_file, 4);
 
 	  fprintf (dump_file, "  newly created groups:\n");
@@ -3225,7 +3234,7 @@ sem_item_optimizer::process_cong_reduction (void)
 	     "new classes.\n", new_classes);
 }
 
-/* Debug function prints all informations about congruence classes.  */
+/* Debug function prints all information about congruence classes.  */
 
 void
 sem_item_optimizer::dump_cong_classes (void)

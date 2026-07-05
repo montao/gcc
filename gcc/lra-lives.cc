@@ -1,5 +1,5 @@
 /* Build live ranges for pseudos.
-   Copyright (C) 2010-2025 Free Software Foundation, Inc.
+   Copyright (C) 2010-2026 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -632,7 +632,7 @@ clear_sparseset_regnos (sparseset set, int regno, enum machine_mode mode)
 {
   if (regno >= FIRST_PSEUDO_REGISTER)
     {
-      sparseset_clear_bit (dead_set, regno);
+      sparseset_clear_bit (set, regno);
       return;
     }
   for (int last = end_hard_regno (mode, regno); regno < last; regno++)
@@ -645,7 +645,7 @@ static bool
 regnos_in_sparseset_p (sparseset set, int regno, enum machine_mode mode)
 {
   if (regno >= FIRST_PSEUDO_REGISTER)
-    return sparseset_bit_p (dead_set, regno);
+    return sparseset_bit_p (set, regno);
   for (int last = end_hard_regno (mode, regno); regno < last; regno++)
     if (!sparseset_bit_p (set, regno))
       return false;

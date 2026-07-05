@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -181,8 +181,8 @@ struct filespan_t : public bytespan_t {
     return p == eol;
   }
 
-  YYLTYPE as_location() const {
-    YYLTYPE loc;
+  cbl_loc_t as_location() const {
+    cbl_loc_t loc;
 
     loc.first_line = loc.last_line = 1 + iline;
     loc.first_column = loc.last_column = 1 + icol;
@@ -235,6 +235,8 @@ struct span_t {
 
   int size() const { return pend - p; }
 
+  size_t nlines() const { return p && pend? std::count(p, pend, '\n') : 0; }
+
   span_t dup() const {
     auto  output = new char[size() + 1];
     auto eout = std::copy(p, pend, output);
@@ -242,8 +244,15 @@ struct span_t {
     return span_t(output, eout);
   }
   const char * has_nul() const {
-    auto p = std::find(this->p, pend, '\0');
-    return p != pend? p : NULL;
+    auto p_l = std::find(this->p, pend, '\0');
+    return p_l != pend? p_l : NULL;
+  }
+
+  bool at_eol() const {
+    return p < pend && '\n' == pend[-1];
+  }
+  const char * optional_eol() const {
+    return at_eol() ? "" : "\n";
   }
 };
 

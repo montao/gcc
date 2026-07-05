@@ -1,6 +1,6 @@
 // Components for manipulating sequences of characters -*- C++ -*-
 
-// Copyright (C) 1997-2025 Free Software Foundation, Inc.
+// Copyright (C) 1997-2026 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -56,10 +56,9 @@
 # include <bits/ranges_util.h>          // ranges::subrange
 #endif
 
-#if __cplusplus > 202302L
+#if __glibcxx_to_string >= 202306L // C++ >= 26
 # include <charconv>
 #endif
-
 
 #if ! _GLIBCXX_USE_CXX11_ABI
 # include "cow_string.h"
@@ -136,20 +135,35 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 #endif
 
     private:
+      // For ABI reasons this must remain, though unused.
       static _GLIBCXX20_CONSTEXPR pointer
       _S_allocate(_Char_alloc_type& __a, size_type __n)
+      { return _Alloc_traits::allocate(__a, __n); }
+
+      struct _Alloc_result { pointer __ptr; size_type __count; };
+
+      static _GLIBCXX20_CONSTEXPR _Alloc_result
+      _S_allocate_at_least(_Char_alloc_type& __a, size_type __n)
       {
-	pointer __p = _Alloc_traits::allocate(__a, __n);
+	_Alloc_result __r;
+#ifdef __glibcxx_allocate_at_least  // C++23
+	auto [__ptr, __count] = _Alloc_traits::allocate_at_least(__a, __n);
+	__r.__ptr = __ptr;
+	__r.__count = __count;
+#else
+	__r.__ptr = _Alloc_traits::allocate(__a, __n);
+	__r.__count = __n;
+#endif
 #if __glibcxx_constexpr_string >= 201907L
 	// std::char_traits begins the lifetime of characters,
 	// but custom traits might not, so do it here.
 	if constexpr (!is_same_v<_Traits, char_traits<_CharT>>)
 	  if (std::__is_constant_evaluated())
 	    // Begin the lifetime of characters in allocated storage.
-	    for (size_type __i = 0; __i < __n; ++__i)
-	      std::construct_at(__builtin_addressof(__p[__i]));
+	    for (size_type __i = 0; __i < __r.__count; ++__i)
+	      std::construct_at(__builtin_addressof(__r.__ptr[__i]));
 #endif
-	return __p;
+	return __r;
       }
 
 #ifdef __glibcxx_string_view // >= C++17
@@ -269,8 +283,8 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       void
       _M_set_length(size_type __n)
       {
-	_M_length(__n);
 	traits_type::assign(_M_data()[__n], _CharT());
+	_M_length(__n);
       }
 
       _GLIBCXX20_CONSTEXPR
@@ -287,6 +301,21 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       }
 
       // Create & Destroy
+      _GLIBCXX20_CONSTEXPR
+      _Alloc_result
+      _M_create_plus(size_type __new_capacity, size_type __old_capacity);
+
+      __attribute__((__always_inline__))
+      _GLIBCXX20_CONSTEXPR
+      void
+      _M_create_and_place(size_type __new_capacity, size_type __old_capacity)
+	{
+	  _Alloc_result __r = _M_create_plus(__new_capacity, __old_capacity);
+	  _M_data(__r.__ptr);
+	  _M_capacity(__r.__count - 1);  // Leave room for NUL.
+	}
+
+      // This must remain for ABI stability though unused.
       _GLIBCXX20_CONSTEXPR
       pointer
       _M_create(size_type&, size_type);
@@ -354,6 +383,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	void
 	_M_construct(const _CharT *__c, size_type __n);
 
+#if __cplusplus >= 202302L
+      constexpr void
+      _M_construct(basic_string&& __str, size_type __pos,  size_type __n);
+#endif
+
       _GLIBCXX20_CONSTEXPR
       allocator_type&
       _M_get_allocator()
@@ -411,7 +445,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	if (__pos > this->size())
 	  __throw_out_of_range_fmt(__N("%s: __pos (which is %zu) > "
 				       "this->size() (which is %zu)"),
-				   __s, __pos, this->size());
+				   __s, (size_t)__pos, (size_t)this->size());
 	return __pos;
       }
 
@@ -670,6 +704,26 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	_M_construct(__start, __start + __str._M_limit(__pos, __n),
 		     std::forward_iterator_tag());
       }
+
+#if __cplusplus >= 202302L
+      _GLIBCXX20_CONSTEXPR
+      basic_string(basic_string&& __str, size_type __pos,
+		   const _Alloc& __a = _Alloc())
+      : _M_dataplus(_M_local_data(), __a)
+      {
+	__pos = __str._M_check(__pos, "string::string");
+	_M_construct(std::move(__str), __pos, __str.length() - __pos);
+      }
+
+      _GLIBCXX20_CONSTEXPR
+      basic_string(basic_string&& __str, size_type __pos, size_type __n,
+		   const _Alloc& __a = _Alloc())
+      : _M_dataplus(_M_local_data(), __a)
+      {
+	__pos = __str._M_check(__pos, "string::string");
+	_M_construct(std::move(__str), __pos, __str._M_limit(__pos, __n));
+      }
+#endif // C++23
 
       /**
        *  @brief  Construct string initialized by a character %array.
@@ -1307,7 +1361,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       /**
        *  Equivalent to shrink_to_fit().
        */
-#if __cplusplus > 201703L
+#if __cplusplus >= 202002L
       [[deprecated("use shrink_to_fit() instead")]]
 #endif
       _GLIBCXX20_CONSTEXPR
@@ -1713,6 +1767,20 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	      + std::__sv_check(__sv.size(), __pos, "basic_string::append"),
 	      std::__sv_limit(__sv.size(), __pos, __n));
 	}
+
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 3662. basic_string::append/assign(NTBS, pos, n) suboptimal
+      /**
+       *  @brief  Append a C substring.
+       *  @param __s  The C string to append.
+       *  @param __pos  The position in the C string to append from.
+       *  @param __n  The number of characters to append.
+       *  @return  Reference to this string.
+       */
+      _GLIBCXX20_CONSTEXPR
+      basic_string&
+      append(const _CharT* __s, size_type __pos, size_type __n)
+      { return append(__sv_type(__s).substr(__pos, __n)); }
 #endif // C++17
 
       /**
@@ -1758,10 +1826,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 		    const auto __len = __str.size();
 		    auto __alloc = __str._M_get_allocator();
 		    // If this allocation throws there are no effects:
-		    auto __ptr = _S_allocate(__alloc, __len + 1);
+		    auto __r = _S_allocate_at_least(__alloc, __len + 1);
 		    _M_destroy(_M_allocated_capacity);
-		    _M_data(__ptr);
-		    _M_capacity(__len);
+		    _M_data(__r.__ptr);
+		    _M_capacity(__r.__count - 1);
 		    _M_set_length(__len);
 		  }
 	      }
@@ -1986,6 +2054,20 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	      + std::__sv_check(__sv.size(), __pos, "basic_string::assign"),
 	      std::__sv_limit(__sv.size(), __pos, __n));
 	}
+
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 3662. basic_string::append/assign(NTBS, pos, n) suboptimal
+      /**
+       *  @brief  Set value to a C substring.
+       *  @param __s  The C string to use.
+       *  @param __pos  The position in the C string to assign from.
+       *  @param __n  Number of characters to use.
+       *  @return  Reference to this string.
+       */
+      _GLIBCXX20_CONSTEXPR
+      basic_string&
+      assign(const _CharT* __s, size_type __pos, size_type __n)
+      { return assign(__sv_type(__s).substr(__pos, __n)); }
 #endif // C++17
 
 #if __cplusplus >= 201103L
@@ -3442,6 +3524,37 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       { return basic_string(*this,
 			    _M_check(__pos, "basic_string::substr"), __n); }
 
+#if __cplusplus >= 202302L
+      _GLIBCXX_NODISCARD
+      constexpr basic_string
+      substr(size_type __pos = 0) &&
+      { return basic_string(std::move(*this), __pos); }
+
+      _GLIBCXX_NODISCARD
+      constexpr basic_string
+      substr(size_type __pos, size_type __n) &&
+      { return basic_string(std::move(*this), __pos, __n); }
+#endif // C++23
+
+#ifdef __glibcxx_string_subview // >= C++26
+      /**
+       *  @brief  Get a subview.
+       *  @param __pos  Index of first character (default 0).
+       *  @param __n  Number of characters in subview (default remainder).
+       *  @return  The subview.
+       *  @throw  std::out_of_range  If __pos > size().
+       *
+       *  Construct and return a subview using the `__n` characters starting at
+       *  `__pos`.  If the string is too short, use the remainder of the
+       *  characters.  If `__pos` is beyond the end of the string, out_of_range
+       *  is thrown.
+      */
+      [[nodiscard]]
+      constexpr basic_string_view<_CharT, _Traits>
+      subview(size_type __pos = 0, size_type __n = npos) const
+      { return __sv_type(*this).subview(__pos, __n); }
+#endif
+
       /**
        *  @brief  Compare to a string.
        *  @param __str  String to compare against.
@@ -3505,7 +3618,6 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
 	_If_sv<_Tp, int>
 	compare(size_type __pos, size_type __n, const _Tp& __svt) const
-	noexcept(is_same<_Tp, __sv_type>::value)
 	{
 	  __sv_type __sv = __svt;
 	  return __sv_type(*this).substr(__pos, __n).compare(__sv);
@@ -3526,7 +3638,6 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	_If_sv<_Tp, int>
 	compare(size_type __pos1, size_type __n1, const _Tp& __svt,
 		size_type __pos2, size_type __n2 = npos) const
-	noexcept(is_same<_Tp, __sv_type>::value)
 	{
 	  __sv_type __sv = __svt;
 	  return __sv_type(*this)
@@ -4524,11 +4635,17 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   { return std::stod(__str, __idx); }
 #endif
 
+#if __glibcxx_constexpr_string >= 202511L
+# define _GLIBCXX_TO_STRING_CONSTEXPR constexpr
+#else
+# define _GLIBCXX_TO_STRING_CONSTEXPR inline
+#endif
+
   // _GLIBCXX_RESOLVE_LIB_DEFECTS
-  // DR 1261. Insufficent overloads for to_string / to_wstring
+  // DR 1261. Insufficient overloads for to_string / to_wstring
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(int __val)
 #if _GLIBCXX_USE_CXX11_ABI && (__CHAR_BIT__ * __SIZEOF_INT__) <= 32
   noexcept // any 32-bit value fits in the SSO buffer
@@ -4547,7 +4664,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   }
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(unsigned __val)
 #if _GLIBCXX_USE_CXX11_ABI && (__CHAR_BIT__ * __SIZEOF_INT__) <= 32
   noexcept // any 32-bit value fits in the SSO buffer
@@ -4563,7 +4680,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   }
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(long __val)
 #if _GLIBCXX_USE_CXX11_ABI && (__CHAR_BIT__ * __SIZEOF_LONG__) <= 32
   noexcept // any 32-bit value fits in the SSO buffer
@@ -4582,7 +4699,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   }
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(unsigned long __val)
 #if _GLIBCXX_USE_CXX11_ABI && (__CHAR_BIT__ * __SIZEOF_LONG__) <= 32
   noexcept // any 32-bit value fits in the SSO buffer
@@ -4598,7 +4715,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   }
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(long long __val)
   {
     const bool __neg = __val < 0;
@@ -4615,7 +4732,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   }
 
   _GLIBCXX_NODISCARD
-  inline string
+  _GLIBCXX_TO_STRING_CONSTEXPR string
   to_string(unsigned long long __val)
   {
     const auto __len = __detail::__to_chars_len(__val);
@@ -4839,32 +4956,32 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 #pragma GCC diagnostic pop
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(int __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(unsigned __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(long __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(unsigned long __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(long long __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
   _GLIBCXX_NODISCARD
-  inline wstring
+  _GLIBCXX_TO_STRING_CONSTEXPR wstring
   to_wstring(unsigned long long __val)
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 
@@ -4885,6 +5002,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   { return std::__to_wstring_numeric(std::to_string(__val)); }
 #endif
 #endif // _GLIBCXX_USE_WCHAR_T
+#undef _GLIBCXX_TO_STRING_CONSTEXPR
 
 _GLIBCXX_END_NAMESPACE_CXX11
 _GLIBCXX_END_NAMESPACE_VERSION

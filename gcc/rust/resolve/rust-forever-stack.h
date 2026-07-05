@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -25,6 +25,8 @@
 #include "rust-path.h"
 #include "optional.h"
 #include "expected.h"
+#include "rust-name-resolution.h"
+#include "rust-unwrap-segment.h"
 
 namespace Rust {
 namespace Resolver2_0 {
@@ -543,6 +545,95 @@ private:
   Node root;
 };
 
+enum class ResolutionMode
+{
+  Normal,
+  FromRoot,
+  FromExtern, // extern prelude
+};
+
+class ResolutionPath
+{
+public:
+  template <typename T>
+  ResolutionPath (const std::vector<T> &segments_in, NodeId node_id)
+    : node_id (node_id)
+  {
+    segments.clear ();
+    segments.reserve (segments_in.size ());
+    for (auto &outer_seg : segments_in)
+      {
+	if (auto lang_item = unwrap_segment_get_lang_item (outer_seg))
+	  {
+	    rust_assert (!lang_prefix.has_value ());
+	    lang_prefix = std::make_pair (lang_item.value (),
+					  unwrap_segment_node_id (outer_seg));
+	    continue;
+	  }
+
+	auto &seg = unwrap_type_segment (outer_seg);
+
+	Segment new_seg;
+	new_seg.name = seg.as_string ();
+	new_seg.node_id = unwrap_segment_node_id (outer_seg);
+	new_seg.locus = seg.get_locus ();
+	segments.push_back (std::move (new_seg));
+      }
+  }
+
+  ResolutionPath () : node_id (UNKNOWN_NODEID) {}
+
+  struct Segment
+  {
+    std::string name;
+    NodeId node_id;
+    location_t locus;
+
+    bool is_super_path_seg () const { return name.compare ("super") == 0; }
+    bool is_crate_path_seg () const { return name.compare ("crate") == 0; }
+    bool is_lower_self_seg () const { return name.compare ("self") == 0; }
+    bool is_big_self_seg () const { return name.compare ("Self") == 0; }
+  };
+
+  tl::optional<std::pair<LangItem::Kind, NodeId>> get_lang_prefix () const
+  {
+    return lang_prefix;
+  }
+
+  const std::vector<Segment> &get_segments () const { return segments; }
+
+  NodeId get_node_id () const { return node_id; }
+
+  std::string as_string () const
+  {
+    std::string ret;
+    if (lang_prefix)
+      ret = "#[lang]::";
+    for (auto &seg : segments)
+      ret += "::" + seg.name;
+    return ret;
+  }
+
+private:
+  tl::optional<std::pair<LangItem::Kind, NodeId>> lang_prefix;
+  std::vector<Segment> segments;
+  NodeId node_id;
+};
+
+/**
+ * Error enum for finding leaf definitions in the resolved_nodes map
+ */
+enum class LookupFinalizeError
+{
+  // Impossible - we did not find any definition corresponding to a Usage.
+  // This is an internal compiler error
+  NoDefinition,
+  // There was a loop in the map, such as an import resolving to another
+  // import which eventually resolved to the original import. Report the
+  // error and stop the pipeline
+  Loop,
+};
+
 template <Namespace N> class ForeverStack
 {
 public:
@@ -642,6 +733,14 @@ public:
   tl::expected<NodeId, DuplicateNameError> insert_at_root (Identifier name,
 							   NodeId id);
 
+  /**
+   * Insert an item within the lang prelude
+   *
+   * @param name The name of the definition
+   * @param id Its NodeId
+   */
+  void insert_lang_prelude (Identifier name, NodeId id);
+
   /* Access the innermost `Rib` in this map */
   Rib &peek ();
   const Rib &peek () const;
@@ -661,23 +760,8 @@ public:
   tl::optional<Rib::Definition> get (const Identifier &name);
   tl::optional<Rib::Definition> get_lang_prelude (const Identifier &name);
   tl::optional<Rib::Definition> get_lang_prelude (const std::string &name);
-
-  /**
-   * Resolve a path to its definition in the current `ForeverStack`
-   *
-   * // TODO: Add documentation for `segments`
-   *
-   * @return a valid option with the Definition if the path is present in the
-   *         current map, an empty one otherwise.
-   */
-  template <typename S>
-  tl::optional<Rib::Definition> resolve_path (
-    const std::vector<S> &segments, bool has_opening_scope_resolution,
-    std::function<void (const S &, NodeId)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-
-  // FIXME: Documentation
-  tl::optional<Resolver::CanonicalPath> to_canonical_path (NodeId id) const;
+  tl::optional<Rib::Definition> get_from_prelude (NodeId prelude,
+						  const Identifier &name);
 
   // FIXME: Documentation
   tl::optional<Rib &> to_rib (NodeId rib_id);
@@ -691,7 +775,6 @@ public:
    */
   bool is_module_descendant (NodeId parent, NodeId child) const;
 
-private:
   /**
    * A link between two Nodes in our trie data structure. This class represents
    * the edges of the graph
@@ -739,6 +822,8 @@ private:
     tl::optional<Node &> parent; // `None` only if the node is a root
   };
 
+  tl::optional<Rib::Definition> get (Node &start, const Identifier &name);
+
   /* Should we keep going upon seeing a Rib? */
   enum class KeepGoing
   {
@@ -760,6 +845,7 @@ private:
 
   Node &cursor ();
   const Node &cursor () const;
+
   void update_cursor (Node &new_cursor);
 
   /* The forever stack's actual nodes */
@@ -770,6 +856,7 @@ private:
    * resolution
    */
   Node lang_prelude;
+
   /*
    * The extern prelude, used for resolving external crates
    */
@@ -780,32 +867,21 @@ private:
   void stream_rib (std::stringstream &stream, const Rib &rib,
 		   const std::string &next, const std::string &next_next) const;
   void stream_node (std::stringstream &stream, unsigned indentation,
-		    const Node &node) const;
+		    const Node &node, unsigned depth = 0) const;
 
   /* Helper types and functions for `resolve_path` */
 
-  template <typename S>
-  using SegIterator = typename std::vector<S>::const_iterator;
+  using SegIterator =
+    typename std::vector<ResolutionPath::Segment>::const_iterator;
 
   Node &find_closest_module (Node &starting_point);
 
-  template <typename S>
-  tl::optional<SegIterator<S>> find_starting_point (
-    const std::vector<S> &segments,
-    std::reference_wrapper<Node> &starting_point,
-    std::function<void (const S &, NodeId)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-
-  template <typename S>
-  tl::optional<Node &> resolve_segments (
-    Node &starting_point, const std::vector<S> &segments,
-    SegIterator<S> iterator,
-    std::function<void (const S &, NodeId)> insert_segment_resolution,
-    std::vector<Error> &collect_errors);
-
-  tl::optional<Rib::Definition> resolve_final_segment (Node &final_node,
-						       std::string &seg_name,
-						       bool is_lower_self);
+  tl::optional<SegIterator>
+  find_starting_point (const std::vector<ResolutionPath::Segment> &segments,
+		       std::reference_wrapper<Node> &starting_point,
+		       std::function<void (Usage, Definition, Namespace)>
+			 insert_segment_resolution,
+		       std::vector<Error> &collect_errors);
 
   /* Helper functions for forward resolution (to_canonical_path, to_rib...) */
   struct DfsResult
@@ -832,7 +908,6 @@ private:
   tl::optional<const Node &> dfs_node (const Node &starting_point,
 				       NodeId to_find) const;
 
-public:
   bool forward_declared (NodeId definition, NodeId usage)
   {
     if (peek ().kind != Rib::Kind::ForwardTypeParamBan)
@@ -846,6 +921,43 @@ public:
     return (definition_rib
 	    && definition_rib.value ().kind == Rib::Kind::ForwardTypeParamBan);
   }
+
+  void map_usage (Usage usage, Definition definition)
+  {
+    resolved_nodes.emplace (usage, definition);
+
+    // auto inserted = resolved_nodes.emplace (usage, definition);
+
+    // is that valid?
+    // FIXME: Yikes
+    // rust_assert (inserted.first->first.id == definition.id);
+  }
+
+  tl::optional<NodeId> lookup (NodeId usage) const
+  {
+    auto it = resolved_nodes.find (Usage (usage));
+
+    if (it == resolved_nodes.end ())
+      return tl::nullopt;
+
+    return it->second.id;
+  }
+
+  tl::expected<Definition, LookupFinalizeError>
+  find_leaf_definition (const NodeId &key) const;
+
+  // Flattening is not needed for now but should be used later?
+#if 0
+  /**
+   * Look at NameResolutionContext::flatten - This is the inner working function
+   * which works on one specific namespace, while NameResolutionContext::flatten
+   * calls flatten for every namespace
+   */
+  void flatten ();
+#endif
+
+  /* Map of "usage" nodes which have been resolved to a "definition" node */
+  std::map<Usage, Definition> resolved_nodes;
 };
 
 } // namespace Resolver2_0

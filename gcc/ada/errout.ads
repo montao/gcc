@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -32,6 +32,7 @@ with Err_Vars;
 with Erroutc;
 with Errid;    use Errid;
 with Namet;    use Namet;
+with Osint;    use Osint;
 with Table;
 with Types;    use Types;
 with Uintp;    use Uintp;
@@ -482,6 +483,9 @@ package Errout is
    --  not get reset by any Error_Msg call, so the caller is responsible
    --  for resetting it.
 
+   Error_Msg_Qual_For_Standard : Boolean renames
+     Err_Vars.Error_Msg_Qual_For_Standard;
+
    Error_Msg_Warn : Boolean renames Err_Vars.Error_Msg_Warn;
    --  Used if current message contains a < insertion character to indicate
    --  if the current message is a warning message. Must be set appropriately
@@ -716,9 +720,9 @@ package Errout is
    --  and must be set True on the last call (a value of True activates some
    --  processing that must only be done after all messages are posted).
 
-   procedure Output_Messages;
+   procedure Output_Messages (Exit_Code : Exit_Code_Type);
    --  Output list of messages, including messages giving number of detected
-   --  errors and warnings.
+   --  errors and warnings and store the exit code used.
 
    procedure Error_Msg
      (Msg : String; Flag_Location : Source_Ptr);
@@ -906,8 +910,8 @@ package Errout is
    --  where the expression is parenthesized, an attempt is made to include
    --  the parentheses (i.e. to return the location of the final paren).
 
-   procedure Purge_Messages (From : Source_Ptr; To : Source_Ptr)
-     renames Erroutc.Purge_Messages;
+   procedure Delete_Error_Msgs_In_Range (From : Source_Ptr; To : Source_Ptr)
+   renames Erroutc.Delete_Error_Msgs_In_Range;
    --  All error messages whose location is in the range From .. To (not
    --  including the end points) will be deleted from the error listing.
 
@@ -1046,6 +1050,12 @@ package Errout is
 
    function Edit (Text : String; Span : Source_Span) return Edit_Type;
    --  Constructs a Edit structure with all of its attributes.
+
+   function Insertion (Text : String; Location : Source_Ptr) return Edit_Type;
+   --  Constructs a Edit used to insert Text into the given Location
+
+   function Deletion (Span : Source_Span) return Edit_Type;
+   --  Constructs a Edit used to delete a given section of the source file
 
    function Fix (Description : String; Edits : Edit_Array) return Fix_Type;
    --  Constructs a Fix structure with all of its attributes.

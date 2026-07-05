@@ -1,5 +1,5 @@
 /* Costs of operations of individual x86 CPUs.
-   Copyright (C) 1988-2025 Free Software Foundation, Inc.
+   Copyright (C) 1988-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -141,6 +141,12 @@ struct processor_costs ix86_size_cost = {/* costs for tuning for size */
   COSTS_N_BYTES (4),			/* cost of CVT(T)PS2PI instruction.  */
   
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   ix86_size_memcpy,
   ix86_size_memset,
   COSTS_N_BYTES (1),			/* cond_taken_branch_cost.  */
@@ -261,6 +267,12 @@ struct processor_costs i386_cost = {	/* 386 specific costs */
   COSTS_N_INSNS (27),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (27),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   i386_memcpy,
   i386_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -382,6 +394,12 @@ struct processor_costs i486_cost = {	/* 486 specific costs */
   COSTS_N_INSNS (27),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (27),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   i486_memcpy,
   i486_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -501,6 +519,12 @@ struct processor_costs pentium_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   pentium_memcpy,
   pentium_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -613,6 +637,12 @@ struct processor_costs lakemont_cost = {
   COSTS_N_INSNS (5),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (5),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   pentium_memcpy,
   pentium_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -740,6 +770,12 @@ struct processor_costs pentiumpro_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   pentiumpro_memcpy,
   pentiumpro_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -858,6 +894,12 @@ struct processor_costs geode_cost = {
   COSTS_N_INSNS (6),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (6),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   geode_memcpy,
   geode_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -979,6 +1021,12 @@ struct processor_costs k6_cost = {
   COSTS_N_INSNS (2),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (2),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   k6_memcpy,
   k6_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -1101,6 +1149,12 @@ struct processor_costs athlon_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (6),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   athlon_memcpy,
   athlon_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -1232,6 +1286,12 @@ struct processor_costs k8_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (5),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   k8_memcpy,
   k8_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -1371,6 +1431,12 @@ struct processor_costs amdfam10_cost = {
   COSTS_N_INSNS (7),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   amdfam10_memcpy,
   amdfam10_memset,
   COSTS_N_INSNS (2),			/* cond_taken_branch_cost.  */
@@ -1503,6 +1569,12 @@ const struct processor_costs bdver_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 2, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   bdver_memcpy,
   bdver_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -1544,7 +1616,7 @@ struct processor_costs znver1_cost = {
   /* Start of register allocator costs.  integer->integer move cost is 2. */
 
   /* reg-reg moves are done by renaming and thus they are even cheaper than
-     1 cycle. Becuase reg-reg move cost is 2 and the following tables correspond
+     1 cycle. Because reg-reg move cost is 2 and the following tables correspond
      to doubles of latencies, we do not model this correctly.  It does not
      seem to make practical difference to bump prices up even more.  */
   6,					/* cost for loading QImode using
@@ -1668,6 +1740,12 @@ struct processor_costs znver1_cost = {
      plus/minus operations per cycle but only one multiply.  This is adjusted
      in ix86_reassociation_width.  */
   4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {5, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   znver1_memcpy,
   znver1_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -1836,6 +1914,12 @@ struct processor_costs znver2_cost = {
      plus/minus operations per cycle but only one multiply.  This is adjusted
      in ix86_reassociation_width.  */
   4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {10, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   znver2_memcpy,
   znver2_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -1979,6 +2063,12 @@ struct processor_costs znver3_cost = {
      plus/minus operations per cycle but only one multiply.  This is adjusted
      in ix86_reassociation_width.  */
   4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 6},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   znver2_memcpy,
   znver2_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -2125,6 +2215,12 @@ struct processor_costs znver4_cost = {
      plus/minus operations per cycle but only one multiply.  This is adjusted
      in ix86_reassociation_width.  */
   4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 6},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   znver2_memcpy,
   znver2_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -2259,13 +2355,13 @@ struct processor_costs znver5_cost = {
   /* FMA had throughput 2 and latency 4.  */
   COSTS_N_INSNS (4),			/* cost of FMA SS instruction.  */
   COSTS_N_INSNS (4),			/* cost of FMA SD instruction.  */
-  /* DIVSS has throughtput 0.4 and latency 10.  */
+  /* DIVSS has throughput 0.4 and latency 10.  */
   COSTS_N_INSNS (10),			/* cost of DIVSS instruction.  */
-  /* DIVSD has throughtput 0.25 and latency 13.  */
+  /* DIVSD has throughput 0.25 and latency 13.  */
   COSTS_N_INSNS (13),			/* cost of DIVSD instruction.  */
-  /* DIVSD has throughtput 0.22 and latency 14.  */
+  /* DIVSD has throughput 0.22 and latency 14.  */
   COSTS_N_INSNS (14),			/* cost of SQRTSS instruction.  */
-  /* DIVSD has throughtput 0.13 and latency 20.  */
+  /* DIVSD has throughput 0.13 and latency 20.  */
   COSTS_N_INSNS (20),			/* cost of SQRTSD instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVTSS2SD etc.  */
   COSTS_N_INSNS (5),			/* cost of 256bit VCVTPS2PD etc.  */
@@ -2282,11 +2378,17 @@ struct processor_costs znver5_cost = {
 	for register pressure.
       - fp ops: 2 additions per cycle, latency 2-3
 		2 multiplicaitons per cycle, latency 3
-      - vector intger ops: 4 additions, latency 1
+      - vector integer ops: 4 additions, latency 1
 			   2 multiplications, latency 4
 	We increase width to 6 for multiplications
 	in ix86_reassociation_width.  */
   6, 6, 4, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 6},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   znver2_memcpy,
   znver2_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -2300,7 +2402,7 @@ struct processor_costs znver5_cost = {
   COSTS_N_INSNS (2),			/* Branch mispredict scale.  */
 };
 
-/* skylake_cost should produce code tuned for Skylake familly of CPUs.  */
+/* skylake_cost should produce code tuned for Skylake family of CPUs.  */
 static stringop_algs skylake_memcpy[2] =   {
   {libcall,
    {{256, rep_prefix_1_byte, true},
@@ -2422,6 +2524,12 @@ struct processor_costs skylake_cost = {
   COSTS_N_INSNS (6),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (7),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 2, 2,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   skylake_memcpy,
   skylake_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -2559,6 +2667,12 @@ struct processor_costs icelake_cost = {
   COSTS_N_INSNS (7),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (6),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 2, 2,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 10, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   icelake_memcpy,
   icelake_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -2690,6 +2804,12 @@ struct processor_costs alderlake_cost = {
   COSTS_N_INSNS (7),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (6),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 3, 3,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   alderlake_memcpy,
   alderlake_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -2814,6 +2934,12 @@ const struct processor_costs btver1_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   btver1_memcpy,
   btver1_memset,
   COSTS_N_INSNS (2),			/* cond_taken_branch_cost.  */
@@ -2935,6 +3061,12 @@ const struct processor_costs btver2_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   btver2_memcpy,
   btver2_memset,
   COSTS_N_INSNS (2),			/* cond_taken_branch_cost.  */
@@ -3055,6 +3187,12 @@ struct processor_costs pentium4_cost = {
   COSTS_N_INSNS (12),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (8),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   pentium4_memcpy,
   pentium4_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -3178,6 +3316,12 @@ struct processor_costs nocona_cost = {
   COSTS_N_INSNS (12),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (8),			/* cost of CVT(T)PS2PI instruction.  */
   1, 1, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {1, 1, 1},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   nocona_memcpy,
   nocona_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -3299,6 +3443,12 @@ struct processor_costs atom_cost = {
   COSTS_N_INSNS (6),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   2, 2, 2, 2,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  2,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   atom_memcpy,
   atom_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -3420,6 +3570,12 @@ struct processor_costs slm_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 2, 1, 1,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   slm_memcpy,
   slm_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -3555,6 +3711,12 @@ struct processor_costs tremont_cost = {
   COSTS_N_INSNS (4),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 3, 3,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   tremont_memcpy,
   tremont_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -3681,6 +3843,12 @@ struct processor_costs lujiazui_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 3, 3,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   lujiazui_memcpy,
   lujiazui_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -3805,6 +3973,12 @@ struct processor_costs yongfeng_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   4, 4, 4, 4,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   yongfeng_memcpy,
   yongfeng_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -3929,6 +4103,12 @@ struct processor_costs shijidadao_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   4, 4, 4, 4,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   shijidadao_memcpy,
   shijidadao_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -4078,6 +4258,12 @@ struct processor_costs generic_cost = {
   COSTS_N_INSNS (3),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (3),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 3, 3,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   generic_memcpy,
   generic_memset,
   COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
@@ -4088,10 +4274,10 @@ struct processor_costs generic_cost = {
   "16",					/* Func alignment.  */
   4,					/* Small unroll limit.  */
   2,					/* Small unroll factor.  */
-  COSTS_N_INSNS (2),			/* Branch mispredict scale.  */
+  COSTS_N_INSNS (2) + 3,		/* Branch mispredict scale.  */
 };
 
-/* core_cost should produce code tuned for Core familly of CPUs.  */
+/* core_cost should produce code tuned for Core family of CPUs.  */
 static stringop_algs core_memcpy[2] = {
   {libcall, {{1024, rep_prefix_4_byte, true}, {-1, libcall, false}}},
   {libcall, {{24, loop, true}, {128, rep_prefix_8_byte, true},
@@ -4215,6 +4401,12 @@ struct processor_costs core_cost = {
   COSTS_N_INSNS (6),			/* cost of CVTPI2PS instruction.  */
   COSTS_N_INSNS (7),			/* cost of CVT(T)PS2PI instruction.  */
   1, 4, 2, 2,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 3},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  1,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
   core_memcpy,
   core_memset,
   COSTS_N_INSNS (3),			/* cond_taken_branch_cost.  */
@@ -4228,3 +4420,305 @@ struct processor_costs core_cost = {
   COSTS_N_INSNS (2),			/* Branch mispredict scale.  */
 };
 
+/*  C86_4G_M4 has optimized REP instruction for medium sized blocks, but for
+    very small blocks it is better to use loop.  For large blocks, libcall
+    can do nontemporary accesses and beat inline considerably.  */
+static stringop_algs c86_4g_m4_memcpy[2] = {
+  /* 32-bit tuning.  */
+  {libcall, {{6, loop, false},
+	     {14, unrolled_loop, false},
+	     {-1, libcall, false}}},
+  /* 64-bit tuning.  */
+  {libcall, {{16, loop, false},
+	     {128, rep_prefix_8_byte, false},
+	     {-1, libcall, false}}}};
+static stringop_algs c86_4g_m4_memset[2] = {
+  /* 32-bit tuning.  */
+  {libcall, {{8, loop, false},
+	     {24, unrolled_loop, false},
+	     {128, rep_prefix_4_byte, false},
+	     {-1, libcall, false}}},
+  /* 64-bit tuning.  */
+  {libcall, {{48, unrolled_loop, false},
+	     {128, rep_prefix_8_byte, false},
+	     {-1, libcall, false}}}};
+static const
+struct processor_costs c86_4g_m4_cost = {
+  {
+  /* Start of register allocator costs.  integer->integer move cost is 2.  */
+
+  /* reg-reg moves are done by renaming and thus they are even cheaper than
+     1 cycle.  Because reg-reg move cost is 2 and the following tables
+     correspond to doubles of latencies, we do not model this correctly.
+     It does not seem to make practical difference to bump prices up even
+     more.  */
+  6,					/* cost for loading QImode using
+					   movzbl.  */
+  {6, 6, 6},				/* cost of loading integer registers
+					   in QImode, HImode and SImode.
+					   Relative to reg-reg move (2).  */
+  {8, 8, 8},				/* cost of storing integer
+					   registers.  */
+  2,					/* cost of reg,reg fld/fst.  */
+  {6, 6, 16},				/* cost of loading fp registers
+					   in SFmode, DFmode and XFmode.  */
+  {8, 8, 16},				/* cost of storing fp registers
+					   in SFmode, DFmode and XFmode.  */
+  2,					/* cost of moving MMX register.  */
+  {6, 6},				/* cost of loading MMX registers
+					   in SImode and DImode.  */
+  {8, 8},				/* cost of storing MMX registers
+					   in SImode and DImode.  */
+  2, 3, 6,				/* cost of moving XMM,YMM,ZMM register.  */
+  {6, 6, 6, 12, 24},			/* cost of loading SSE registers
+					   in 32,64,128,256 and 512-bit.  */
+  {8, 8, 8, 16, 32},			/* cost of storing SSE registers
+					   in 32,64,128,256 and 512-bit.  */
+  6, 6,				/* SSE->integer and integer->SSE moves.  */
+  8, 8,				/* mask->integer and integer->mask moves */
+  {6, 6, 6},				/* cost of loading mask register
+					   in QImode, HImode, SImode.  */
+  {8, 8, 8},				/* cost if storing mask register
+					   in QImode, HImode, SImode.  */
+  2,					/* cost of moving mask register.  */
+  /* End of register allocator costs.  */
+  },
+
+  COSTS_N_INSNS (1),			/* cost of an add instruction.  */
+  COSTS_N_INSNS (1),			/* cost of a lea instruction.  */
+  COSTS_N_INSNS (1),			/* variable shift costs.  */
+  COSTS_N_INSNS (1),			/* constant shift costs.  */
+  {COSTS_N_INSNS (3),			/* cost of starting multiply for QI.  */
+   COSTS_N_INSNS (3),			/*				 HI.  */
+   COSTS_N_INSNS (3),			/*				 SI.  */
+   COSTS_N_INSNS (3),			/*				 DI.  */
+   COSTS_N_INSNS (3)},			/*			      other.  */
+  0,					/* cost of multiply per each bit
+					    set.  */
+   /* Depending on parameters, idiv can get faster on HYGON.  This is upper
+      bound.  */
+  {COSTS_N_INSNS (16),			/* cost of a divide/mod for QI.  */
+   COSTS_N_INSNS (22),			/*			    HI.  */
+   COSTS_N_INSNS (30),			/*			    SI.  */
+   COSTS_N_INSNS (45),			/*			    DI.  */
+   COSTS_N_INSNS (45)},			/*			    other.  */
+  COSTS_N_INSNS (1),			/* cost of movsx.  */
+  COSTS_N_INSNS (1),			/* cost of movzx.  */
+  8,					/* "large" insn.  */
+  9,					/* MOVE_RATIO.  */
+  6,					/* CLEAR_RATIO */
+  {6, 6, 6},				/* cost of loading integer registers
+					   in QImode, HImode and SImode.
+					   Relative to reg-reg move (2).  */
+  {8, 8, 8},				/* cost of storing integer
+					   registers.  */
+  {6, 6, 6, 12, 24},			/* cost of loading SSE register
+					   in 32bit, 64bit, 128bit, 256bit and 512bit */
+  {8, 8, 8, 16, 32},			/* cost of storing SSE register
+					   in 32bit, 64bit, 128bit, 256bit and 512bit */
+  {6, 6, 6, 12, 24},			/* cost of unaligned loads.  */
+  {8, 8, 8, 16, 32},			/* cost of unaligned stores.  */
+  2, 3, 6,				/* cost of moving XMM,YMM,ZMM register.  */
+  6,					/* cost of moving SSE register to integer.  */
+  6,					/* cost of moving integer register to SSE.  */
+
+  18, 8,				/* Gather load static, per_elt.  */
+  18, 10,				/* Gather store static, per_elt.  */
+  32,					/* size of l1 cache.  */
+  512,					/* size of l2 cache.  */
+  64,					/* size of prefetch block.  */
+  /* C86_4G_M4 processors never drop prefetches; if they cannot be performed
+     immediately, they are queued.  We set number of simultaneous prefetches
+     to a large constant to reflect this (it probably is not a good idea not
+     to limit number of prefetches at all, as their execution also takes some
+     time).  */
+  100,					/* number of parallel prefetches.  */
+  3,					/* Branch cost.  */
+  COSTS_N_INSNS (5),			/* cost of FADD and FSUB insns.  */
+  COSTS_N_INSNS (5),			/* cost of FMUL instruction.  */
+
+  COSTS_N_INSNS (15),			/* cost of FDIV instruction.  */
+  COSTS_N_INSNS (1),			/* cost of FABS instruction.  */
+  COSTS_N_INSNS (1),			/* cost of FCHS instruction.  */
+
+  COSTS_N_INSNS (10),			/* cost of FSQRT instruction.  */
+
+  COSTS_N_INSNS (1),			/* cost of cheap SSE instruction.  */
+  COSTS_N_INSNS (3),			/* cost of ADDSS/SD SUBSS/SD insns.  */
+  COSTS_N_INSNS (3),			/* cost of MULSS instruction.  */
+  COSTS_N_INSNS (4),			/* cost of MULSD instruction.  */
+  COSTS_N_INSNS (5),			/* cost of FMA SS instruction.  */
+  COSTS_N_INSNS (5),			/* cost of FMA SD instruction.  */
+  COSTS_N_INSNS (10),			/* cost of DIVSS instruction.  */
+
+  COSTS_N_INSNS (13),			/* cost of DIVSD instruction.  */
+  COSTS_N_INSNS (10),			/* cost of SQRTSS instruction.  */
+  COSTS_N_INSNS (15),			/* cost of SQRTSD instruction.  */
+
+  COSTS_N_INSNS (4),			/* cost of CVTSS2SD etc.  */
+  COSTS_N_INSNS (5),			/* cost of 256bit VCVTPS2PD etc.  */
+  COSTS_N_INSNS (10),			/* cost of 512bit VCVTPS2PD etc.  */
+  COSTS_N_INSNS (5),			/* cost of CVTSI2SS instruction.  */
+  COSTS_N_INSNS (5),			/* cost of CVT(T)SS2SI instruction.  */
+  COSTS_N_INSNS (5),			/* cost of CVTPI2PS instruction.  */
+  COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
+
+  4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 1, 6},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
+  c86_4g_m4_memcpy,
+  c86_4g_m4_memset,
+  COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
+  COSTS_N_INSNS (2),			/* cond_not_taken_branch_cost.  */
+  "16",					/* Loop alignment.  */
+  "16",					/* Jump alignment.  */
+  "0:0:8",				/* Label alignment.  */
+  "16",					/* Func alignment.  */
+  4,					/* Small unroll limit.  */
+  2,					/* Small unroll factor.  */
+  COSTS_N_INSNS (2),			/* Branch mispredict scale.  */
+};
+
+struct processor_costs c86_4g_m6_cost = c86_4g_m4_cost;
+
+struct processor_costs c86_4g_m7_cost = {
+  {
+  /* Start of register allocator costs.  integer->integer move cost is 2.  */
+
+  /* reg-reg moves are done by renaming and thus they are even cheaper than
+     1 cycle.  Because reg-reg move cost is 2 and following tables correspond
+     to doubles of latencies, we do not model this correctly.  It does not
+     seem to make practical difference to bump prices up even more.  */
+  6,					/* cost for loading QImode using
+					   movzbl.  */
+  {6, 6, 6},				/* cost of loading integer registers
+					   in QImode, HImode and SImode.
+					   Relative to reg-reg move (2).  */
+  {8, 8, 8},				/* cost of storing integer
+					   registers.  */
+  2,					/* cost of reg,reg fld/fst.  */
+  {14, 14, 17},				/* cost of loading fp registers
+					   in SFmode, DFmode and XFmode.  */
+  {12, 12, 16},				/* cost of storing fp registers
+					   in SFmode, DFmode and XFmode.  */
+  2,					/* cost of moving MMX register.  */
+  {6, 6},				/* cost of loading MMX registers
+					   in SImode and DImode.  */
+  {8, 8},				/* cost of storing MMX registers
+					   in SImode and DImode.  */
+  2, 2, 3,				/* cost of moving XMM,YMM,ZMM
+					   register.  */
+  {6, 6, 10, 10, 20},			/* cost of loading SSE registers
+					   in 32,64,128,256 and 512-bit.  */
+  {8, 8, 8, 12, 24},			/* cost of storing SSE registers
+					   in 32,64,128,256 and 512-bit.  */
+  6, 8,					/* SSE->integer and integer->SSE
+					   moves.  */
+  8, 8,					/* mask->integer and integer->mask moves */
+  {6, 6, 6},				/* cost of loading mask register
+					   in QImode, HImode, SImode.  */
+  {8, 8, 8},				/* cost if storing mask register
+					   in QImode, HImode, SImode.  */
+  2,					/* cost of moving mask register.  */
+  /* End of register allocator costs.  */
+  },
+
+  COSTS_N_INSNS (1),			/* cost of an add instruction.  */
+
+  COSTS_N_INSNS (1),			/* cost of a lea instruction.  */
+  COSTS_N_INSNS (1),			/* variable shift costs.  */
+  COSTS_N_INSNS (1),			/* constant shift costs.  */
+  {COSTS_N_INSNS (3),			/* cost of starting multiply for QI.  */
+   COSTS_N_INSNS (3),			/* 				 HI.  */
+   COSTS_N_INSNS (3),			/*				 SI.  */
+   COSTS_N_INSNS (3),			/*				 DI.  */
+   COSTS_N_INSNS (3)},			/*			other.  */
+  0,					/* cost of multiply per each bit
+					   set.  */
+  {COSTS_N_INSNS (15),			/* cost of a divide/mod for QI.  */
+   COSTS_N_INSNS (17),			/* 			    HI.  */
+   COSTS_N_INSNS (25),			/*			    SI.  */
+   COSTS_N_INSNS (41),			/*			    DI.  */
+   COSTS_N_INSNS (41)},			/*			    other.  */
+  COSTS_N_INSNS (1),			/* cost of movsx.  */
+  COSTS_N_INSNS (1),			/* cost of movzx.  */
+  8,					/* "large" insn.  */
+  9,					/* MOVE_RATIO.  */
+  6,					/* CLEAR_RATIO */
+  {6, 6, 6},				/* cost of loading integer registers
+					   in QImode, HImode and SImode.
+					   Relative to reg-reg move (2).  */
+  {8, 8, 8},				/* cost of storing integer
+					   registers.  */
+  {6, 6, 10, 10, 20},			/* cost of loading SSE registers
+					   in 32bit, 64bit, 128bit, 256bit and 512bit */
+  {8, 8, 8, 12, 24},			/* cost of storing SSE register
+					   in 32bit, 64bit, 128bit, 256bit and 512bit */
+  {6, 6, 10, 10, 20},			/* cost of unaligned loads.  */
+  {8, 8, 8, 12, 24},			/* cost of unaligned stores.  */
+  2, 2, 3,				/* cost of moving XMM,YMM,ZMM
+					   register.  */
+  6,					/* cost of moving SSE register to integer.  */
+  6,					/* cost of moving integer register to SSE.  */
+
+  14, 10,				/* Gather load static, per_elt.  */
+  14, 20,				/* Gather store static, per_elt.  */
+  32,					/* size of l1 cache.  */
+  512,					/* size of l2 cache.  */
+  64,					/* size of prefetch block.  */
+
+  100,					/* number of parallel prefetches.  */
+  3,					/* Branch cost.  */
+  COSTS_N_INSNS (5),			/* cost of FADD and FSUB insns.  */
+  COSTS_N_INSNS (5),			/* cost of FMUL instruction.  */
+
+  COSTS_N_INSNS (15),			/* cost of FDIV instruction.  */
+  COSTS_N_INSNS (1),			/* cost of FABS instruction.  */
+  COSTS_N_INSNS (1),			/* cost of FCHS instruction.  */
+
+  COSTS_N_INSNS (22),			/* cost of FSQRT instruction.  */
+
+  COSTS_N_INSNS (1),			/* cost of cheap SSE instruction.  */
+  COSTS_N_INSNS (3),			/* cost of ADDSS/SD SUBSS/SD insns.  */
+  COSTS_N_INSNS (3),			/* cost of MULSS instruction.  */
+  COSTS_N_INSNS (3),			/* cost of MULSD instruction.  */
+  COSTS_N_INSNS (4),			/* cost of FMA SS instruction.  */
+  COSTS_N_INSNS (4),			/* cost of FMA SD instruction.  */
+  COSTS_N_INSNS (13),			/* cost of DIVSS instruction.  */
+
+  COSTS_N_INSNS (10),			/* cost of DIVSD instruction.  */
+  COSTS_N_INSNS (14),			/* cost of SQRTSS instruction.  */
+  COSTS_N_INSNS (20),			/* cost of SQRTSD instruction.  */
+
+  COSTS_N_INSNS (4),			/* cost of CVTSS2SD etc.  */
+  COSTS_N_INSNS (5),			/* cost of 256bit VCVTPS2PD etc.  */
+  COSTS_N_INSNS (10),			/* cost of 512bit VCVTPS2PD etc.  */
+  COSTS_N_INSNS (5),			/* cost of CVTSI2SS instruction.  */
+  COSTS_N_INSNS (5),			/* cost of CVT(T)SS2SI instruction.  */
+  COSTS_N_INSNS (5),			/* cost of CVTPI2PS instruction.  */
+  COSTS_N_INSNS (4),			/* cost of CVT(T)PS2PI instruction.  */
+  4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
+  {8, 8, 6},				/* latency times throughput of
+					   FMA/DOT_PROD_EXPR/SAD_EXPR,
+					   it's used to determine unroll
+					   factor in the vectorizer.  */
+  4,					/* Limit how much the autovectorizer
+					   may unroll a loop.  */
+  c86_4g_m4_memcpy,
+  c86_4g_m4_memset,
+  COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
+  COSTS_N_INSNS (2),			/* cond_not_taken_branch_cost.  */
+  "16",					/* Loop alignment.  */
+  "16",					/* Jump alignment.  */
+  "0:0:8",				/* Label alignment.  */
+  "16",					/* Func alignment.  */
+  4,					/* Small unroll limit.  */
+  2,					/* Small unroll factor.  */
+  COSTS_N_INSNS (2),			/* Branch mispredict scale.  */
+};
+
+struct processor_costs c86_4g_m8_cost = c86_4g_m7_cost;

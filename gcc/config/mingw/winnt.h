@@ -1,5 +1,5 @@
 /* Subroutines for targets on Windows.
-Copyright (C) 2024-2025 Free Software Foundation, Inc.
+Copyright (C) 2024-2026 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
@@ -20,6 +20,7 @@ http://www.gnu.org/licenses/.  */
 
 #ifndef USED_FOR_TARGET
 
+extern tree aarch64_handle_ms_abi_attribute (tree *, tree, tree, int, bool *);
 extern tree mingw_handle_selectany_attribute (tree *, tree, tree, int, bool *);
 
 extern void mingw_pe_asm_named_section (const char *, unsigned int, tree);

@@ -1,5 +1,5 @@
 /* Declarations for rtx-reader support for gen* routines.
-   Copyright (C) 2000-2025 Free Software Foundation, Inc.
+   Copyright (C) 2000-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -110,6 +110,8 @@ extern unsigned int num_optabs;
 
 extern vec<const char *> register_filters;
 extern unsigned int get_register_filter_id (const char *);
+
+extern unsigned int num_dependent_filters;
 
 /* Information about an instruction name that matches an optab pattern.  */
 struct optab_pattern

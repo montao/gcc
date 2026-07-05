@@ -1,5 +1,5 @@
 /* Expands front end tree to back end RTL for GCC.
-   Copyright (C) 1987-2025 Free Software Foundation, Inc.
+   Copyright (C) 1987-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -85,6 +85,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "value-range.h"
 #include "gimple-range.h"
 #include "insn-attr.h"
+#include "hierarchical_discriminator.h"
 
 /* So we can assign to cfun in this file.  */
 #undef cfun
@@ -217,6 +218,7 @@ free_after_compilation (struct function *f)
   f->cfg = NULL;
   f->curr_properties &= ~PROP_cfg;
   delete f->cond_uids;
+  free_copyid_allocator (f);
 
   regno_reg_rtx = NULL;
 }
@@ -706,7 +708,7 @@ temp_address_hasher::equal (temp_slot_address_entry *t1,
   return exp_equiv_p (t1->address, t2->address, 0, true);
 }
 
-/* Add ADDRESS as an alias of TEMP_SLOT to the addess -> temp slot mapping.  */
+/* Add ADDRESS as an alias of TEMP_SLOT to the address -> temp slot mapping.  */
 static void
 insert_temp_slot_address (rtx address, class temp_slot *temp_slot)
 {
@@ -2823,7 +2825,7 @@ assign_parm_remove_parallels (struct assign_parm_data_one *data)
    always valid and properly aligned.  */
 
 static void
-assign_parm_adjust_stack_rtl (struct assign_parm_data_one *data)
+assign_parm_adjust_stack_rtl (tree parm, struct assign_parm_data_one *data)
 {
   rtx stack_parm = data->stack_parm;
 
@@ -2838,7 +2840,14 @@ assign_parm_adjust_stack_rtl (struct assign_parm_data_one *data)
 						 MEM_ALIGN (stack_parm))))
 	  || (data->nominal_type
 	      && TYPE_ALIGN (data->nominal_type) > MEM_ALIGN (stack_parm)
-	      && MEM_ALIGN (stack_parm) < PREFERRED_STACK_BOUNDARY)))
+	      && ((MEM_ALIGN (stack_parm)
+		   < MIN (BIGGEST_ALIGNMENT, MAX_SUPPORTED_STACK_ALIGNMENT))
+		  /* If its address is taken, make a local copy whose
+		     maximum alignment is MAX_SUPPORTED_STACK_ALIGNMENT.
+		   */
+		  || (TREE_ADDRESSABLE (parm)
+		      && (MEM_ALIGN (stack_parm)
+			  < MAX_SUPPORTED_STACK_ALIGNMENT))))))
     stack_parm = NULL;
 
   /* If parm was passed in memory, and we need to convert it on entry,
@@ -3712,7 +3721,7 @@ assign_parms (tree fndecl)
       else
 	set_decl_incoming_rtl (parm, data.entry_parm, false);
 
-      assign_parm_adjust_stack_rtl (&data);
+      assign_parm_adjust_stack_rtl (parm, &data);
 
       if (assign_parm_setup_block_p (&data))
 	assign_parm_setup_block (&all, parm, &data);
@@ -4965,6 +4974,10 @@ prepare_function_start (void)
 
   /* Indicate we have no need of a frame pointer yet.  */
   frame_pointer_needed = 0;
+
+  /* Reset the cache of the "extended" flag in the target's
+     _BitInt info struct.  */
+  bitint_extended = -1;
 }
 
 void
@@ -5919,7 +5932,7 @@ gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
 	    1. it is a call-used register;
 	and 2. it is not a fixed register;
 	and 3. it is not live at the return of the routine;
-	and 4. it is general registor if only_gpr is true;
+	and 4. it is general register if only_gpr is true;
 	and 5. it is used in the routine if only_used is true;
 	and 6. it is a register that passes parameter if only_arg is true.  */
 
@@ -7009,6 +7022,115 @@ match_asm_constraints_1 (rtx_insn *insn, rtx *p_sets, int noutputs)
     df_insn_rescan (insn);
 }
 
+/* It is expected and desired that optimizations coalesce multiple pseudos into
+   one whenever possible.  However, in case of hard register constraints we may
+   have to undo this and introduce copies since otherwise we could constraint a
+   single pseudo to different hard registers.  For example, during register
+   allocation the following insn would be unsatisfiable since pseudo 60 is
+   constrained to hard register r5 and r6 at the same time.
+
+   (insn 7 5 0 2 (asm_operands/v ("foo") ("") 0 [
+	       (reg:DI 60) repeated x2
+	   ]
+	    [
+	       (asm_input:DI ("{r5}") t.c:4)
+	       (asm_input:DI ("{r6}") t.c:4)
+	   ]
+	    [] t.c:4) "t.c":4:3 -1
+	(expr_list:REG_DEAD (reg:DI 60)
+	   (nil)))
+
+   Therefore, introduce a copy of pseudo 60 and transform it into
+
+   (insn 10 5 7 2 (set (reg:DI 62)
+	   (reg:DI 60)) "t.c":4:3 1503 {*movdi_64}
+	(nil))
+   (insn 7 10 11 2 (asm_operands/v ("foo") ("") 0 [
+	       (reg:DI 60)
+	       (reg:DI 62)
+	   ]
+	    [
+	       (asm_input:DI ("{r5}") t.c:4)
+	       (asm_input:DI ("{r6}") t.c:4)
+	   ]
+	    [] t.c:4) "t.c":4:3 -1
+	(expr_list:REG_DEAD (reg:DI 62)
+	   (expr_list:REG_DEAD (reg:DI 60)
+	       (nil))))
+
+   Now, LRA can assign pseudo 60 to r5, and pseudo 62 to r6.
+
+   TODO: The current implementation is conservative and we could do a bit
+   better in case of alternatives.  For example
+
+   (insn 7 5 0 2 (asm_operands/v ("foo") ("") 0 [
+	       (reg:DI 60) repeated x2
+	   ]
+	    [
+	       (asm_input:DI ("r,{r5}") t.c:4)
+	       (asm_input:DI ("{r6},r") t.c:4)
+	   ]
+	    [] t.c:4) "t.c":4:3 -1
+	(expr_list:REG_DEAD (reg:DI 60)
+	   (nil)))
+
+   For this insn we wouldn't need to come up with a copy of pseudo 60 since in
+   each alternative pseudo 60 is constrained exactly one time.  */
+
+static void
+match_asm_constraints_2 (rtx_insn *insn, rtx pat)
+{
+  rtx op;
+  if (GET_CODE (pat) == SET && GET_CODE (SET_SRC (pat)) == ASM_OPERANDS)
+    op = SET_SRC (pat);
+  else if (GET_CODE (pat) == ASM_OPERANDS)
+    op = pat;
+  else
+    return;
+  int ninputs = ASM_OPERANDS_INPUT_LENGTH (op);
+  rtvec inputs = ASM_OPERANDS_INPUT_VEC (op);
+  bool changed = false;
+  auto_bitmap constrained_regs;
+
+  for (int i = 0; i < ninputs; ++i)
+    {
+      rtx input = RTVEC_ELT (inputs, i);
+      const char *constraint = ASM_OPERANDS_INPUT_CONSTRAINT (op, i);
+      if ((!REG_P (input) && !SUBREG_P (input))
+	  || (REG_P (input) && HARD_REGISTER_P (input))
+	  || strchr (constraint, '{') == nullptr)
+	continue;
+      int regno;
+      if (SUBREG_P (input))
+	{
+	  if (REG_P (SUBREG_REG (input)))
+	    regno = REGNO (SUBREG_REG (input));
+	  else
+	    continue;
+	}
+      else
+	regno = REGNO (input);
+      /* Keep the first usage of a constrained pseudo as is and only
+	 introduce copies for subsequent usages.  */
+      if (! bitmap_bit_p (constrained_regs, regno))
+	{
+	  bitmap_set_bit (constrained_regs, regno);
+	  continue;
+	}
+      rtx tmp = gen_reg_rtx (GET_MODE (input));
+      start_sequence ();
+      emit_move_insn (tmp, input);
+      rtx_insn *insns = get_insns ();
+      end_sequence ();
+      emit_insn_before (insns, insn);
+      RTVEC_ELT (inputs, i) = tmp;
+      changed = true;
+    }
+
+  if (changed)
+    df_insn_rescan (insn);
+}
+
 /* Add the decl D to the local_decls list of FUN.  */
 
 void
@@ -7065,6 +7187,13 @@ pass_match_asm_constraints::execute (function *fun)
 	    continue;
 
 	  pat = PATTERN (insn);
+
+	  if (GET_CODE (pat) == PARALLEL)
+	    for (int i = XVECLEN (pat, 0) - 1; i >= 0; --i)
+	      match_asm_constraints_2 (insn, XVECEXP (pat, 0, i));
+	  else
+	    match_asm_constraints_2 (insn, pat);
+
 	  if (GET_CODE (pat) == PARALLEL)
 	    p_sets = &XVECEXP (pat, 0, 0), noutputs = XVECLEN (pat, 0);
 	  else if (GET_CODE (pat) == SET)

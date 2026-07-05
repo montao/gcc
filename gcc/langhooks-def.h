@@ -1,5 +1,5 @@
 /* Default macros to initialize the lang_hooks data structure.
-   Copyright (C) 2001-2025 Free Software Foundation, Inc.
+   Copyright (C) 2001-2026 Free Software Foundation, Inc.
    Contributed by Alexandre Oliva  <aoliva@redhat.com>
 
 This file is part of GCC.
@@ -23,7 +23,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "hooks.h"
 
-struct diagnostic_info;
+namespace diagnostics { struct diagnostic_info; }
 class substring_loc;
 
 /* Note to creators of new hooks:
@@ -49,9 +49,9 @@ extern void lhd_print_tree_nothing (FILE *, tree, int);
 extern const char *lhd_decl_printable_name (tree, int);
 extern const char *lhd_dwarf_name (tree, int);
 extern int lhd_types_compatible_p (tree, tree);
-extern void lhd_print_error_function (diagnostic_text_output_format &,
+extern void lhd_print_error_function (diagnostics::text_sink &,
 				      const char *,
-				      const struct diagnostic_info *);
+				      const diagnostics::diagnostic_info *);
 extern void lhd_set_decl_assembler_name (tree decl);
 extern void lhd_overwrite_decl_assembler_name (tree decl, tree name);
 extern bool lhd_warn_unused_global_decl (const_tree);
@@ -71,7 +71,7 @@ extern tree lhd_builtin_function (tree);
 extern tree lhd_enum_underlying_base_type (const_tree);
 
 /* Declarations of default tree inlining hooks.  */
-extern void lhd_initialize_diagnostics (diagnostic_context *);
+extern void lhd_initialize_diagnostics (diagnostics::context *);
 extern void lhd_init_options (unsigned int,
 			      struct cl_decoded_option *);
 extern bool lhd_complain_wrong_lang_p (const struct cl_option *);
@@ -263,6 +263,7 @@ extern tree lhd_unit_size_without_reusable_padding (tree);
 #define LANG_HOOKS_POST_COMPILATION_PARSING_CLEANUPS NULL
 #define LANG_HOOKS_DECL_OK_FOR_SIBCALL	lhd_decl_ok_for_sibcall
 #define LANG_HOOKS_OMP_ARRAY_DATA	hook_tree_tree_bool_null
+#define LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE hook_bool_tree_false
 #define LANG_HOOKS_OMP_ARRAY_SIZE	lhd_omp_array_size
 #define LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR hook_bool_const_tree_false
 #define LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT hook_tree_tree_bool_null
@@ -305,7 +306,8 @@ extern tree lhd_unit_size_without_reusable_padding (tree);
   LANG_HOOKS_POST_COMPILATION_PARSING_CLEANUPS, \
   LANG_HOOKS_DECL_OK_FOR_SIBCALL, \
   LANG_HOOKS_OMP_ARRAY_DATA, \
-  LANG_HOOKS_OMP_ARRAY_SIZE, \
+  LANG_HOOKS_OMP_ARRAY_DATA_PRIVATIZE, \
+  LANG_HOOKS_OMP_ARRAY_SIZE,		\
   LANG_HOOKS_OMP_IS_ALLOCATABLE_OR_PTR, \
   LANG_HOOKS_OMP_CHECK_OPTIONAL_ARGUMENT, \
   LANG_HOOKS_OMP_PRIVATIZE_BY_REFERENCE, \

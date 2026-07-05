@@ -1,5 +1,5 @@
 /* Code translation -- generate GCC trees from gfc_code.
-   Copyright (C) 2002-2025 Free Software Foundation, Inc.
+   Copyright (C) 2002-2026 Free Software Foundation, Inc.
    Contributed by Paul Brook
 
 This file is part of GCC.
@@ -33,6 +33,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "trans-array.h"
 #include "trans-types.h"
 #include "trans-const.h"
+#include "trans-descriptor.h"
 
 /* Naming convention for backend interface code:
 
@@ -44,6 +45,8 @@ along with GCC; see the file COPYING3.  If not see
 
 const char gfc_msg_fault[] = N_("Array reference out of bounds");
 
+/* Nonzero if we're translating a defined assignment call. */
+int is_assign_call = 0;
 
 /* Advance along TREE_CHAIN n times.  */
 
@@ -1568,7 +1571,10 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
 	  gfc_init_se (&se, NULL);
 	  if (expr1->rank)
 	    {
-	      gfc_conv_expr_descriptor (&se, expr1);
+	      /* Avoid calling trans-array.cc(set_factored_descriptor_value) by
+		 not using gfc_conv_expr_descriptor.  */
+	      se.descriptor_only = 1;
+	      gfc_conv_expr (&se, expr1);
 	      ptr = gfc_conv_descriptor_data_get (se.expr);
 	    }
 	  else
@@ -1607,7 +1613,7 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
 
 void
 gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
-			symbol_attribute attr, int rank)
+			const symbol_attribute &attr, int rank)
 {
   tree vptr, final_fndecl, desc, tmp, size, is_final;
   tree data_ptr, data_null, cond;
@@ -1619,11 +1625,17 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
     return;
 
   /* Derived type function results with components that have defined
-     assignements are handled in resolve.cc(generate_component_assignments)  */
-  if (derived && (derived->attr.is_c_interop
-		  || derived->attr.is_iso_c
-		  || derived->attr.is_bind_c
-		  || derived->attr.defined_assign_comp))
+     assignments are handled in resolve.cc(generate_component_assignments),
+     unless the assignment was replaced by a subroutine call to the
+     subroutine associated with the assignment operator. */
+  if ( ! is_assign_call
+       && derived && (derived->attr.is_c_interop
+       || derived->attr.is_iso_c
+       || derived->attr.is_bind_c
+       || (derived->attr.extension && derived->f2k_derived
+	   && derived->f2k_derived->tb_op[INTRINSIC_ASSIGN])
+       || (!derived->attr.extension
+	   && derived->attr.defined_assign_comp)))
     return;
 
   if (is_class)
@@ -1638,12 +1650,15 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
     }
   else if (derived && gfc_is_finalizable (derived, NULL))
     {
-      if (!derived->components && (!rank || attr.elemental))
+      tree type = TREE_TYPE (se->expr);
+      if (type && TYPE_SIZE_UNIT (type)
+	  && integer_zerop (TYPE_SIZE_UNIT (type))
+	  && (!rank || attr.elemental))
 	{
 	  /* Any attempt to assign zero length entities, causes the gimplifier
 	     all manner of problems. Instead, a variable is created to act as
-	     as the argument for the final call.  */
-	  desc = gfc_create_var (TREE_TYPE (se->expr), "zero");
+	     the argument for the final call.  */
+	  desc = gfc_create_var (type, "zero");
 	}
       else if (se->direct_byref)
 	{
@@ -1740,7 +1755,7 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
 			     gfc_call_free (data_ptr),
 			     build_empty_stmt (input_location));
       gfc_add_expr_to_block (&se->loop->post, tmp);
-      gfc_add_modify (&se->loop->post, data_ptr, data_null);
+      gfc_conv_descriptor_data_set (&se->loop->post, desc, data_null);
     }
   else
     {
@@ -1754,7 +1769,7 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
 				 gfc_call_free (data_ptr),
 				 build_empty_stmt (input_location));
 	  gfc_add_expr_to_block (&se->finalblock, tmp);
-	  gfc_add_modify (&se->finalblock, data_ptr, data_null);
+	  gfc_conv_descriptor_data_set (&se->finalblock, desc, data_null);
 	}
     }
 }
@@ -2425,8 +2440,12 @@ trans_code (gfc_code * code, tree cond)
 	  break;
 
 	case EXEC_ASSIGN_CALL:
+	  /* Record that an assignment call is being processed, to
+	     ensure finalization occurs in gfc_finalize_tree_expr */
+	  is_assign_call = 1;
 	  res = gfc_trans_call (code, true, NULL_TREE,
 				NULL_TREE, false);
+	  is_assign_call = 0;
 	  break;
 
 	case EXEC_RETURN:
@@ -2678,7 +2697,9 @@ trans_code (gfc_code * code, tree cond)
 
       if (res != NULL_TREE && ! IS_EMPTY_STMT (res))
 	{
-	  if (TREE_CODE (res) != STATEMENT_LIST)
+	  /* Don't try to set location for trees that don't have one,
+	     e.g. STATEMENT_LIST or error_mark_node.  */
+	  if (EXPR_P (res))
 	    SET_EXPR_LOCATION (res, input_location);
 
 	  /* Add the new statement to the block.  */

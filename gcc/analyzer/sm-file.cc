@@ -1,5 +1,5 @@
 /* A state machine for detecting misuses of <stdio.h>'s FILE * API.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -20,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "analyzer/common.h"
 
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "selftest.h"
 
 #include "analyzer/analyzer-logging.h"
@@ -62,12 +62,9 @@ public:
   }
 
   bool on_stmt (sm_context &sm_ctxt,
-		const supernode *node,
 		const gimple *stmt) const final override;
 
   void on_condition (sm_context &sm_ctxt,
-		     const supernode *node,
-		     const gimple *stmt,
 		     const svalue *lhs,
 		     enum tree_code op,
 		     const svalue *rhs) const final override;
@@ -155,18 +152,20 @@ public:
     return false;
   }
 
-  diagnostic_event::meaning
+  diagnostics::paths::event::meaning
   get_meaning_for_state_change (const evdesc::state_change &change)
     const final override
   {
+    using event = diagnostics::paths::event;
+
     if (change.m_old_state == m_sm.get_start_state ()
 	&& change.m_new_state == m_sm.m_unchecked)
-      return diagnostic_event::meaning (diagnostic_event::VERB_acquire,
-					diagnostic_event::NOUN_resource);
+      return event::meaning (event::verb::acquire,
+			     event::noun::resource);
     if (change.m_new_state == m_sm.m_closed)
-      return diagnostic_event::meaning (diagnostic_event::VERB_release,
-					diagnostic_event::NOUN_resource);
-    return diagnostic_event::meaning ();
+      return event::meaning (event::verb::release,
+			     event::noun::resource);
+    return event::meaning ();
   }
 
 protected:
@@ -225,7 +224,7 @@ public:
   }
 
 private:
-  diagnostic_event_id_t m_first_fclose_event;
+  diagnostics::paths::event_id_t m_first_fclose_event;
 };
 
 class file_leak : public file_diagnostic
@@ -303,7 +302,7 @@ public:
   }
 
 private:
-  diagnostic_event_id_t m_fopen_event;
+  diagnostics::paths::event_id_t m_fopen_event;
   std::unique_ptr<program_state> m_final_state;
 };
 
@@ -406,7 +405,6 @@ is_file_using_fn_p (tree fndecl)
 
 bool
 fileptr_state_machine::on_stmt (sm_context &sm_ctxt,
-				const supernode *node,
 				const gimple *stmt) const
 {
   if (const gcall *call = dyn_cast <const gcall *> (stmt))
@@ -416,7 +414,7 @@ fileptr_state_machine::on_stmt (sm_context &sm_ctxt,
 	  {
 	    tree lhs = gimple_call_lhs (call);
 	    if (lhs)
-	      sm_ctxt.on_transition (node, stmt, lhs, m_start, m_unchecked);
+	      sm_ctxt.on_transition (lhs, m_start, m_unchecked);
 	    else
 	      {
 		/* TODO: report leak.  */
@@ -428,21 +426,21 @@ fileptr_state_machine::on_stmt (sm_context &sm_ctxt,
 	  {
 	    tree arg = gimple_call_arg (call, 0);
 
-	    sm_ctxt.on_transition (node, stmt, arg, m_start, m_closed);
+	    sm_ctxt.on_transition (arg, m_start, m_closed);
 
 	    // TODO: is it safe to call fclose (NULL) ?
-	    sm_ctxt.on_transition (node, stmt, arg, m_unchecked, m_closed);
-	    sm_ctxt.on_transition (node, stmt, arg, m_null, m_closed);
+	    sm_ctxt.on_transition (arg, m_unchecked, m_closed);
+	    sm_ctxt.on_transition (arg, m_null, m_closed);
 
-	    sm_ctxt.on_transition (node, stmt , arg, m_nonnull, m_closed);
+	    sm_ctxt.on_transition (arg, m_nonnull, m_closed);
 
-	    if (sm_ctxt.get_state (stmt, arg) == m_closed)
+	    if (sm_ctxt.get_state (arg) == m_closed)
 	      {
 		tree diag_arg = sm_ctxt.get_diagnostic_tree (arg);
-		sm_ctxt.warn (node, stmt, arg,
+		sm_ctxt.warn (arg,
 			      std::make_unique<double_fclose> (*this,
 							       diag_arg));
-		sm_ctxt.set_next_state (stmt, arg, m_stop);
+		sm_ctxt.set_next_state (arg, m_stop);
 	      }
 	    return true;
 	  }
@@ -464,8 +462,6 @@ fileptr_state_machine::on_stmt (sm_context &sm_ctxt,
 
 void
 fileptr_state_machine::on_condition (sm_context &sm_ctxt,
-				     const supernode *node,
-				     const gimple *stmt,
 				     const svalue *lhs,
 				     enum tree_code op,
 				     const svalue *rhs) const
@@ -483,14 +479,12 @@ fileptr_state_machine::on_condition (sm_context &sm_ctxt,
   if (op == NE_EXPR)
     {
       log ("got 'ARG != 0' match");
-      sm_ctxt.on_transition (node, stmt,
-			     lhs, m_unchecked, m_nonnull);
+      sm_ctxt.on_transition (lhs, m_unchecked, m_nonnull);
     }
   else if (op == EQ_EXPR)
     {
       log ("got 'ARG == 0' match");
-      sm_ctxt.on_transition (node, stmt,
-			     lhs, m_unchecked, m_null);
+      sm_ctxt.on_transition (lhs, m_unchecked, m_null);
     }
 }
 
@@ -685,12 +679,17 @@ register_known_file_functions (known_function_manager &kfm)
   kfm.add (BUILT_IN_VPRINTF, std::make_unique<kf_stdio_output_fn> ());
 
   kfm.add ("ferror", std::make_unique<kf_ferror> ());
+  kfm.add ("ferror_unlocked", std::make_unique<kf_ferror> ());
   kfm.add ("fgets", std::make_unique<kf_fgets> ());
   kfm.add ("fgets_unlocked", std::make_unique<kf_fgets> ()); // non-standard
   kfm.add ("fileno", std::make_unique<kf_fileno> ());
+  kfm.add ("fileno_unlocked", std::make_unique<kf_fileno> ());
   kfm.add ("fread", std::make_unique<kf_fread> ());
+  kfm.add ("fread_unlocked", std::make_unique<kf_fread> ());
   kfm.add ("getc", std::make_unique<kf_getc> ());
+  kfm.add ("getc_unlocked", std::make_unique<kf_getc> ());
   kfm.add ("getchar", std::make_unique<kf_getchar> ());
+  kfm.add ("getchar_unlocked", std::make_unique<kf_getchar> ());
 
   /* Some C++ implementations use the std:: copies of these functions
      from <cstdio> for <stdio.h>, so we must match against these too.  */

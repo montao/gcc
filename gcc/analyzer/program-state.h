@@ -1,5 +1,5 @@
 /* Classes for representing the state of interest at a given path of analysis.
-   Copyright (C) 2019-2025 Free Software Foundation, Inc.
+   Copyright (C) 2019-2026 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -26,8 +26,6 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "analyzer/store.h"
 
-namespace xml { class document; }
-
 namespace ana {
 
 /* Data shared by all program_state instances.  */
@@ -37,7 +35,7 @@ class extrinsic_state
 public:
   extrinsic_state (std::vector<std::unique_ptr<state_machine>> &&checkers,
 		   engine *eng,
-		   logger *logger = NULL)
+		   logger *logger = nullptr)
   : m_checkers (std::move (checkers)),
     m_logger (logger),
     m_engine (eng)
@@ -47,7 +45,7 @@ public:
   // For use in selftests that use just one state machine
   extrinsic_state (std::unique_ptr<state_machine> sm,
 		   engine *eng,
-		   logger *logger = NULL)
+		   logger *logger = nullptr)
   : m_logger (logger),
     m_engine (eng)
   {
@@ -98,7 +96,7 @@ public:
   {
     /* Default ctor needed by hash_map::empty.  */
     entry_t ()
-    : m_state (0), m_origin (NULL)
+    : m_state (0), m_origin (nullptr)
     {
     }
 
@@ -248,11 +246,14 @@ public:
   void dump (const extrinsic_state &ext_state, bool simple) const;
   void dump () const;
 
-  std::unique_ptr<xml::document> make_xml (const extrinsic_state &ext_state) const;
-  void dump_xml_to_pp (const extrinsic_state &ext_state, pretty_printer *pp) const;
-  void dump_xml_to_file (const extrinsic_state &ext_state, FILE *outf) const;
-  void dump_xml (const extrinsic_state &ext_state) const;
-  void dump_dot (const extrinsic_state &ext_state) const;
+  std::unique_ptr<diagnostics::digraphs::digraph>
+  make_diagnostic_state_graph (const extrinsic_state &ext_state) const;
+
+  void
+  dump_sarif (const extrinsic_state &ext_state) const;
+
+  void
+  dump_dot (const extrinsic_state &ext_state) const;
 
   std::unique_ptr<json::object>
   to_json (const extrinsic_state &ext_state) const;
@@ -262,22 +263,6 @@ public:
 
   void push_frame (const extrinsic_state &ext_state, const function &fun);
   const function * get_current_function () const;
-
-  void push_call (exploded_graph &eg,
-		  exploded_node *enode,
-		  const gcall &call_stmt,
-		  uncertainty_t *uncertainty);
-
-  void returning_call (exploded_graph &eg,
-		       exploded_node *enode,
-		       const gcall &call_stmt,
-		       uncertainty_t *uncertainty);
-
-
-  bool on_edge (exploded_graph &eg,
-		exploded_node *enode,
-		const superedge *succ,
-		uncertainty_t *uncertainty);
 
   program_state prune_for_point (exploded_graph &eg,
 				 const program_point &point,

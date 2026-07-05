@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,6 @@ with Einfo.Utils;    use Einfo.Utils;
 with Exp_Tss;        use Exp_Tss;
 with Namet;          use Namet;
 with Rtsfind;        use Rtsfind;
-with Sinfo;          use Sinfo;
 with Sinfo.Nodes;    use Sinfo.Nodes;
 with Snames;         use Snames;
 with Types;          use Types;
@@ -328,6 +327,27 @@ package Exp_Util is
    --  parent, Subp is the overriding operation, and Par_Subp is the overridden
    --  operation that has the condition. Adjust_Sloc is True when the sloc of
    --  nodes traversed should be adjusted for the inherited pragma.
+
+   function Build_Component_Assignment
+     (Loc           : Source_Ptr;
+      Prefix        : Entity_Id;
+      Prefix_Type   : Entity_Id;
+      Proc_Id       : Entity_Id;
+      Component_Id  : Entity_Id;
+      Default_Expr  : Node_Id;
+      Is_Incomplete : Boolean := False) return List_Id;
+   --  This helper function is used to build component assignment in
+   --  initialization procedures or constructor prologues. It builds an
+   --  assignment statement that assigns the default expression to its
+   --  corresponding record component, selected with the first formal for
+   --   visibility. The right-hand side of the assignment, cf. the default
+   --  expression, is scoped in the given procedure, the left-hand side is
+   --  marked Assignment_OK so that initialization of limited private records
+   --  works correctly. This routine may also build an adjustment call if the
+   --  component is controlled.
+   --  If Is_Incomplete is true, the entities in the default expression will
+   --  be mapped to the type of the first formal in order to handle "current
+   --  instance" references.
 
    function Build_DIC_Call
      (Loc      : Source_Ptr;
@@ -644,8 +664,21 @@ package Exp_Util is
    --  Same as Find_Prim_Op but for the three controlled primitive operations,
    --  and returns Empty if not found.
 
+   function Find_Master_Context (N : Node_Id) return Node_Id;
+   --  Determine a suitable node on which to attach actions related to N that
+   --  need to be performed immediately after the execution of N is complete.
+   --  In general this is the topmost expression or statement of which N is a
+   --  subexpression, but note that object declarations may be returned here,
+   --  although they are not master constructs in the language.
+
    function Find_Optional_Prim_Op
-     (T : Entity_Id; Name : Name_Id) return Entity_Id;
+     (T             : Entity_Id;
+      Name          : Name_Id;
+      Controlled_Op : Boolean := False) return Entity_Id;
+   --  Same as Find_Prim_Op but, if Controlled_Op is True, returns a primitive
+   --  only if it has the signature of the three primitives of controlled types
+   --  Initialize/Adjust/Finalize, and returns Empty if not found.
+
    function Find_Optional_Prim_Op
      (T    : Entity_Id;
       Name : TSS_Name_Type) return Entity_Id;
@@ -673,12 +706,11 @@ package Exp_Util is
    --  indicating that the operation is defaulted in the aspect (can occur in
    --  the case where the storage-model address type is System.Address).
 
-   function Find_Hook_Context (N : Node_Id) return Node_Id;
-   --  Determine a suitable node on which to attach actions related to N that
-   --  need to be elaborated unconditionally. In general this is the topmost
-   --  expression of which N is a subexpression, which in turn may or may not
-   --  be evaluated, for example if N is the right operand of a short circuit
-   --  operator.
+   procedure Flag_Interface_Pointer_Displacement (N : Node_Id);
+   --  If N is an N_Type_Conversion node then flag N to indicate that this
+   --  type conversion was internally added to force the displacement of the
+   --  pointer to the object (pointer named "this" in the C++ terminology)
+   --  from a dispatch table to another dispatch table.
 
    function Following_Address_Clause (D : Node_Id) return Node_Id;
    --  D is the node for an object declaration. This function searches the
@@ -816,14 +848,34 @@ package Exp_Util is
    --    Rnn : constant Ann := Func (...)'reference;
    --    Rnn.all
 
+   function Is_Constr_Array_Subt_Of_Unc_With_Controlled (Typ : Entity_Id)
+     return Boolean;
+   --  Return True if Typ is a constrained subtype of an array type with an
+   --  unconstrained first subtype and a controlled component type.
+
    function Is_Conversion_Or_Reference_To_Formal (N : Node_Id) return Boolean;
    --  Return True if N is a type conversion, or a dereference thereof, or a
    --  reference to a formal parameter.
+
+   function Is_Distributable_Declaration (N : Node_Id) return Boolean;
+   --  Return True if N is an object declaration that can be distributed into
+   --  the dependent expressions of a conditional expression, given that the
+   --  conditional expression is the initialization expression of N. Such a
+   --  distribution avoids a copy operation and is required for limited types
+   --  and, more generally, desirable for all by-reference types.
 
    function Is_Expanded_Class_Wide_Interface_Object_Decl
       (N : Node_Id) return Boolean;
    --  Determine if N is the expanded code for a class-wide interface type
    --  object declaration.
+
+   function Is_Finalizable_Access (Decl : Node_Id) return Boolean;
+   --  Determine whether declaration Decl denotes an access-to-controlled
+   --  object that must be finalized, i.e. both that the designated object
+   --  is controlled and that it must be finalized through this access, in
+   --  particular that it will not be also finalized directly. That is the
+   --  case only for objects initialized by a reference to a function call
+   --  that meet specific conditions.
 
    function Is_Finalizable_Transient
      (Decl : Node_Id;
@@ -850,9 +902,6 @@ package Exp_Util is
    --  Return True if E is a wrapper built when a subprogram has class-wide
    --  preconditions or postconditions affected by overriding (AI12-0195).
    --  LSP stands for Liskov Substitution Principle.
-
-   function Is_Non_BIP_Func_Call (Expr : Node_Id) return Boolean;
-   --  Determine whether node Expr denotes a non build-in-place function call
 
    function Is_Possibly_Unaligned_Object (N : Node_Id) return Boolean;
    --  Node N is an object reference. This function returns True if it is
@@ -897,10 +946,6 @@ package Exp_Util is
    --
    --  We consider that a (1 .. 2) is a renamed object since it is the prefix
    --  of the name in the renaming declaration.
-
-   function Is_Secondary_Stack_BIP_Func_Call (Expr : Node_Id) return Boolean;
-   --  Determine whether Expr denotes a build-in-place function which returns
-   --  its result on the secondary stack.
 
    function Is_Secondary_Stack_Thunk (Id : Entity_Id) return Boolean;
    --  Determine whether Id denotes a secondary stack thunk
@@ -1057,16 +1102,6 @@ package Exp_Util is
    --  has the same object size value. For example, a 16 bit signed type will
    --  typically return Standard_Short_Integer. For fixed-point types, this
    --  will return integer types of the corresponding size.
-
-   function May_Generate_Large_Temp (Typ : Entity_Id) return Boolean;
-   --  Determines if the given type, Typ, may require a large temporary of the
-   --  kind that causes back-end trouble if stack checking is enabled. The
-   --  result is True only the size of the type is known at compile time and
-   --  large, where large is defined heuristically by the body of this routine.
-   --  The purpose of this routine is to help avoid generating troublesome
-   --  temporaries that interfere with stack checking mechanism. Note that the
-   --  caller has to check whether stack checking is actually enabled in order
-   --  to guide the expansion (typically of a function call).
 
    procedure Move_To_Initialization_Statements (Decl, Stop : Node_Id);
    --  Decl is an N_Object_Declaration node and Stop is a node past Decl in
@@ -1348,6 +1383,10 @@ package Exp_Util is
 
    function Unconditional_Parent (N : Node_Id) return Node_Id;
    --  Return the first parent of arbitrary node N that is not a conditional
+   --  expression, one of whose dependent expressions is N, recursively.
+
+   function Unqualified_Unconditional_Parent (N : Node_Id) return Node_Id;
+   --  Return the first parent of arbitrary node N that is not a conditional
    --  expression, one of whose dependent expressions is N, and that is not
    --  a qualified expression, whose expression is N, recursively.
 
@@ -1370,6 +1409,7 @@ private
    pragma Inline (Duplicate_Subexpr);
    pragma Inline (Find_Controlled_Prim_Op);
    pragma Inline (Find_Prim_Op);
+   pragma Inline (Flag_Interface_Pointer_Displacement);
    pragma Inline (Force_Evaluation);
    pragma Inline (Get_Mapped_Entity);
    pragma Inline (Is_Library_Level_Tagged_Type);

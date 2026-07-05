@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -131,7 +131,7 @@ private:
 
   std::tuple<std::string, int, bool> parse_in_decimal ();
   std::pair<std::string, int> parse_in_exponent_part ();
-  std::pair<PrimitiveCoreType, int> parse_in_type_suffix ();
+  std::pair<std::string, int> parse_in_suffix ();
   std::tuple<char, int, bool> parse_escape (char opening_char);
   std::tuple<Codepoint, int, bool> parse_utf8_escape ();
   int parse_partial_string_continue ();
@@ -155,7 +155,7 @@ private:
   template <typename IsDigitFunc>
   TokenPtr parse_non_decimal_int_literal (location_t loc,
 					  IsDigitFunc is_digit_func,
-					  std::string existent_str, int base);
+					  IntegerLiteralBase base);
 
 public:
   // Construct lexer with input file and filename provided
@@ -263,8 +263,7 @@ private:
 #if CHECKING_P
 
 namespace selftest {
-void
-rust_input_source_test ();
+void rust_input_source_test ();
 
 } // namespace selftest
 

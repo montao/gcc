@@ -1,4 +1,4 @@
-/* Copyright (C) 1988-2025 Free Software Foundation, Inc.
+/* Copyright (C) 1988-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -145,7 +145,7 @@ class scalar_chain
   bitmap insns;
   /* All registers defined by a chain.  */
   bitmap defs;
-  /* Registers used in both vector and sclar modes.  */
+  /* Registers used in both vector and scalar modes.  */
   bitmap defs_conv;
 
   /* Limit on chain discovery.  */

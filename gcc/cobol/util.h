@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -31,14 +31,6 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
-void cbl_message(int fd, const char *format_string, ...)
-  ATTRIBUTE_PRINTF_2;
-void cbl_internal_error(const char *format_string, ...)
-  ATTRIBUTE_GCOBOL_DIAG(1, 2);
-
-void cbl_err(const char *format_string, ...) ATTRIBUTE_GCOBOL_DIAG(1, 2);
-void cbl_errx(const char *format_string, ...) ATTRIBUTE_GCOBOL_DIAG(1, 2);
-
 bool fisdigit(int c);
 bool fisspace(int c);
 int  ftolower(int c);
@@ -46,9 +38,12 @@ int  ftoupper(int c);
 bool fisprint(int c);
 
 void cobol_set_pp_option(int opt);
+void cobol_trunc_binary( int cobol_trunc_binary );
+bool cobol_trunc_binary();
 
-const char * cobol_filename_restore();
-const char * cobol_lineno_save();
+void cobol_filename_restore();
+const char * cobol_lineno( int );
+int cobol_lineno(void);
 
 unsigned long gb4( size_t input );
 
@@ -58,5 +53,71 @@ as_voidp( P p ) {
   return static_cast<const void *>(p);
 }
 
+/*
+ * The default source format, whether free or fixed, is determined
+ * heuristically by examining the PROGRAM-ID line, if it exists, in the first
+ * input file. If that file does not have such a line, the default is free
+ * format.  Else the format is set to fixed if anything appears on that line
+ * that would prohibit parsing it as free format,
+ */
+class source_format_t {
+  bool first_file, explicitly;
+  int left, right;
+public:
+  source_format_t()
+    : first_file(true), explicitly(false), left(0), right(0)
+  {}
+  void indicator_column_set( int column ) {
+    explicitly = true;
+    if( column == 0 ) right = 0;
+    if( column < 0 ) {
+      column = -column;
+      right = 73;
+    }
+    left = column;
+  }
+  
+  bool inference_pending() {
+    bool tf = first_file && !explicitly;
+    first_file = false;
+    return tf;
+  }
+
+  void infer( const char *bol, bool want_reference_format );
+  
+  inline bool is_fixed() const { return left == 7; }
+  inline bool is_reffmt() const { return is_fixed() && right == 73; }
+  inline bool is_free() const { return ! is_fixed(); }
+  
+  const char * description() const {
+    if( is_reffmt() ) return "REFERENCE";
+    if( is_fixed() ) return "FIXED";
+    if( is_free() ) return "FREE";
+    gcc_unreachable();
+  }    
+
+  inline int left_margin() {
+    return left == 0? left : left - 1;
+  }
+  inline int right_margin() {
+    return right == 0? right : right - 1;
+  }
+}; 
+
+
+/*
+ * Functions that validate every PERFORM calls a unique reference.
+ */
+namespace match_proc {
+  typedef char cbl_name_t[64];
+
+  // Supply each target as it's mentioned.
+  void statement_compose( int iline, size_t isection,
+                          const cbl_name_t para, const cbl_name_t qual );
+  // Add PERFORM to statement list.
+  void statement_add();
+  // Verify all statements and report problems. 
+  bool statements_verify();
+}
 
 #endif

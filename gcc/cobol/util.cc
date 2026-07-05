@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -35,28 +35,24 @@
  */
 
 #include "cobol-system.h"
-#include "coretypes.h"
-#include "tree.h"
+#include <coretypes.h>
+#include <tree.h>
+#include <fold-const.h>
 #undef yy_flex_debug
 
 #include <langinfo.h>
 
-#include "coretypes.h"
-#include "version.h"
-#include "demangle.h"
-#include "intl.h"
-#include "backtrace.h"
-#include "diagnostic.h"
-#include "diagnostic-color.h"
-#include "diagnostic-url.h"
-#include "diagnostic-metadata.h"
-#include "diagnostic-path.h"
-#include "edit-context.h"
-#include "selftest.h"
-#include "selftest-diagnostic.h"
-#include "opts.h"
+#include <coretypes.h>
+#include <version.h>
+#include <demangle.h>
+#include <intl.h>
+#include <backtrace.h>
+#include <diagnostic.h>
+#include <opts.h>
+
 #include "util.h"
 #include "cbldiag.h"
+#include "cdfval.h"
 #include "lexio.h"
 
 #include "../../libgcobol/ec.h"
@@ -66,6 +62,11 @@
 #include "../../libgcobol/io.h"
 #include "genapi.h"
 #include "genutil.h"
+#include "../../libgcobol/charmaps.h"
+#include "../../libgcobol/valconv.h"
+
+#include "tm.h"
+#include "target.h"
 
 #pragma GCC diagnostic ignored "-Wunused-result"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -90,7 +91,7 @@ static inline char *
 get_current_dir_name ()
 {
   /* Use libiberty's allocator here.  */
-  char *buf = (char *) xmalloc (PATH_MAX);
+  char *buf = static_cast<char *>(xmalloc (PATH_MAX));
   return getcwd (buf, PATH_MAX);
 }
 #endif
@@ -98,19 +99,299 @@ get_current_dir_name ()
 /*
  * For printing messages, usually the size of the thing is some kind of string
  * length, and doesn't really need a size_t.  For message formatting, use a
- * simple unsigned long, and warn if that's no good.  "gb4" here stands for 
+ * simple unsigned long, and warn if that's no good.  "gb4" here stands for
  * "4 Gigabytes".
  */
 unsigned long
 gb4( size_t input ) {
   if( input != static_cast<unsigned long>(input) ) {
-    yywarn("size too large to print: %lx:%lx",
+    dbgmsg("size too large to print: %lx:%lx",
 	   (unsigned long)(input >> (4 * sizeof(unsigned long))),
 	   static_cast<unsigned long>(input));
   }
   return input;
 }
+
+/*
+ * Most CDF Directives -- those that have state -- can be pushed and popped.
+ * This class maintains stacks of them, with each stack having a "default
+ * value" that may be updated, without push/pop, via a CDF directive or
+ * command-line option.  A push to a stack pushes the default value onto it; a
+ * pop copies the top of the stack to the default value.
+ *
+ * Supported:
+ *   CALL-CONVENTION
+ *   COBOL-WORDS
+ *   DEFINE
+ *   DISPLAY
+ *   IF
+ *   POP
+ *   PUSH
+ *   SOURCE FORMAT
+ *   TURN
+ * not supported
+ *   EVALUATE
+ *   FLAG-02
+ *   FLAG-14
+ *   LEAP-SECOND
+ *   LISTING
+ *   PAGE
+ *   PROPAGATE
+ *   REF-MOD-ZERO-LENGTH
+ *
+ * >>PUSH ALL calls the class's push() method.
+ * >>POP ALL calls the class's pop() method.
+ */
+class cdf_directives_t
+{
+  template <typename T>
+  class cdf_stack_t : private std::stack<T> { // cppcheck-suppress noConstructor
+    T current_value;
+    const T& top() const { return std::stack<T>::top(); }
+    bool empty() const { return std::stack<T>::empty(); }
+   public:
+    void value( const T& value ) {
+      current_value = value;
+      dbgmsg("cdf_directives_t::%s: %s", __func__, str(current_value).c_str());
+    }
+    T& value() {
+      return current_value;
+    }
+    void push() {
+      std::stack<T>::push(value());
+      dbgmsg("cdf_directives_t::%s: %s", __func__, str(top()).c_str());
+    }
+    void pop() {
+      if( empty() ) {
+        error_msg(cbl_loc_t(), "CDF stack empty"); // cppcheck-suppress syntaxError
+        return;
+      }
+      current_value = top();
+      std::stack<T>::pop();
+      dbgmsg("cdf_directives_t::%s: %s", __func__, str(current_value).c_str());
+    }
+  protected:
+    static std::string str(cbl_call_convention_t arg) {
+      char output[2] = { static_cast<char>(arg) };
+      return std::string("call-convention ") + output;
+    }
+    static std::string str(current_tokens_t) {
+      return "<cobol-words>";
+    }
+    static std::string str(cdf_values_t) {
+      return "<dictionary>";
+    }
+    static std::string str(source_format_t arg) {
+      return arg.description();
+    }
+    static std::string str(cbl_enabled_exceptions_t) {
+      return "<enabled_exceptions>";
+    }
+  };
+
+ public:
+  cdf_stack_t<cbl_call_convention_t> call_convention;
+  cdf_stack_t<current_tokens_t> cobol_words;
+  cdf_stack_t<cdf_values_t> dictionary;   // DEFINE
+  cdf_stack_t<source_format_t> source_format;
+  cdf_stack_t<cbl_enabled_exceptions_t> enabled_exceptions;
+
+  cdf_directives_t() {
+    call_convention.value() = cbl_call_cobol_e;
+  }
+
+  void push() {
+    call_convention.push();
+    cobol_words.push();
+    dictionary.push();
+    source_format.push();
+    enabled_exceptions.push();
+  }
+  void pop() {
+    call_convention.pop();
+    cobol_words.pop();
+    dictionary.pop();
+    source_format.pop();
+    enabled_exceptions.pop();
+  }
+};
+static cdf_directives_t cdf_directives;
+
+void
+current_call_convention( cbl_call_convention_t convention) {
+  cdf_directives.call_convention.value(convention);
+}
+cbl_call_convention_t
+current_call_convention() {
+  return cdf_directives.call_convention.value();
+}
+
+current_tokens_t&
+cdf_current_tokens() {
+  return cdf_directives.cobol_words.value();
+}
+
+cdf_values_t&
+cdf_dictionary() {
+  return cdf_directives.dictionary.value();
+}
+
+// elements permitted in a program or function prototype
+static const std::set<dspc_t> prototype_elements {
+  dspc_identification_div_e,
+  dspc_options_para_e, 
+  ////_arithmetic_clause_e, disallowed
+  dspc_default_rounded_clause_e, 
+  dspc_entry_convention_clause_e, 
+  dspc_float_binary_clause_e, 
+  dspc_float_decimal_clause_e, 
+  dspc_initialize_clause_e, 
+  dspc_intermediate_rounding_clause_e, 
+
+  dspc_environment_div_e,
+  dspc_configuration_section_e, 
+  dspc_source_computer_paragraph_e, 
+  ////_object_computer_paragraph_e, disallowed
   
+  // permitted special names clauses
+  dspc_special_names_paragraph_e, 
+  dspc_alphabet_name_clause_e, 
+  dspc_currency_sign_clause_e, 
+  dspc_decimal_point_is_comma_clause_e, 
+  dspc_locale_clause_e, 
+  dspc_symbolic_characters_clause_e, 
+
+  // no i-o section, and we assume no repository paragraph
+
+  dspc_data_div_e,
+  dspc_linkage_section_e,
+  
+  dspc_procedure_div_e, // only header is allowed
+  dspc_procedure_header_e,
+};
+
+bool
+cbl_prototype_ok( const cbl_loc_t& loc, size_t iprog, dspc_t clause ) {
+  bool prototyping = cbl_label_of(symbol_at(iprog))->prototype;
+  if( prototyping && 0 == prototype_elements.count(clause) ) {
+    error_msg( loc, "syntax not allowed for PROTOTYPE" ); 
+    return false;
+  }
+  return true;
+}
+
+void
+cobol_set_indicator_column( int column ) {
+  cdf_directives.source_format.value().indicator_column_set(column);
+  dbgmsg("%s: format now %s", __func__,
+         cdf_directives.source_format.value().description());
+}
+source_format_t& cdf_source_format() {
+  return cdf_directives.source_format.value();
+}
+
+cbl_enabled_exceptions_t&
+cdf_enabled_exceptions() {
+  return cdf_directives.enabled_exceptions.value();
+}
+
+void cdf_push() { cdf_directives.push(); }
+void cdf_push_call_convention() { cdf_directives.call_convention.push(); }
+void cdf_push_current_tokens() { cdf_directives.cobol_words.push(); }
+void cdf_push_dictionary() { cdf_directives.dictionary.push(); }
+void cdf_push_enabled_exceptions() { cdf_directives.enabled_exceptions.push(); }
+void cdf_push_source_format() {
+  cdf_directives.source_format.push();
+  dbgmsg("%s: format still %s", __func__,
+         cdf_directives.source_format.value().description());
+}
+
+void cdf_pop() { cdf_directives.pop(); }
+void cdf_pop_call_convention() { cdf_directives.call_convention.pop(); }
+void cdf_pop_current_tokens() { cdf_directives.cobol_words.pop(); }
+void cdf_pop_dictionary() { cdf_directives.dictionary.pop(); }
+void cdf_pop_enabled_exceptions() { cdf_directives.enabled_exceptions.pop(); }
+void cdf_pop_source_format() {
+  cdf_directives.source_format.pop();
+  dbgmsg("%s: format now %s", __func__,
+         cdf_directives.source_format.value().description());
+}
+
+void cdf_unreachable() { gcc_unreachable(); }
+
+/*
+ * Construct a cbl_field_t from a CDF literal, to be installed in the symbol table.
+ */
+static cbl_field_t
+cdf_literalize( const cbl_loc_t& loc,
+                const std::string& name, const cdfval_t& value,
+                bool set_initial = true ) {
+    cbl_field_t field;
+
+    if( value.is_numeric() ) {
+      auto initial = xasprintf("%ld", (long)value.as_number());
+      auto len = strlen(initial);
+      cbl_field_data_t data(len, len, len,0, initial); // digits == len, no rdigits
+      data.valify();
+      field = cbl_field_t{ FldLiteralN, constant_e, data, 0, name.c_str()};
+      field.codeset.set();
+    } else {
+      auto len = strlen(value.string);
+      cbl_field_data_t data(len, len);
+      data.original(xstrdup(value.string));
+      field = cbl_field_t{ FldLiteralA, constant_e, data, 0, name.c_str() };
+      field.set_attr(quoted_e);
+      field.codeset.set();
+      if( set_initial ) {
+        field.set_initial(loc);
+      }
+    }
+
+    return field;
+}
+
+cbl_file_t *
+cdf_file( size_t program, const cbl_name_t name ) {
+  symbol_elem_t *e = symbol_file(program, name);
+  if( e && e->type == SymFile ) {
+    return cbl_file_of(e);
+  }
+  return nullptr;
+} 
+
+size_t
+cdf_file_index( const cbl_file_t *file ) {
+  return symbol_index(symbol_elem_of(file));
+}
+
+const char *
+cdf_file_name( const cbl_file_t *file ) {
+  return file->name;
+}
+
+
+void
+cdf_field_add( const cbl_loc_t& loc, const std::string& name, const cdfval_t& value ) {
+  if( symbols_begin() < symbols_end() ) {
+    cbl_field_t field = cdf_literalize(loc, name, value);
+    symbol_field_add(current_program_index(), &field);                    
+  }
+}
+
+const std::list<cbl_field_t>
+cdf_literalize() {
+  std::list<cbl_field_t> fields;
+  auto dict = cdf_dictionary();
+
+  for( auto elem : dict ) {
+    std::string name(elem.first);
+    const cdfval_t& value(elem.second);
+
+    fields.push_back(cdf_literalize(cbl_loc_t(), name, value, false));
+  }
+  return fields;
+}
+
 const char *
 symbol_type_str( enum symbol_type_t type )
 {
@@ -123,6 +404,8 @@ symbol_type_str( enum symbol_type_t type )
         return "SymLabel";
     case SymSpecial:
         return "SymSpecial";
+    case SymLocale:
+        return "SymLocale";
     case SymAlphabet:
         return "SymAlphabet";
     case SymFile:
@@ -176,8 +459,53 @@ cbl_field_type_str( enum cbl_field_type_t type )
     return "FldSwitch";
   case FldPointer:
     return "FldPointer";
-  case FldBlob:
-    return "FldBlob";
+ }
+  cbl_internal_error("%s:%d: invalid %<symbol_type_t%> %d", __func__, __LINE__, type);
+  return "???";
+}
+
+const char *
+cbl_field_type_name( enum cbl_field_type_t type )
+{
+  switch(type) {
+  case FldDisplay:
+    return "DISPLAY";
+  case FldInvalid:
+    return ""; // Invalid";
+  case FldGroup:
+    return "GROUP";
+  case FldAlphanumeric:
+    return "ALPHANUMERIC";
+  case FldNumericBinary:
+    return "NUMERIC-BINARY";
+  case FldFloat:
+    return "FLOAT";
+  case FldNumericBin5:
+    return "COMPUTATIONAL-5";
+  case FldPacked:
+    return "PACKED-DECIMAL";
+  case FldNumericDisplay:
+    return "NUMERIC-DISPLAY";
+  case FldNumericEdited:
+    return "NUMERIC-EDITED";
+  case FldAlphaEdited:
+    return "ALPHANUMERIC-EDITED";
+  case FldLiteralA:
+    return "ALPHANUMERIC LITERAL";
+  case FldLiteralN:
+    return "NUMERIC LITERAL";
+  case FldClass:
+    return "CLASS";
+  case FldConditional:
+    return "CONDITIONAL";
+  case FldForward:
+    return "FORWARD";
+  case FldIndex:
+    return "INDEX";
+  case FldSwitch:
+    return "SWITCH";
+  case FldPointer:
+    return "POINTER";
  }
   cbl_internal_error("%s:%d: invalid %<symbol_type_t%> %d", __func__, __LINE__, type);
   return "???";
@@ -216,7 +544,7 @@ determine_intermediate_type( const cbl_refer_t& aref,
   if( aref.field->type == FldFloat || bref.field->type == FldFloat )
     {
     output.type = FldFloat;
-    output.data.capacity = 16;
+    output.data.capacity(16);
     output.attr = (intermediate_e );
     }
   else if(   op == '*'
@@ -224,13 +552,13 @@ determine_intermediate_type( const cbl_refer_t& aref,
                                                       > MAX_FIXED_POINT_DIGITS)
     {
     output.type = FldFloat;
-    output.data.capacity = 16;
+    output.data.capacity(16);
     output.attr = (intermediate_e );
     }
   else
     {
     output.type = FldNumericBin5;
-    output.data.capacity = 16;
+    output.data.capacity(16);
     output.data.digits   = MAX_FIXED_POINT_DIGITS;
     output.attr = (intermediate_e | signable_e );
     }
@@ -261,20 +589,23 @@ const char *numed_message;
 extern int yydebug, yy_flex_debug;
 
 bool
-is_alpha_edited( const char picture[] ) {
+cbl_field_data_t::is_alpha_edited() const {
   static const char valid[] = "abxABX90/(),.";
   assert(picture);
+  auto ep = picture + strlen(picture);
 
-  for( const char *p = picture; *p != '\0'; p++ ) {
-    if( strchr(valid, *p) ) continue;
-    if( ISDIGIT(*p) ) continue;
-    if( symbol_decimal_point() == *p ) continue;
-    if( symbol_currency(*p) ) continue;
-
-    if( yydebug ) {
-      dbgmsg( "%s: bad character '%c' at %.*s<-- in '%s'",
-             __func__, *p, int(p - picture) + 1, picture, picture );
-    }
+  // Find first character that is not part of an alpha-edited PICTURE.
+  auto p = std::find_if( picture, ep,
+                         []( char ch ) {
+                           if( strchr(valid, ch) ) return false;
+                           if( ISDIGIT(ch) ) return false;
+                           if( symbol_decimal_point() == ch ) return false;
+                           if( symbol_currency(ch) ) return false;
+                           return true;
+                         } );
+  if( p != ep ) {
+    dbgmsg( "%s: bad character '%c' at %.*s<-- in '%s'",
+            __func__, *p, int(p - picture) + 1, picture, picture );
     return false;
   }
   return true;
@@ -466,7 +797,6 @@ is_elementary( enum cbl_field_type_t type )
     case FldForward:
     case FldIndex:
     case FldSwitch:
-    case FldBlob:
       return false;
     case FldPointer:
     case FldAlphanumeric:
@@ -633,7 +963,7 @@ symbol_field_type_update( cbl_field_t *field,
     case FldPointer:
       // set the type
       field->type = candidate;
-      if( field->data.capacity == 0 ) {
+      if( field->data.capacity() == 0 ) {
         static const cbl_field_data_t data = {0, 8, 0, 0, NULL};
         field->data = data;
         field->attr &= ~size_t(signable_e);
@@ -658,6 +988,7 @@ symbol_field_type_update( cbl_field_t *field,
   // type matches itself
   if( field->type == candidate ) {
     if( is_usage ) field->usage = candidate;
+    field->codeset.set();
     return true;
   }
   if( is_usage && field->usage == candidate ) return true;
@@ -684,7 +1015,6 @@ symbol_field_type_update( cbl_field_t *field,
    */
   if( is_usage ) {
     switch(field->type) {
-    case FldBlob:
     case FldDisplay:
       gcc_unreachable(); // type is never just "display"
       break;
@@ -710,11 +1040,9 @@ symbol_field_type_update( cbl_field_t *field,
     case FldSwitch:
       gcc_unreachable();
     case FldAlphanumeric:
-      // MF allows PIC X(n) to have USAGE COMP-[5x]
+      // MF and GNU allow pic x usage comp-5.
+      // Dialect enforcement in that case is in field_binary_usage.
       if( candidate != FldNumericBin5 ) return false;
-      if( ! (dialect_mf() && field->has_attr(all_x_e)) ) {
-        return false;
-      }
       __attribute__((fallthrough));
     case FldFloat:
     case FldNumericBin5:
@@ -732,7 +1060,29 @@ symbol_field_type_update( cbl_field_t *field,
    *  Concrete type candidate
    */
   switch(field->usage) {
-  case FldInvalid:
+  case FldInvalid: // no USAGE clause yet, and not now either
+    // maybe update encoding
+    switch( field->type ) {
+    case FldAlphaEdited:
+    case FldNumericEdited:
+      field->type = candidate;
+      field->attr |= numeric_group_attrs(field);
+      return field->codeset.set();
+    case FldNumericDisplay:
+      // If the field is already defined as Numeric Display, it cannot be
+      // converted to Numeric Edited if it is signed.
+      if( candidate == FldNumericEdited) {
+        if( field->has_attr(signable_e) ) return false;
+      }
+      break;
+    default:
+      // If the field is already defined as a binary numeric type (not
+      // Display), it cannot be converted to NumericEdited.
+      if( candidate == FldNumericEdited) {
+        if( is_numeric(field->type) ) return false;
+      }
+      break;
+    }
     field->type = candidate;
     field->attr |= numeric_group_attrs(field);
     return true;
@@ -740,7 +1090,8 @@ symbol_field_type_update( cbl_field_t *field,
     if( is_displayable(candidate) ) {
       field->type = candidate;
       field->attr |= numeric_group_attrs(field);
-      return true;
+      if( field->codeset.valid() ) return true;
+      return field->codeset.set();
     }
     break;
   case FldAlphaEdited:
@@ -750,6 +1101,7 @@ symbol_field_type_update( cbl_field_t *field,
     field->clear_attr(all_x_e);
     field->type = field->usage;
     field->attr |= numeric_group_attrs(field);
+    if( ! field->codeset.valid() ) return field->codeset.set();
     return true;
   case FldNumericDisplay:
   case FldNumericEdited:
@@ -761,7 +1113,6 @@ symbol_field_type_update( cbl_field_t *field,
   case FldForward:
   case FldSwitch:
   case FldPointer:
-  case FldBlob:
     // invalid usage value
     gcc_unreachable();
     break;
@@ -802,7 +1153,7 @@ redefine_field( cbl_field_t *field ) {
     field->data.initial = NULL;
   }
 
-  if( field->data.capacity == 0 ) field->data = primary->data;
+  if( field->data.capacity() == 0 ) field->data = primary->data;
 
   if( is_numeric(field->type) && field->usage == FldDisplay ) {
     fOK = symbol_field_type_update(field, FldNumericDisplay, false);
@@ -811,24 +1162,810 @@ redefine_field( cbl_field_t *field ) {
   return fOK;
 }
 
+static
+FIXED_WIDE_INT(128)
+dirty_to_binary(const char  *instring,
+                uint32_t    &capacity,
+                uint32_t    &digits,
+                int32_t     &rdigits,
+                uint64_t    &attr)
+  {
+  digits = 0;
+  rdigits = 0;
+  attr = 0;
+
+  FIXED_WIDE_INT(128) value = 0;
+
+  // We need to convert data.initial to an FIXED_WIDE_INT(128) value
+  const char *p = instring;
+  int sign = 1;
+  bool ignore_zeroes = true;
+  if( *p == '-' )
+    {
+    attr |= signable_e;
+    sign = -1;
+    p += 1;
+    }
+  else if( *p == '+' )
+    {
+    // We set it signable so that the instruction DISPLAY +1
+    // actually outputs "+1"
+    attr |= signable_e;
+    p += 1;
+    }
+
+  //  We need to be able to handle
+  //  123
+  //  123.456
+  //  123E<exp>
+  //  123.456E<exp>
+  //  where <exp> can be N, +N and -N
+  //
+
+  int rdigit_delta = 0;
+  int exponent = 0;
+  const char *exp = strchr(p, 'E');
+  if( !exp )
+    {
+    exp = strchr(p, 'e');
+    }
+  if(exp)
+    {
+    exponent = atoi(exp+1);
+    }
+
+  // We can now calculate the value, and the number of digits and rdigits.
+
+  // We trim off leading zeroes before the decimal point, and trailing zeroes
+  // after a decimal point.
+
+  const char *pend = exp;
+  if( !exp )
+    {
+    pend = instring + strlen(instring);
+    }
+
+  const char *pdecimal = strchr(instring, symbol_decimal_point());
+  if( pdecimal )
+    {
+    while( pend > instring && *(pend-1) == '0' )
+      {
+      pend -= 1;
+      }
+    }
+
+  while(p < pend)
+    {
+    char ch = *p++;
+    if( ch == symbol_decimal_point() )
+      {
+      rdigit_delta = 1;
+      ignore_zeroes = false;
+      continue;
+      }
+    if( ignore_zeroes && ch == '0' )
+      {
+      continue;
+      }
+    ignore_zeroes = false;
+    if( ch < '0' || ch > '9' )
+      {
+      break;
+      }
+    digits += 1;
+    rdigits += rdigit_delta;
+    value *= 10;
+    value += ch - '0';
+    }
+
+  if( exponent < 0 )
+    {
+    rdigits += -exponent;
+    }
+  else
+    {
+    while(exponent--)
+      {
+      if(rdigits)
+        {
+        rdigits -= 1;
+        }
+      else
+        {
+        digits += 1;
+        value *= 10;
+        }
+      }
+    }
+
+  if( (int32_t)digits < rdigits )
+    {
+    digits = rdigits;
+    }
+
+  // We now need to calculate the capacity.
+
+  unsigned int min_prec = wi::min_precision(value, UNSIGNED);
+  if( min_prec > 64 )
+    {
+    // Bytes 15 through 8 are non-zero
+    capacity = 16;
+    }
+  else if( min_prec > 32 )
+    {
+    // Bytes 7 through 4 are non-zero
+    capacity = 8;
+    }
+  else if( min_prec > 16 )
+    {
+    // Bytes 3 and 2
+    capacity = 4;
+    }
+  else if( min_prec > 8 )
+    {
+    // Byte 1 is non-zero
+    capacity = 2;
+    }
+  else
+    {
+    // The value is zero through 0xFF
+    capacity = 1;
+    }
+
+  value *= sign;
+
+  // One last adjustment.  The number is signable, so the binary value
+  // is going to be treated as twos complement.  That means that the highest
+  // bit has to be 1 for negative signable numbers, and 0 for positive.  If
+  // necessary, adjust capacity up by one byte so that the variable fits:
+
+  if( capacity < 16 && (attr & signable_e) )
+    {
+    FIXED_WIDE_INT(128) mask
+      = wi::set_bit_in_zero<FIXED_WIDE_INT(128)>(capacity * 8 - 1);
+    if( wi::neg_p (value) && (value & mask) == 0 )
+      {
+      capacity *= 2;
+      }
+    else if( !wi::neg_p (value) && (value & mask) != 0 )
+      {
+      capacity *= 2;
+      }
+    }
+
+  return value;
+  }
+
+static void
+digits_from_int128( char                *ach,
+                    cbl_field_t         *field,
+                    uint32_t             desired_digits,
+                    FIXED_WIDE_INT(128)  value128, // cppcheck-suppress unknownMacro
+                    int32_t              rdigits)
+  {
+  if( value128 < 0 )
+    {
+    value128 = -value128;
+    }
+
+  // 'rdigits' are the number of rdigits in value128.
+
+  int scaled_rdigits = get_scaled_rdigits(field);
+
+  int i = field->data.rdigits;
+  while( i<0 )
+    {
+    value128 = value128/10;
+    i += 1;
+    }
+
+  // We take the digits of value128, and put them into ach.  We line up
+  // the rdigits, and we truncate the string after desired_digits
+  while(rdigits < scaled_rdigits)
+    {
+    value128 *= 10;
+    rdigits += 1;
+    }
+  while(rdigits > scaled_rdigits)
+    {
+    value128 = value128 / 10;
+    rdigits -= 1;
+    }
+  char conv[128];
+  print_dec (value128, conv, SIGNED);
+  size_t len = strlen(conv);
+
+  if( len<desired_digits )
+    {
+    memset(ach, ascii_0, desired_digits - len);
+    strcpy(ach+desired_digits - len, conv);
+    }
+  else
+    {
+    strcpy(ach, conv + len-desired_digits);
+    }
+  }
+
+static
 void
-cbl_field_t::report_invalid_initial_value(const YYLTYPE& loc) const {
+binary_initial( char *retval,
+                cbl_field_t *field,
+                FIXED_WIDE_INT(128) value,
+                int drdigits)
+  {
+  // This routine returns an xmalloced buffer designed to replace the
+  // data.initial member of the incoming field.  The 'retval' becomes the
+  // binary representation of 'value' in the target machine's native endian
+  // encoding.
 
-  if( ! data.initial ) return;
+  int scaled_rdigits = get_scaled_rdigits(field);
 
-  auto fig = cbl_figconst_of(data.initial);
+  int i = field->data.rdigits;
+  while( i<0 )
+    {
+    value = value/10;
+    i += 1;
+    }
 
-  // numeric initial value
+  // We take the digits of value, and put them into ach.  We line up
+  // the rdigits, and we truncate the string after desired_digits
+  while(drdigits < scaled_rdigits)
+    {
+    value *= 10;
+    drdigits += 1;
+    }
+  while(drdigits > scaled_rdigits)
+    {
+    value = value / 10;
+    drdigits -= 1;
+    }
+
+  switch(field->data.capacity())
+    {
+    tree type;
+    case 1:
+    case 2:
+    case 4:
+    case 8:
+    case 16:
+      type = build_nonstandard_integer_type ( field->data.capacity()
+                                              * BITS_PER_UNIT, 0);
+      native_encode_wide_int (type, value, PTRCAST(unsigned char, retval),
+                              field->data.capacity());
+      break;
+    default:
+      fprintf(stderr,
+              "Trouble in binary_initial at %s() %s:%d\n",
+              __func__,
+              __FILE__,
+              __LINE__);
+      abort();
+      break;
+    }
+  }
+
+/*
+ * Preconditions:
+ *  1.  input is not NULL
+ *  2.  type is numeric
+ *  3.  input conforms to type (will fit, allows sign, etc.)
+ *  4.  capacity set per PICTURE and USAGE, or
+ *      type == FldLiteralN and data.capacity == 0
+ *  5.  data_initial has been established with data.capacity() bytes, unless
+ *      FldLiteralN, in which case we will malloc data.initial.
+ *
+ * Process:
+ *  Convert input string to binary Host representation:
+ *    FldFloat: as tree
+ *    other (fixed point): as FIXED_WIDE_INT(128)
+ *  Set etc union via assignment, cbl_field_data_t::operator=().
+ *  That sets the correct member in the union and etc_type.
+ *
+ *  As of Mon Jan 5 13:32:32 2026, use gcc_assert for preconditions. A location
+ *  is provided so diagnositics can be issued.  We may remove precondition
+ *  verification from the caller and move error handling here.
+ *
+ *  Post condition:
+ *    etc union holds Host numeric value.
+ *    data.initial is NULL for error, else points to data.etc.
+ */
+
+void
+cbl_field_t::encode_numeric( const char input[], cbl_loc_t loc ) {
+  gcc_assert(input);
+  gcc_assert(is_numeric(this) || type == FldNumericEdited);
+
+  // The following are intended to test the preconditions....
+  if( type == FldLiteralN ) {
+    if( 0 < data.capacity() ) {
+      error_msg(loc, "unexpected nonzero numeric literal capacity");
+    }
+    if( data.initial != nullptr ) {
+      error_msg(loc, "unexpected initial value for numeric literal");
+    }
+  } else {
+    if( 0 == data.capacity() ) {
+      error_msg(loc, "unexpected zero capacity numeric nonliteral");
+    }
+  }
+
+  gcc_assert(0 < data.capacity() || type == FldLiteralN);
+  gcc_assert( data.initial == nullptr
+              || type == FldLiteralN
+              || data.capacity() <= strlen(data.initial)
+              || 1 < codeset.stride() );
+
+  if( type == FldFloat )
+    {
+    double d;
+    int n;
+    int erc = sscanf(input, "%lf%n", &d, &n);
+    if( erc < 0 || size_t(n) != strlen(input) )
+      {
+      dbgmsg("%s: error: could not interpret '%s' of '%s' as a number",
+             __func__, input + n, input);
+      gcc_assert(false);
+      }
+    REAL_VALUE_TYPE value;
+    real_from_string (&value, input);
+    value = real_value_truncate (TYPE_MODE (float128_type_node), value);
+    data = build_real(float128_type_node, value);
+    // Turn that back into a REAL_VALUE_TYPE with
+    // REAL_VALUE_TYPE readback_value = TREE_REAL_CST(data.etc.value);
+    unsigned char *retval =
+                        static_cast<unsigned char *>(xmalloc(data.capacity()));
+    assert(retval);
+    switch( data.capacity() )
+      {
+      case 4:
+        value = real_value_truncate (TYPE_MODE (float32_type_node), value);
+        native_encode_real(SCALAR_FLOAT_TYPE_MODE (float32_type_node), &value,
+                            retval, 4, 0);
+        break;
+      case 8:
+        value = real_value_truncate (TYPE_MODE (float64_type_node), value);
+        native_encode_real(SCALAR_FLOAT_TYPE_MODE (float64_type_node), &value,
+                            retval, 8, 0);
+        break;
+      case 16:
+        // 'value' is already a truncated float128
+        native_encode_real(SCALAR_FLOAT_TYPE_MODE (float128_type_node), &value,
+                            retval, 16, 0);
+        break;
+      default:
+        gcc_assert(false);
+        break;
+      }
+    data.initial = reinterpret_cast<char *>(retval);
+    }
+  else
+    {
+    uint32_t l_capacity;
+    uint32_t l_digits;
+    int32_t  l_rdigits;
+    uint64_t l_attr;
+    // The following returned capacity is 1, 2, 4, 8, or 16, for the binary
+    // value.
+    FIXED_WIDE_INT(128)value = dirty_to_binary(input,
+                                               l_capacity,
+                                               l_digits,
+                                               l_rdigits,
+                                               l_attr);
+    data = wide_int_to_tree(intTI_type_node, value);
+    // turn that back into a FIXED_WIDE_INT with
+    // wi::tree_to_wide_ref iii = wi::to_wide( data.etc.value );
+    if( data.capacity() == 0 )
+      {
+      // It falls to us to establish these parameters:
+      data.capacity(  l_capacity );
+      data.digits   = l_digits;
+      data.rdigits  = l_rdigits;
+      attr         |= l_attr;
+      data.initial = static_cast<char *>(xmalloc(data.capacity()));
+      gcc_assert(data.initial);
+      }
+    else if( !(attr & quoted_e) )
+      {
+      // quoted_e at this point means numeric edited, which gets the initial
+      // value verbatim.
+      if( l_attr & signable_e && !(attr & signable_e) && value < 0)
+        {
+          if( type != FldNumericEdited || (data.picture && data.picture[0] != '-')) {
+          error_msg(loc, "%qs has unsigned PICTURE but signed VALUE %qs",
+                    this->name, data.original());
+          }
+        }
+
+      if( data.digits && value != 0)
+        {
+        // We were supplied with parameters.  We now make sure they are
+        // consistent.
+        if( attr & scaled_e )
+          {
+          if( data.rdigits > 0 )
+            {
+            // This is like PIC PPP9999, with digits=4 and rdigits=3
+            if( l_digits != static_cast<uint32_t>(l_rdigits) )
+              {
+              error_msg(loc, "The magnitude is too large");
+              }
+            else
+              {
+              // This is like PIC PP999, with digits=3 and rdigits=2
+              if( data.digits + data.rdigits < l_digits )
+                {
+                error_msg(loc, "Too many significant digits");
+                }
+              else
+                {
+                // We know the abs(value) is less than 1, and we know that the
+                // fractional part fits into (data.digits + data.rdigits) to
+                // the right of the decimal point.  We need to make sure that
+                // the top rdigits of value are zero.
+
+                FIXED_WIDE_INT(128)tester = value;
+                if( tester < 0 )
+                  {
+                  tester = - tester;
+                  }
+                // The final value will have data.digits + l_rdigits decimal
+                // places.  Let's scale rvalue to that range, taking into
+                // account that we already have l_rdigits of those places.
+                tester *= 
+                     get_power_of_ten(data.digits + data.rdigits - l_rdigits);
+
+                // In the case of PPP9999, tester needs to be between 1 and
+                // 9999.  data.digits is 4, so....
+                if( tester >= get_power_of_ten(data.digits) )
+                  {
+                  error_msg(loc, "The fractional part is too large");
+                  }
+                }
+              }
+            }
+          else
+            {
+            // This is like PIC 999PP, with digits=3 and rdigits=-2
+            if( data.digits-data.rdigits < l_digits )
+              {
+              error_msg(loc, "Too many leading digits");
+              }
+            // We need to make sure the bottom -rdigits places are zero:
+            FIXED_WIDE_INT(128)v = value;
+            for(int32_t i=0; i < -data.rdigits; i++)
+              {
+              if( v % 10 != 0)
+                {
+                error_msg(loc, "P-scaled digits are nonzero");
+                break;
+                }
+              v = v / 10;
+              }
+            }
+          }
+        else if( !(attr & quoted_e) )
+          {
+          if( data.rdigits == 0 && l_rdigits > 0)
+            {
+            // This is a condition that the parser finds before we can:
+            }
+          if( data.rdigits && data.rdigits < l_rdigits )
+            {
+            // This is a condition that the parser finds before we can:
+            }
+          if( l_digits - l_rdigits > data.digits - data.rdigits )
+            {
+            // This error is caught earlier by validate_numeric_edited
+            if( type != FldNumericEdited )
+              {
+              error_msg(loc, "VALUE has too many integer digits");
+              }
+            }
+          }
+        }
+      }
+
+    char *retval;
+    if( data.initial )
+      {
+      retval = const_cast<char *>(data.initial);
+      }
+    else
+      {
+      retval = static_cast<char *>(xmalloc(data.capacity()));
+      data.initial = retval;
+      }
+
+    switch(type)
+      {
+      case FldNumericBin5:
+      case FldIndex:
+      case FldLiteralN:
+        {
+        binary_initial(retval, this, value, l_rdigits);
+        break;
+        }
+      case FldNumericBinary:
+        {
+        binary_initial(retval, this, value, l_rdigits);
+        if( attr & big_endian_e )
+          {
+          if(!BYTES_BIG_ENDIAN)
+            {
+            // The target is little-endian, so we have to swap our value to make
+            // it big-endian.
+            std::reverse(retval, retval + data.capacity());
+            }
+          }
+        break;
+        }
+      case FldPacked:
+        {
+        char *pretval = retval;
+        char ach[128];
+
+        bool negative;
+        if( value < 0 )
+          {
+          negative = true;
+          value = -value;
+          }
+        else
+          {
+          negative = false;
+          }
+
+        // For COMP-6 (flagged by packed_no_sign_e), the number of required
+        // digits is twice the capacity.
+
+        // For COMP-3, the number of digits is 2*capacity minus 1, because the
+        // the final "digit" is a sign nybble.
+
+        size_t ndigits =   (attr & packed_no_sign_e)
+                         ? data.capacity() * 2
+                         : data.capacity() * 2 - 1;
+
+        digits_from_int128(ach, this, ndigits, value, l_rdigits);
+
+        const char *digits = ach;
+        for(size_t i=0; i<ndigits; i++)
+          {
+          if( !(i & 0x01) )
+            {
+            *pretval    = ((*digits++) & 0x0F)<<4;;
+            }
+          else
+            {
+            *pretval++ += (*digits++) & 0x0F;
+            }
+          }
+        if( !(attr & packed_no_sign_e) )
+          {
+          // This is COMP-3, so put in a sign nybble
+          if( attr & signable_e )
+            {
+            if( negative )
+              {
+              *pretval++ += 0x0D;   // Means signable and negative
+              }
+            else
+              {
+              *pretval++ += 0x0C;   // Means signable and non-negative
+              }
+            }
+          else
+            {
+            *pretval++ += 0x0F;     // Means not signable
+            }
+          }
+        break;
+        }
+
+      case FldNumericDisplay:
+        {
+        // We are going to take the numerical value and convert it to the form
+        // specified by the attributes, digits, and rdigits.
+
+        char *pretval = retval;
+        char ach[128];
+
+        bool negative;
+        if( value < 0 )
+          {
+          negative = true;
+          value = - value;
+          }
+        else
+          {
+          negative = false;
+          }
+        digits_from_int128(ach, this, data.digits, value, l_rdigits);
+        const char *digits = ach;
+        if(    (attr & signable_e)
+            && (attr & separate_e)
+            && (attr & leading_e ) )
+          {
+          // This zoned decimal value is signable, separate, and leading.
+          if( negative )
+            {
+            *pretval++ = ascii_minus;
+            }
+          else
+            {
+            *pretval++ = ascii_plus;
+            }
+          }
+        for(size_t i=0; i<data.digits; i++)
+          {
+          // Start by assuming it's an value that can't be signed
+          *pretval++ = ascii_0 + ((*digits++) & 0x0F);
+          }
+        if(     (attr & signable_e)
+            &&  (attr & separate_e)
+            && !(attr & leading_e ) )
+          {
+          // The value is signable, separate, and trailing
+          if( negative )
+            {
+            *pretval++ = ascii_minus;
+            }
+          else
+            {
+            *pretval++ = ascii_plus;
+            }
+          }
+
+        // It's at this point we convert to the target encoding:
+        charmap_t *charmap = __gg__get_charmap(codeset.encoding);
+        size_t retval_length = pretval - retval;
+        if( retval_length != char_capacity() ) {
+          cbl_errx( "%s: %s %lu %s %lu",
+                    name,
+                    "retval_length",
+                    (unsigned long)retval_length,
+                    "!= char_capacity()",
+                    (unsigned long)char_capacity());
+        }
+        gcc_assert(retval_length == char_capacity());
+        size_t nbytes;
+        const char *converted = __gg__iconverter(DEFAULT_SOURCE_ENCODING,
+                                                 codeset.encoding,
+                                                 retval,
+                                                 retval_length,
+                                                 &nbytes);
+        if( nbytes != data.capacity() ) {
+          cbl_errx( "%s: nbytes %lu %s %lu",
+                    name,
+                    (unsigned long)nbytes,
+                    "!= data.capacity()",
+                    (unsigned long)data.capacity());
+        }
+        gcc_assert(nbytes == data.capacity());
+        memcpy(retval, converted, data.capacity());
+        if(     (attr & signable_e)
+            && !(attr & separate_e) )
+          {
+          // This value is signable, and not separate.  So, the sign
+          // information goes into the first or last byte:
+          char *sign_location = attr & leading_e
+                        ? retval
+                        : retval + (data.digits-1) * charmap->stride() ;
+          cbl_char_t schar = charmap->set_digit_negative(*sign_location,
+                                                          negative);
+          switch(charmap->stride())
+            {
+            case 1:
+              {
+              uint8_t v = schar;
+              memcpy(sign_location, &v, charmap->stride());
+              break;
+              }
+            case 2:
+              {
+              uint16_t v = schar;
+              memcpy(sign_location, &v, charmap->stride());
+              break;
+              }
+            case 4:
+              {
+              uint32_t v = schar;
+              memcpy(sign_location, &v, charmap->stride());
+              break;
+              }
+            }
+          }
+        break;
+        }
+
+      case FldNumericEdited:
+        {
+        if( attr & quoted_e )
+          {
+          // What the programmer says the value is, the value stays, no
+          // matter how weird it might be.
+          }
+        else
+          {
+          // It's not a quoted string, so we use data.value:
+          bool negative;
+          if( value < 0 )
+            {
+            negative = true;
+            value = -value;
+            }
+          else
+            {
+            negative = false;
+            }
+
+          char ach[128];
+          memset(ach, 0, sizeof(ach));
+          memset(retval, 0, data.capacity());
+
+          if( (attr & blank_zero_e) && value == 0 )
+            {
+            memset( retval,
+                    ascii_space,
+                    data.capacity());
+            }
+          else
+            {
+            digits_from_int128(ach, this, char_capacity(), value, l_rdigits);
+
+            // __gg__string_to_numeric_edited operates in ASCII space:
+            __gg__string_to_numeric_edited( reinterpret_cast<char *>(retval),
+                                            ach,
+                                            data.rdigits,
+                                            negative,
+                                            data.picture);
+            // So now we convert it to the target encoding:
+            size_t nbytes;
+            const char *converted = __gg__iconverter(DEFAULT_SOURCE_ENCODING,
+                                                     codeset.encoding,
+                                                     retval,
+                                                     char_capacity(),
+                                                     &nbytes);
+            memcpy(retval, converted, nbytes);
+            }
+          }
+        break;
+        }
+
+      default:
+        cbl_errx( "%s:%d: type %s, who woulda thunk?",
+                  __func__, __LINE__, cbl_field_type_str(type) );
+        gcc_assert(false);
+        break;
+      }
+    }
+  gcc_assert(data.etc_type != cbl_field_data_t::no_value_e);
+}
+
+size_t parse_error_inc();
+size_t parse_error_count();
+
+bool // true if error reported
+cbl_field_t::report_invalid_initial_value(const cbl_loc_t& loc) const {
+
+  if( ! data.original() ) return false;
+
+  const auto nerr = parse_error_count();
+
+  auto orig = data.original();
+
+  auto fig = cbl_figconst_of(orig);
+
+  // numeric orig value
   if( is_numeric(type) ) {
     if( has_attr(quoted_e) ) {
       error_msg(loc, "numeric type %s VALUE '%s' requires numeric VALUE",
-               name, data.initial);
-      return;
+               name, orig);
+      return true;
     }
     if( ! (fig == normal_value_e || fig == zero_value_e)  ) {
         error_msg(loc, "numeric type %s VALUE '%s' requires numeric VALUE",
                  name, cbl_figconst_str(fig));
-        return;
+        return true;
       }
 
     switch( type ) {
@@ -838,18 +1975,18 @@ cbl_field_t::report_invalid_initial_value(const YYLTYPE& loc) const {
         // We are dealing with a pure binary type.  If the capacity is
         // 8 or more, we need do no further testing because we assume
         // everything fits.
-        if( data.capacity < 8 ) {
-          const auto p = strchr(data.initial, symbol_decimal_point());
+        if( data.capacity() < 8 ) {
+          const char *p = strchr(orig, symbol_decimal_point());
           if( p && atoll(p+1) != 0 ) {
             error_msg(loc, "integer type %s VALUE '%s' "
                      "requires integer VALUE",
-                     name, data.initial);
+                     name, orig);
           } else {
             // Calculate the maximum possible value that a binary with this
             // many bytes can hold
             size_t max_possible_value;
             max_possible_value = 1;
-            max_possible_value <<= data.capacity*8;
+            max_possible_value <<= data.capacity()*8;
             max_possible_value -= 1;
             if( attr & signable_e )
               {
@@ -859,22 +1996,22 @@ cbl_field_t::report_invalid_initial_value(const YYLTYPE& loc) const {
               }
             // Pick up the given VALUE
             size_t candidate;
-            if( *data.initial == '-' ) {
+            if( *orig == '-' ) {
               // We care about the magnitude, not the sign
               if( !(attr & signable_e) ){
                 error_msg(loc, "integer type %s VALUE '%s' "
                          "requires a non-negative integer",
-                         name, data.initial);
+                         name, orig);
               }
-              candidate = atoll(data.initial+1);
+              candidate = atoll(orig+1);
             }
             else {
-              candidate = (size_t)atoll(data.initial);
+              candidate = (size_t)atoll(orig);
             }
             if( candidate > max_possible_value ) {
               error_msg(loc, "integer type %s VALUE '%s' "
                        "requires an integer of magnitude no greater than %zu",
-                       name, data.initial, max_possible_value);
+                       name, orig, max_possible_value);
             }
           }
         }
@@ -887,7 +2024,7 @@ cbl_field_t::report_invalid_initial_value(const YYLTYPE& loc) const {
         /*
          * Check fraction for excess precision
          */
-        const char *p = strchr(data.initial, symbol_decimal_point());
+        const char *p = strchr(orig, symbol_decimal_point());
         if( p ) {
           auto pend = std::find(p, p + strlen(p), 0x20);
           int n = std::count_if( ++p, pend, isdigit );
@@ -895,63 +2032,96 @@ cbl_field_t::report_invalid_initial_value(const YYLTYPE& loc) const {
           if( data.precision() < n) {
             if( 0 == data.rdigits ) {
               error_msg(loc, "integer type %s VALUE '%s' requires integer VALUE",
-                       name, data.initial);
+                       name, orig);
             } else {
               auto has_exponent = std::any_of( p, pend,
                                                []( char ch ) {
                                                  return TOUPPER(ch) == 'E';
                                                } );
               if( !has_exponent && data.precision() < pend - p ) {
-                error_msg(loc, "%s cannot represent VALUE %qs exactly (max %c%zu)",
-                          name, data.initial, '.', pend - p);
+                error_msg(loc, "%s cannot represent VALUE %qs exactly (max %c%ld)",
+                          name, orig, '.', (long)(pend - p));
               }
             }
           }
         } else {
-          p = data.initial + strlen(data.initial);
+          p = orig + strlen(orig);
         }
 
         /*
          * Check magnitude, whether or not there's a decimal point.
          */
         // skip leading zeros
-        auto first_digit = std::find_if( data.initial, p,
+        auto first_digit = std::find_if( orig, p,
                                          []( char ch ) {
                                            return ch != '0'; } );
         // count remaining digits, up to the decimal point
         auto n = std::count_if( first_digit, p, isdigit );
         if( data.ldigits() < n ) {
           error_msg(loc, "numeric %s VALUE '%s' holds only %u digits",
-                   name, data.initial,
+                   name, orig,
                    data.digits);
         }
       }
       break;
-    } // end type switch for normal string initial value
-    return;
+    } // end type switch for normal string orig value
+    return nerr < parse_error_count();
   } // end numeric
   assert( ! is_numeric(type) );
 
   // consider all-alphabetic
   if( has_attr(all_alpha_e) ) {
-    bool alpha_value = fig != zero_value_e;
+    bool is_alpha_only = fig != zero_value_e;
 
-    if( fig == normal_value_e ) {
-      alpha_value = std::all_of( data.initial,
-                                 data.initial +
-                                 strlen(data.initial),
-                                 []( char ch ) {
-                                   return ISSPACE(ch) ||
-                                     ISPUNCT(ch) ||
-                                     ISALPHA(ch); } );
+    if( fig == normal_value_e && ! has_attr(hex_encoded_e)) {
+      // Test the input, not the converted initial value
+      is_alpha_only = std::none_of( orig, orig + strlen(orig),
+                                    []( char ch ) {
+                                      return
+                                        ISPUNCT(ch) ||
+                                        ISDIGIT(ch); } );
     }
-    if( ! alpha_value ) {
+    /*
+     * This is overspecific: It catches numeric literal VALUE for all_alpha_e\
+     *  only.
+     * The general error is: 
+     * - alphanumeric type
+     * - data.initial is all spaces (based on PICTURE)
+     * - data.original() is numeric or data.etc_type == value_e
+     * - quoted_e clear, of course
+     * 
+     * This happens because VALUE was captured as a cce and stored in
+     * data.original for encode_numeric.  But encode_numeric was never called
+     * because it's not a numeric field.
+     *
+     * It is also insufficient.  It does not deal with VALUE LENGTH OF.  
+     */
+    if( is_alpha_only ) {
+      charmap_t *charmap = __gg__get_charmap(codeset.encoding);
+      auto spc = charmap->mapped_character(ascii_space);
+      bool spacey = std::all_of( data.initial,
+                                 data.initial + char_capacity(),
+             [spc]( char ch ) { return static_cast<cbl_char_t>(ch) == spc; } );
+      if( spacey ) {
+        if( ISDIGIT(orig[0]) || orig[0] == '-' || orig[0] == '+' ) {
+          gcc_assert( ! has_attr(quoted_e) );
+          is_alpha_only = false; // alpha field supplied with VALUE numeric
+        }
+      }
+    }
+    
+    if( ! is_alpha_only ) {
       error_msg(loc, "alpha-only %s VALUE '%s' contains non-alphabetic data",
-               name, fig == zero_value_e? cbl_figconst_str(fig) : data.initial);
+               name, fig == zero_value_e? cbl_figconst_str(fig) : orig);
+      
+      auto pend = orig + strlen(orig);
+      auto p = std::find_if( orig, pend, 
+                             []( char ch ) { return ! ISALPHA(ch); } );
+      dbgmsg("%zu nonalpha '%.*s'", pend - p, int(pend - p), p);
     }
   }
 
-  return;
+  return nerr < parse_error_count();
 }
 
 // Return the field representing the subscript whose literal value
@@ -985,7 +2155,7 @@ literal_subscript_oob( const cbl_refer_t& r, size_t& isub /* output */)  {
                            pdim++;
                            return ! occurs.subscript_ok(r.field);
                          } );
-  isub = psub - r.subscripts.begin(); 
+  isub = psub - r.subscripts.begin();
   return psub == r.subscripts.end()? NULL : dims[isub];
 }
 
@@ -998,12 +2168,12 @@ cbl_refer_t::subscripts_set( const std::list<cbl_refer_t>& subs ) {
 
 const char *
 cbl_refer_t::str() const {
-  static char subscripts[64];
-  sprintf(subscripts, "(%u of " HOST_SIZE_T_PRINT_UNSIGNED " dimensions)",
+  static char subscripts_l[64];
+  sprintf(subscripts_l, "(%u of " HOST_SIZE_T_PRINT_UNSIGNED " dimensions)",
           nsubscript(), (fmt_size_t)dimensions(field));
   char *output = xasprintf("%s %s %s",
                            field? field_str(field) : "(none)",
-                           0 < dimensions(field)? subscripts : "",
+                           0 < dimensions(field)? subscripts_l : "",
                            is_refmod_reference()? "(refmod)" : "" );
   return output;
 }
@@ -1072,9 +2242,20 @@ move_corresponding( cbl_refer_t& tgt, cbl_refer_t& src )
   return true;
 }
 
+static cbl_field_type_t
+effective_type( const cbl_refer_t& r ) {
+  auto type = r.field->type;
+  if( type == FldNumericDisplay && r.is_refmod_reference() ) {
+    type = FldAlphanumeric;
+  }
+  return type;
+}
+
 bool
-valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
+valid_move( const cbl_refer_t& tgt_ref, const cbl_refer_t& src_ref )
 {
+  const cbl_field_t *tgt = tgt_ref.field, *src = src_ref.field;
+
     // This is the base matrix of allowable moves.  Moves from Alphanumeric are
     // modified based on the attribute bit all_alpha_e, and moves from Numeric
     // types to Alphanumeric and AlphanumericEdited are allowable when the
@@ -1104,10 +2285,8 @@ valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
   static_assert(sizeof(matrix[0]) == COUNT_OF(matrix[0]),
                 "matrix should be square");
 
-  for( const cbl_field_t *args[] = {tgt, src}, **p=args;
-       p < args + COUNT_OF(args); p++ ) {
-    auto& f(**p);
-    switch(f.type) {
+  for( auto field : { src, tgt } ) {
+    switch(field->type) {
     case FldClass:
     case FldConditional:
     case FldIndex:
@@ -1117,11 +2296,10 @@ valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
       return false;
     // parser should not allow the following types here
     case FldForward:
-    case FldBlob:
     default:
-      if( sizeof(matrix[0]) < f.type ) {
+      if( sizeof(matrix[0]) < field->type ) {
         cbl_internal_error("logic error: MOVE %s %s invalid type:",
-                           cbl_field_type_str(f.type), f.name);
+                           cbl_field_type_str(field->type), field->name);
       }
       break;
     }
@@ -1129,6 +2307,21 @@ valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
 
   assert(tgt->type < sizeof(matrix[0]));
   assert(src->type < sizeof(matrix[0]));
+
+  /*
+   * 8.4.3.3.3 Syntax rules
+   * A refmod may apply to: 
+   * "a numeric data item of usage display or national that is not subordinate
+   * to a strongly-typed group item,"
+   * 
+   * 8.4.3.3.4 General rules
+   *
+   * "If the data item referenced by identifier-1 is explicitly or implicitly
+   * described as usage DISPLAY and its category is other than alphanumeric,
+   * identifier-1 is operated upon for purposes of reference modification as if
+   * it were redefined as a data item of class and category alphanumeric of the
+   * same size as the data item referenced by identifier-1."
+   */
 
   // A value of zero  means the move is prohibited.
   // The 1 bit means the move is allowed
@@ -1142,13 +2335,13 @@ valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
   bool alphabetic = tgt->has_attr(all_alpha_e);
   bool src_alpha =  src->has_attr(all_alpha_e);
 
-  switch( matrix[src->type][tgt->type] )
+  switch( matrix[ effective_type(src_ref) ] [ effective_type(tgt_ref) ] )
     {
     case 0:
       if( src->type == FldLiteralA && is_numericish(tgt) && !is_literal(tgt) ) {
         // Allow if input string is an integer.
-        const char *p = src->data.initial, *pend = p + src->data.capacity;
-        if( p[0] == '+' || p[0] == '-' ) p++;
+        const char *p = src->data.original(), *pend = p + strlen(src->data.original());
+        if( (p[0] == ascii_plus) || (p[0] == ascii_minus) ) p++;
         retval = std::all_of( p, pend, isdigit );
         if( yydebug && ! retval ) {
           auto bad = std::find_if( p, pend,
@@ -1182,7 +2375,7 @@ valid_move( const struct cbl_field_t *tgt, const struct cbl_field_t *src )
     }
 
   if( retval && src->has_attr(embiggened_e) ) {
-    if( is_numeric(tgt) && tgt->data.capacity < src->data.capacity ) {
+    if( is_numeric(tgt) && tgt->data.capacity() < src->data.capacity() ) {
       dbgmsg("error: source no longer fits in target");
       return false;
     }
@@ -1195,8 +2388,6 @@ bool
 valid_picture( enum cbl_field_type_t type, const char picture[] )
 {
   switch(type) {
-  case FldBlob:
-    gcc_unreachable(); // can't get here via the parser
   case FldInvalid:
   case FldGroup:
   case FldLiteralA:
@@ -1241,7 +2432,6 @@ uint32_t
 type_capacity( enum cbl_field_type_t type, uint32_t digits )
 {
     switch(type) {
-    case FldBlob: gcc_unreachable();
     case FldInvalid:
     case FldGroup:
     case FldAlphanumeric:
@@ -1281,7 +2471,8 @@ type_capacity( enum cbl_field_type_t type, uint32_t digits )
 
     auto psize = std::find_if( sizes, esizes,
 			  [digits]( sizes_t sizes ) {
-			    return sizes.bounds.first <= digits && digits <= sizes.bounds.second;
+			    return sizes.bounds.first <= digits
+                                                      && digits <= sizes.bounds.second;
 			  } );
     if( psize != esizes ) return psize->size;
 
@@ -1394,6 +2585,320 @@ public:
 };
 
 /*
+ * Use a namespace to define sets of names.  Use relational algebra to
+ * determine uniqueness or ambiguity of each PERFORM reference.
+ */
+namespace match_proc {
+  std::string
+  lcase( std::string name ) {
+    std::transform(name.begin(), name.end(), name.begin(), ftolower);
+    return name;
+  }
+
+  // PERFORM targets are captured by parser
+  struct stmt_t {
+    int line;
+    size_t curr;  // current section of the PERFORM statement, else 0
+    struct tgt_t {
+      std::string name, qual;
+      bool empty() const { return name.empty(); }
+      bool operator==(const tgt_t& that) const {
+        return name == that.name && qual == that.qual;
+      }
+      tgt_t lcase() const {
+        tgt_t output{ match_proc::lcase(name), match_proc::lcase(qual) };
+        return output;
+      }
+    };
+    std::pair<tgt_t, tgt_t> tgts;
+
+    stmt_t() : line(0), curr(0) {}
+    stmt_t( int line, size_t isym,
+            std::string name,
+            const char qual[] )
+      : line(line), curr(isym)
+    {
+      tgts.first = tgt_t{name, qual? std::string(qual) : std::string() };
+    }
+    stmt_t& thru( std::string name, const char qual[] ) {
+      tgts.second = tgt_t{name, qual? std::string(qual) : std::string() };
+      return *this;
+    }
+    struct found_t {
+      size_t n, isym;
+      found_t() : n(0), isym(0) {}
+      found_t(size_t n, size_t isym) : n(n), isym(isym) {}
+    };
+    void error(const cbl_name_t program_name,
+               const tgt_t&tgt,
+               const found_t& found) const 
+    {
+      const char *clause = tgt == tgts.first? "" : "THRU ";
+          
+      switch( found.n ) {
+      case 1:
+        gcc_unreachable();
+        break;
+      case 0:
+        // error: not found
+        dbgmsg("%s:%d PERFORM %s%s not resolved",
+               program_name, line, clause, tgt.name.c_str());
+        break;
+      default:        
+        assert( 1 < found.n );
+        // error: ambiguous
+        dbgmsg("%s:%d PERFORM %s%s ambiguous",
+               program_name, line, clause, tgt.name.c_str());
+        break;
+      }
+    }
+  };
+
+  struct sect_t {
+    size_t isym;
+    std::string name;
+    sect_t( size_t isym ) : isym(isym) {
+      auto L = cbl_label_of(symbol_at(isym));
+      name = lcase(L->name);
+    }
+    bool operator<( const sect_t& that ) const {
+      return name < that.name;
+    }
+  };
+  struct para_t {
+    size_t isym, parent;
+    std::string name;
+    para_t( size_t isym ) : isym(isym) {
+      auto L = cbl_label_of(symbol_at(isym));
+      parent = L->parent;
+      name = lcase(L->name);
+    }
+    bool operator<( const para_t& that ) const {
+      if( name == that.name ) {
+        return parent < that.parent;
+      }
+      return name < that.name;
+    }
+    std::string parent_name() const {
+      if( ! parent ) return std::string();
+      const auto f = cbl_label_of(symbol_at(parent));
+      return lcase(f->name);
+    }
+  };
+  struct proc_t {
+    size_t n, isym; // index of first of n matching pairs
+    std::string para, sect;
+    proc_t( size_t n, size_t isym,
+            const std::string& para,
+            const std::string& sect )
+      : n(n), isym(isym), para(para), sect(sect)
+    {}
+    bool operator<( const proc_t& that ) const {
+      if( para == that.para ) {
+        return sect < that.sect;
+      }
+      return para < that.para;
+    }
+  };
+
+  class procedures_t {
+    std::set<sect_t> sects;
+    std::set<para_t> paras;
+    std::set<proc_t> procs;
+    friend bool statements_verify();
+  public:
+    procedures_t( size_t program ) {
+      // find sections and paragraphs
+      for( symbol_elem_t *e = symbols_begin(program+1); e->program == program; e++ ) {
+        if( e->type == SymLabel ) {
+          const auto& L = *cbl_label_of(e);
+          auto isym = e - symbols_begin();
+          switch(L.type) {
+          case LblSection: 
+            sects.insert(isym);
+            break;
+          case LblParagraph:
+            paras.insert(isym);
+            break;
+          default:
+            continue;
+          }
+        }
+      }
+      // join sections and paragraphs, unreduced
+      std::list<proc_t> all;
+      for( const auto& para : paras ) {
+        std::set<sect_t> parents;
+        std::copy_if( sects.begin(), sects.end(), std::inserter(parents, parents.begin()),
+                      [para]( const auto& sect ) {
+                        return para.parent_name() == sect.name;
+                      } );
+        std::transform( parents.begin(), parents.end(), std::back_inserter(all), 
+                        [para]( const auto& sect ) {
+                          proc_t proc(1, para.isym, para.name, sect.name);
+                          return proc;
+                        } );
+      }
+      // insert paragraph procedures
+      struct stat_t {
+        size_t n, isym;
+        stat_t() : n(0), isym(0) {}
+        stat_t update( size_t isym ) {
+          this->isym = this->isym == 0 ? isym : std::min(this->isym, isym);
+          n++;
+          return *this;
+        }
+      };
+      std::map<proc_t, stat_t> nprocs;
+      for( const auto& proc : all ) {
+        auto& stat = nprocs[proc];
+        stat.update( proc.isym );
+      }
+      std::transform(nprocs.begin(), nprocs.end(), std::inserter(procs, procs.begin()),
+                     []( const auto& elem ) {
+                       proc_t proc ( elem.second.n, elem.second.isym,
+                                     elem.first.para, elem.first.sect );
+                       return proc;
+                     } );
+      // insert section procedures
+      std::map<sect_t, stat_t> nsects;
+      for( const auto& sect : sects ) {
+        auto& stat = nsects[sect];
+        stat.update( sect.isym );
+      }
+      std::transform(nsects.begin(), nsects.end(), std::inserter(procs, procs.begin()),
+                     []( const auto& elem ) {
+                       proc_t proc ( elem.second.n, elem.second.isym,
+                                     std::string(), elem.first.name );
+                       return proc;
+                     } );
+    }
+
+    stmt_t::found_t
+    find( const stmt_t& stmt, const stmt_t::tgt_t& tgt ) {
+      if( tgt.empty() ) return stmt_t::found_t();
+      std::string curr ( lcase( cbl_label_of(symbol_at(stmt.curr))->name ) );
+
+      auto p = std::find_if(procs.cbegin(), procs.cend(),
+                            [curr, tgt](auto proc) {
+                              return match(proc, tgt, curr);
+                            });
+      size_t n = std::count_if(p, procs.end(),
+                               [curr, tgt](const auto& proc) {
+                                 return match(proc, tgt, curr);
+                               });
+      stmt_t::found_t found = {n, 0};
+      if( n ) {
+        assert(p != procs.end());
+        found.isym = p->isym;
+      }
+      return found;
+    }
+  protected:
+    static bool match( const proc_t& proc, const stmt_t::tgt_t& tgt, const std::string& curr ) {
+      return ( proc.para == tgt.name && tgt.qual.empty() )
+        ||   ( proc.sect == tgt.name && tgt.qual.empty() )
+        ||   ( proc.para == tgt.name && proc.sect == tgt.qual )
+        ||   ( proc.para == tgt.name && proc.sect == curr );
+    }    
+
+    void dump(const stmt_t& stmt) {
+      std::string target( stmt.tgts.first.name );
+      if( ! stmt.tgts.first.qual.empty() ) {
+        target += " of " + stmt.tgts.first.qual;
+      }
+      if( ! stmt.tgts.second.name.empty() ) {
+        target += " THRU " + stmt.tgts.second.name;
+      }
+      if( ! stmt.tgts.second.qual.empty() ) {
+        target += " of " + stmt.tgts.second.qual;
+      }
+
+      fprintf(stderr, "line %d in section #%lu: PERFORM %s\n",
+              stmt.line, (unsigned long)stmt.curr, target.c_str());
+      fprintf(stderr, "%lu Sections:\n", (unsigned long)sects.size());
+      for( auto sect : sects ) {
+        fprintf(stderr, "\t" "#%lu %s\n", (unsigned long)sect.isym, sect.name.c_str());
+      }
+      fprintf(stderr, "%lu Paragraphs:\n", (unsigned long)paras.size());
+      for( auto para : paras ) {
+        fprintf(stderr, "\t" "#%lu %s of #%lu\n",
+                (unsigned long)para.isym, para.name.c_str(), (unsigned long)para.parent);
+      }
+      fprintf(stderr, "%lu Procedures:\n", (unsigned long)procs.size());
+      for( auto proc : procs ) {
+        std::string section("");
+        if( ! proc.sect.empty() ) section += "of " + proc.sect;
+        fprintf(stderr, "\t" "n=%lu %s %s\n",
+                (unsigned long)proc.isym, proc.para.c_str(), section.c_str());
+      }
+      return;
+    }
+  }; // procedures
+
+
+  static stmt_t prototype;
+  static std::list<stmt_t> stmts;
+
+  bool
+  statements_verify() {
+    size_t nerr = 0;
+    size_t iprog = current_program_index();
+    const char *program_name = cbl_label_of(symbol_at(iprog))->name;
+    // instantiate procedure targets for current program from the symbol table
+    procedures_t procedures(iprog);
+
+    // Verify each PERFORM statement target is a unique reference
+    for( const auto& stmt : stmts ) {
+      stmt_t::found_t found = procedures.find(stmt, stmt.tgts.first.lcase());
+      stmt_t::found_t thru  = procedures.find(stmt, stmt.tgts.second.lcase());
+
+      if( found.n == 1 && (thru.n == 1 || stmt.tgts.second.empty()) ) {
+        // update proc call list
+        if( stmt.tgts.first.qual.empty() ) {
+          dbgmsg("%s:%d PERFORM %s is ok", program_name, stmt.line,
+                 stmt.tgts.first.name.c_str());
+        } else {
+          dbgmsg("%s:%d PERFORM %s of %s is ok", program_name, stmt.line,
+                 stmt.tgts.first.name.c_str(),
+                 stmt.tgts.first.qual.c_str());
+        }
+        continue;
+      }
+      nerr++;
+      
+      if( found.n != 1 ) {
+        stmt.error(program_name, stmt.tgts.first, found);
+        if( nerr == 1 && yydebug ) {
+          procedures.dump(stmt);
+        }
+      }
+      if( thru.n != 1 && ! stmt.tgts.second.empty() ) {
+        stmt.error(program_name, stmt.tgts.second, thru);
+      }
+    }
+    return nerr == 0;
+  }
+  
+  void statement_add() {
+    stmts.push_back(prototype);
+    prototype = stmt_t();
+  }
+  void
+  statement_compose( int line, size_t isection, // isection is where the PERFORM is
+                       const cbl_name_t para,
+                       const cbl_name_t qual ) {
+    std::string qual_name;
+    if( qual ) qual_name = qual;
+    if( prototype.tgts.first.name.empty() ) {
+      prototype = stmt_t( line, isection, para, qual );
+    } else {
+      prototype.thru( para, qual );
+    }
+  }
+} // end match_proc namespace
+
+/*
  * Every reference occurs in a {program,section,paragraph} context,
  * even if they're implicit.
  */
@@ -1497,20 +3002,54 @@ public:
   }
 };
 
+#define DUMP_PROCEDURE_CALLS 0
+#if DUMP_PROCEDURE_CALLS
+static void procedure_calls_dump( size_t program ) {
+  procedures_t& procedures = programs[program];
+  for( const auto& proc : procedures ) {
+    const procdef_t& def(proc.first);
+    const auto& refs(proc.second);
+    auto L = def.label_of();
+    if( L ) {
+      fprintf(stderr, "call to %s", L->name);
+      if( L->parent ) {
+        auto S = cbl_label_of(symbol_at(L->parent));
+        fprintf(stderr, " of %s", S->name);
+      }
+      fprintf(stderr, ":\n");
+      for( const procref_t& ref : refs ) {
+        fprintf(stderr, "\t" "from %s ", ref.paragraph());
+        if( ref.section()[0] ) fprintf(stderr, "of %s", ref.section());
+        fprintf(stderr, "on line %d\n", ref.line_number());
+      }
+    }
+  }
+}
+#endif
+
 procref_t *
 ambiguous_reference( size_t program ) {
   procedures_t& procedures = programs[program];
 
+#if DUMP_PROCEDURE_CALLS
+  procedure_calls_dump(program);
+#endif
   for( const auto& proc : procedures ) {
     procedures_t::mapped_type::const_iterator
       ambiguous = find_if_not( proc.second.begin(), proc.second.end(),
                                is_unique(program, proc.first) );
     if( proc.second.end() != ambiguous ) {
       if( yydebug ) {
-        dbgmsg("%s: %s of '%s' has " HOST_SIZE_T_PRINT_UNSIGNED
-               "potential matches", __func__,
+        dbgmsg("%s: %s of '%s' has " HOST_SIZE_T_PRINT_UNSIGNED " "
+               "potential matches among references", __func__,
                ambiguous->paragraph(), ambiguous->section(),
                (fmt_size_t)procedures.count(procdef_t(*ambiguous)));
+        for( const auto& ref : proc.second ) {
+          fprintf(stderr, "\tline %d from {%s}: %s",
+                  ref.line_number(), ref.called_from(), ref.paragraph());
+          if( ref.section()[0] ) fprintf(stderr, "of %s", ref.section());
+          fprintf(stderr, "\n");
+        }
       }
       return new procref_t(*ambiguous);
     }
@@ -1553,16 +3092,11 @@ parent_names( const symbol_elem_t *elem,
 
   if( is_filler(cbl_field_of(elem)) ) return;
 
-  // dbgmsg("%s: asked about %s of %s (" HOST_SIZE_T_PRINT_UNSIGNED " away)", __func__,
-  //       cbl_field_of(elem)->name,
-  //       cbl_field_of(group)->name, (fmt_size_t)(elem - group));
-
   for( const symbol_elem_t *e=elem; e && group < e; e = symbol_parent(e) ) {
     names.push_front( cbl_field_of(e)->name );
   }
 }
 
-extern int yylineno;
 class find_corresponding {
 public:
   enum type_t { arith_op, move_op };
@@ -1707,12 +3241,13 @@ date_time_fmt( const char input[] ) {
     { regex_t(), 'd', "^(" DATE_FMT_B "|" DATE_FMT_E ")$" },
     { regex_t(), 't', "^(" TIME_FMT_B "|" TIME_FMT_E ")$" },
   };
-  int erc, cflags = REG_EXTENDED | REG_ICASE, eflags=0;
+  int cflags = REG_EXTENDED | REG_ICASE, eflags=0;
   regmatch_t m[5];
   char result = 0;
 
   if( ! compiled ) {
     for( auto& fmt : fmts ) {
+      int erc;
       if( (erc = regcomp(&fmt.reg, fmt.pattern, cflags)) != 0 ) {
         char msg[80];
         regerror(erc, &fmt.reg, msg, sizeof(msg));
@@ -1735,7 +3270,7 @@ date_time_fmt( const char input[] ) {
 
 
 /*
- * Development suppport
+ * Development support
  */
 
 #pragma GCC diagnostic push
@@ -1745,11 +3280,10 @@ struct input_file_t {
   ino_t inode;
   int lineno;
   const char *name;
-  const line_map *lines;
 
   input_file_t( const char *name, ino_t inode,
-                int lineno=1, const line_map *lines = NULL )
-    : inode(inode), lineno(lineno), name(name), lines(lines)
+                int lineno=1 )
+    : inode(inode), lineno(lineno), name(name)
   {
     if( inode == 0 ) inode_set();
   }
@@ -1771,7 +3305,7 @@ class unique_stack : public std::stack<input_file_t>
   friend void cobol_set_pp_option(int opt);
   bool option_m;
   std::set<std::string> all_names;
-  
+
   const char *
   no_wd( const char *wd, const char *name ) {
     int i;
@@ -1782,7 +3316,7 @@ class unique_stack : public std::stack<input_file_t>
 
  public:
   unique_stack() : option_m(false) {}
-  
+
   bool push( const value_type& value ) {
     auto ok = std::none_of( c.cbegin(), c.cend(),
                             [value]( const auto& that ) {
@@ -1811,7 +3345,13 @@ class unique_stack : public std::stack<input_file_t>
     }
     return false;
   }
-  
+
+  // Look down into the stack. peek(0) == top()
+  const input_file_t& peek( size_t n ) const {
+    gcc_assert( n < size() );
+    return c.at(size() - ++n);
+  }
+
   void option( int opt ) { // capture other preprocessor options eventually
     assert(opt == 'M');
     option_m = true;
@@ -1824,7 +3364,7 @@ class unique_stack : public std::stack<input_file_t>
     std::string input( top().name );
     printf( "%s: ", input.c_str() );
     for( const auto& name : all_names ) {
-      if( name != input ) 
+      if( name != input )
 	printf( "\\\n\t%s ", name.c_str() );
     }
     printf("\n");
@@ -1841,7 +3381,16 @@ void cobol_set_pp_option(int opt) {
   assert(opt == 'M');
   input_filenames.option_m = true;
 }
-				  
+
+static bool trunc_binary;
+
+bool cobol_trunc_binary() {
+  return trunc_binary;
+}
+void cobol_trunc_binary( int cobol_trunc_binary ) {
+  trunc_binary = cobol_trunc_binary != 0;
+}
+
 /*
  * Maintain a stack of input filenames.  Ensure the files are unique (by
  * inode), to prevent copybook cycles. Before pushing a new name, Record the
@@ -1852,7 +3401,7 @@ void cobol_set_pp_option(int opt) {
  * to enforce uniqueness, and the scanner to maintain line numbers.
  */
 bool cobol_filename( const char *name, ino_t inode ) {
-  const line_map *lines = NULL;
+  //const line_map *lines = NULL;
   if( inode == 0 ) {
     auto p = old_filenames.find(name);
     if( p == old_filenames.end() ) {
@@ -1862,64 +3411,136 @@ bool cobol_filename( const char *name, ino_t inode ) {
       }
       cbl_errx( "logic error: missing inode for %s", name);
     }
-    inode = p->second;
-    assert(inode != 0);
+    else {
+      inode = p->second;
+      assert(inode != 0);
+    }
   }
   linemap_add(line_table, LC_ENTER, sysp, name, 1);
   input_filename_vestige = name;
-  bool pushed = input_filenames.push( input_file_t(name, inode, 1, lines) );
-  input_filenames.top().lineno = yylineno = 1;
+  bool pushed = input_filenames.push( input_file_t(name, inode, 1) );
+  dbgmsg("%s: %s %s", __func__, pushed? "pushed" : "set to", name);
   return pushed;
 }
 
 const char *
-cobol_lineno_save() {
+cobol_lineno( int lineno ) {
   if( input_filenames.empty() ) return NULL;
   auto& input( input_filenames.top() );
-  input.lineno = yylineno;
+  input.lineno = lineno;
+  dbgmsg("%s:%d: saved %s, line %d", __func__, __LINE__,
+         input.name, input.lineno);
   return input.name;
+}
+
+/*
+ * This function is called from the scanner, usually when a copybook is on top
+ * of the input stack, before the parser retrieves the token and resets the
+ * current filename.  For that reason, we normally want to line number of the
+ * file that is about to become the current one, which is the one behind top().
+ *
+ * If somehow we arrive here when there is nothing underneath, we return the
+ * current line number, or zero if there's no input.  The only consequence is
+ * that the reported line number might be wrong.
+ */
+int
+cobol_lineno() {
+  if( input_filenames.empty() ) return 0;
+  size_t n = input_filenames.size() < 2? 0 : 1;
+  const auto& input( input_filenames.peek(n) );
+  dbgmsg("%s:%d: fetch %s, line %d", __func__, __LINE__,
+         input.name, input.lineno);
+  return input.lineno;
 }
 
 const char *
 cobol_filename() {
-  return input_filenames.empty()? input_filename_vestige : input_filenames.top().name;
+  return input_filenames.empty()?
+    input_filename_vestige : input_filenames.top().name;
 }
 
-const char *
+void
 cobol_filename_restore() {
   assert(!input_filenames.empty());
   const input_file_t& top( input_filenames.top() );
   old_filenames[top.name] = top.inode;
   input_filename_vestige = top.name;
 
+  dbgmsg("%s: LEAVE %s", __func__, top.name);
+
   input_filenames.pop();
-  if( input_filenames.empty() ) return NULL;
 
-  auto& input = input_filenames.top();
-
-  input.lines = linemap_add(line_table, LC_LEAVE, sysp, NULL, 0);
-
-  yylineno = input.lineno;
-  return input.name;
+  linemap_add(line_table, LC_LEAVE, sysp, NULL, 0);
 }
 
-static location_t token_location;
+uint64_t
+symbol_unique_index( const struct symbol_elem_t *e ) {
+  assert(e);
+  uint64_t usym = symbol_index(e);
+  if( ! input_filenames.empty() ) {
+    uint64_t inode = input_filenames.top().inode;
+    static const int half_bits = sizeof(uint64_t)*4;
+    usym ^= inode>>half_bits;
+    usym ^= inode<<half_bits;
+  }
+  return usym;
+}
 
-template <typename LOC>
+static int first_line_minus_1 = 0;
+static location_t token_location_minus_1 = 0;
+static location_t token_location = 0;
+
+location_t current_token_location() { return token_location; }
+location_t current_token_location(const location_t& loc) {
+  return token_location = loc;
+}
+location_t current_location_minus_one() { return token_location_minus_1; }
+void current_location_minus_one_clear()
+  {
+  first_line_minus_1 = 0;
+  }
+
+/*
+ * Update global token_location with a location_t expressing a source range
+ * with start and caret at the first line/column of LOC, and finishing at the
+ * last line/column of LOC.
+ */
 static void
-gcc_location_set_impl( const LOC& loc ) {
-  token_location = linemap_line_start( line_table, loc.last_line, 80 );
-  token_location = linemap_position_for_column( line_table, loc.first_column);
+gcc_location_set_impl( const cbl_loc_t& loc ) {
+  // Set the position to the first line & column in the location.
+ static location_t loc_m_1 = 0;
+ const location_t
+   start_line   = linemap_line_start( line_table, loc.first_line, 80 ),
+   token_start  = linemap_position_for_column( line_table, loc.first_column),
+   finish_line  = linemap_line_start( line_table, loc.last_line, 80 ),
+   token_finish = linemap_position_for_column( line_table, loc.last_column);
+ token_location = make_location (token_start, token_start, token_finish);
+
+ if( loc.first_line > first_line_minus_1 ) {
+   // In order for GDB-COBOL to be able to step through COBOL code properly,
+   // it is sometimes necessary for the code at the beginning of a COBOL
+   // line to be using the location_t of the previous line.  This is true, for
+   // example, when laying down the infrastructure code between the last
+   // statement of a paragraph and the code created at the beginning of the
+   // following paragragh.  This code assumes that token_location values of
+   // interest are monotonic, and stores that prior value.
+   first_line_minus_1 = loc.first_line;
+   token_location_minus_1 = loc_m_1;
+   loc_m_1 = token_location;
+ }
+
   location_dump(__func__, __LINE__, "parser", loc);
 }
 
-void gcc_location_set( const YYLTYPE& loc ) {
+void gcc_location_set( const cbl_loc_t& loc ) {
   gcc_location_set_impl(loc);
 }
 
+#if 0
 void gcc_location_set( const YDFLTYPE& loc ) {
   gcc_location_set_impl(loc);
 }
+#endif
 
 #ifdef NDEBUG
 # define verify_format(M)
@@ -1950,8 +3571,12 @@ verify_format( const char gmsgid[] ) {
 }
 #endif
 
-static const diagnostic_option_id option_zero;
-size_t parse_error_inc();
+static const diagnostics::option_id option_zero;
+
+void gcc_location_dump() {
+    linemap_dump_location( line_table, token_location, stderr );
+}
+
 
 void ydferror( const char gmsgid[], ... ) ATTRIBUTE_GCOBOL_DIAG(1, 2);
 
@@ -1963,13 +3588,14 @@ ydferror( const char gmsgid[], ... ) {
   va_list ap;
   va_start (ap, gmsgid);
   rich_location richloc (line_table, token_location);
-  bool ret = global_dc->diagnostic_impl (&richloc, nullptr, option_zero,
-                                         gmsgid, &ap, DK_ERROR);
+  /*bool ret =*/ global_dc->diagnostic_impl (&richloc, nullptr, option_zero,
+                                             gmsgid, &ap,
+                                             diagnostics::kind::error);
   va_end (ap);
 }
 
 extern int yychar;
-extern YYLTYPE yylloc;
+extern cbl_loc_t yylloc;
 
 /*
  * temp_loc_t is a hack in lieu of "%define parse.error custom".  When
@@ -1985,14 +3611,8 @@ class temp_loc_t {
 
     gcc_location_set(yylloc); // use lookahead location
   }
-  explicit temp_loc_t( const YYLTYPE& loc) : orig(token_location) {
+  explicit temp_loc_t( const cbl_loc_t& loc) : orig(token_location) {
     gcc_location_set(loc);
-  }
-  explicit temp_loc_t( const YDFLTYPE& loc) : orig(token_location) {
-    YYLTYPE lloc = {
-      loc.first_line, loc.first_column,
-      loc.last_line,  loc.last_column };
-    gcc_location_set(lloc);
   }
   ~temp_loc_t() {
     if( orig != token_location ) {
@@ -2009,7 +3629,7 @@ class temp_loc_t {
  * this is where we are.
  *
  * Because we can't reliably instantiate it as a forward-declared template
- * function, and because the paramters are variadic, we can't use a template
+ * function, and because the parameters are variadic, we can't use a template
  * function or call one.  So, a macro.
  */
 
@@ -2022,30 +3642,45 @@ class temp_loc_t {
   va_start (ap, gmsgid);                                                \
   rich_location richloc (line_table, token_location);                   \
   bool ret = global_dc->diagnostic_impl (&richloc, nullptr, option_zero,        \
-                                         gmsgid, &ap, DK_ERROR);        \
+                                         gmsgid, &ap,                   \
+                                         diagnostics::kind::error);     \
   va_end (ap);                                                          \
   global_dc->end_group();
 
 
-void error_msg( const YYLTYPE& loc, const char gmsgid[], ... ) {
+void error_msg( const cbl_loc_t& loc, const char gmsgid[], ... ) {
   ERROR_MSG_BODY
 }
 
-void error_msg( const YDFLTYPE& loc, const char gmsgid[], ... )
+bool
+warn_msg( const cbl_loc_t& loc, const char gmsgid[], ... )
   ATTRIBUTE_GCOBOL_DIAG(2, 3);
 
-void error_msg( const YDFLTYPE& loc, const char gmsgid[], ... ) {
-  ERROR_MSG_BODY
+bool
+warn_msg( const cbl_loc_t& loc, const char gmsgid[], ... ) {
+  temp_loc_t looker(loc);
+  verify_format(gmsgid);
+  auto_diagnostic_group d;
+  va_list ap;
+  va_start (ap, gmsgid);
+  rich_location richloc (line_table, token_location);
+  auto ret = emit_diagnostic_valist( diagnostics::kind::warning,
+                                     token_location,
+                                     option_zero, gmsgid, &ap );
+  va_end (ap);
+  return ret;
 }
 
-void
-cdf_location_set(YYLTYPE loc) {
-  extern YDFLTYPE ydflloc;
-
-  ydflloc.first_line =   loc.first_line;
-  ydflloc.first_column = loc.first_column;
-  ydflloc.last_line =    loc.last_line;
-  ydflloc.last_column =  loc.last_column;
+void error_msg_direct( const char gmsgid[], ... ) {
+  verify_format(gmsgid);
+  parse_error_inc();
+  auto_diagnostic_group d;
+  va_list ap;
+  va_start (ap, gmsgid);
+  /*auto ret = */emit_diagnostic_valist( diagnostics::kind::error,
+                                         token_location,
+                                         option_zero, gmsgid, &ap );
+  va_end (ap);
 }
 
 void
@@ -2057,22 +3692,13 @@ yyerror( const char gmsgid[], ... ) {
   va_list ap;
   va_start (ap, gmsgid);
   rich_location richloc (line_table, token_location);
-  bool ret = global_dc->diagnostic_impl (&richloc, nullptr, option_zero,
-                                         gmsgid, &ap, DK_ERROR);
+  /*bool ret =*/ global_dc->diagnostic_impl ( &richloc,
+                                              nullptr,
+                                              option_zero,
+                                              gmsgid,
+                                              &ap, diagnostics::kind::error);
   va_end (ap);
   global_dc->end_group();
-}
-
-bool
-yywarn( const char gmsgid[], ... ) {
-  verify_format(gmsgid);
-  auto_diagnostic_group d;
-  va_list ap;
-  va_start (ap, gmsgid);
-  auto ret = emit_diagnostic_valist( DK_WARNING, token_location,
-                                     option_zero, gmsgid, &ap );
-  va_end (ap);
-  return ret;
 }
 
 /*
@@ -2101,7 +3727,7 @@ yyerrorvl( int line, const char *filename, const char fmt[], ... ) {
 static inline size_t
 matched_length( const regmatch_t& rm ) { return rm.rm_eo - rm.rm_so; }
 
-const char *
+int
 cobol_fileline_set( const char line[] ) {
   static const char pattern[] = "#line +([[:alnum:]]+) +[\"']([^\"']+). *\n";
   static const int cflags = REG_EXTENDED | REG_ICASE;
@@ -2114,7 +3740,7 @@ cobol_fileline_set( const char line[] ) {
     if( (erc = regcomp(&re, pattern, cflags)) != 0 ) {
         regerror(erc, &re, regexmsg, sizeof(regexmsg));
         dbgmsg( "%s:%d: could not compile regex: %s", __func__, __LINE__, regexmsg );
-        return line;
+        return 0;
     }
     preg = &re;
   }
@@ -2122,10 +3748,10 @@ cobol_fileline_set( const char line[] ) {
     if( erc != REG_NOMATCH ) {
       regerror(erc, preg, regexmsg, sizeof(regexmsg));
       dbgmsg( "%s:%d: could not compile regex: %s", __func__, __LINE__, regexmsg );
-      return line;
+      return 0;
     }
     error_msg(yylloc, "invalid %<#line%> directive: %s", line );
-    return line;
+    return 0;
   }
 
   const char
@@ -2133,21 +3759,21 @@ cobol_fileline_set( const char line[] ) {
     *filename = xstrndup(line + pmatch[2].rm_so, matched_length(pmatch[2]));
   int fileline;
 
-  if( 1 != sscanf(line_str, "%d", &fileline) )
-    yywarn("could not parse line number %s from %<#line%> directive", line_str);
-
+  if( 1 != sscanf(line_str, "%d", &fileline) ) {
+    cbl_message(LexLineE,
+                "could not parse line number %s from %<#line%> directive",
+                line_str);
+  }
   input_file_t input_file( filename, ino_t(0), fileline ); // constructor sets inode
 
   if( input_filenames.empty() ) {
-    input_file.lines = linemap_add(line_table, LC_ENTER, sysp, filename, 1);
     input_filenames.push(input_file);
   }
 
   input_file_t& file = input_filenames.top();
   file = input_file;
-  yylineno = file.lineno;
 
-  return file.name;
+  return file.lineno;
 }
 
 //#define TIMING_PARSE
@@ -2169,6 +3795,8 @@ operator-( const cbl_timespec& now, const cbl_timespec& then ) {
   return (now.ns() - then.ns()) / 1000000000;
 }
 #endif
+
+void parse_error_reset();
 
 static int
 parse_file( const char filename[] )
@@ -2197,8 +3825,7 @@ parse_file( const char filename[] )
 #endif
 
   parser_leave_file();
-
-
+  
   fclose (yyin);
 
   if( erc ) {
@@ -2210,16 +3837,18 @@ parse_file( const char filename[] )
 
 #pragma GCC diagnostic pop
 
-extern int yy_flex_debug, yydebug, ydfdebug;
+extern int yy_flex_debug, yydebug;
 extern int f_trace_debug;
 
 void cobol_set_indicator_column( int column );
+void ydfdebug( bool yn );
 
 void
 cobol_set_debugging( bool flex, bool yacc, bool parser )
 {
   yy_flex_debug = flex? 1 : 0;
-  ydfdebug = yydebug = yacc? 1 : 0;
+  yydebug = yacc? 1 : 0;
+  ydfdebug( yacc );
   f_trace_debug = parser? 1 : 0;
 }
 
@@ -2230,11 +3859,11 @@ cobol_parse_files (int nfile, const char **files)
 {
   const char * opaque = setlocale(LC_CTYPE, "");
   if( ! opaque ) {
-    yywarn("setlocale: unable to initialize LOCALE");
+    cbl_message(ParLocaleW, "setlocale: unable to initialize LOCALE");
   } else {
     char *codeset = nl_langinfo(CODESET);
     if( ! codeset ) {
-      yywarn("%<nl_langinfo%> failed after %<setlocale()%> succeeded");
+      cbl_message(ParLangInfoW, "%<nl_langinfo%> failed after %<setlocale()%> succeeded");
     } else {
       os_locale.codeset = codeset;
     }
@@ -2246,20 +3875,6 @@ cobol_parse_files (int nfile, const char **files)
   }
 }
 
-/*  Outputs the formatted string onto the file descriptor */
-
-void
-cbl_message(int fd, const char *format_string, ...)
-  {
-  va_list ap;
-  va_start(ap, format_string);
-  char *ostring = xvasprintf(format_string, ap);
-  va_end(ap);
-  write(fd, ostring, strlen(ostring));
-  write(fd, "\n", 1);
-  free(ostring);
-  }
-
 /*  Uses the GCC internal_error () to output the formatted string.  Processing
     ends with a stack trace  */
 
@@ -2269,18 +3884,37 @@ cbl_internal_error(const char *gmsgid, ...) {
   auto_diagnostic_group d;
   va_list ap;
   va_start(ap, gmsgid);
-  emit_diagnostic_valist( DK_ICE, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( diagnostics::kind::ice,
+			  token_location, option_zero, gmsgid, &ap );
   va_end(ap);
+  abort();  // This unnecessary statement is needed so that [[noreturn]]
+  //        // doesn't cause a warning.
 }
 
+diagnostics::kind cbl_diagnostic_kind( cbl_diag_id_t id );
+const char *    cbl_diagnostic_option( cbl_diag_id_t id );
+
 void
-cbl_unimplementedw(const char *gmsgid, ...) {
+cbl_unimplementedw(cbl_diag_id_t id, const char *gmsgid, ...) {
   verify_format(gmsgid);
   auto_diagnostic_group d;
+  const char *option;
+  char *msg = nullptr;
+
+  diagnostics::kind kind = cbl_diagnostic_kind(id);
+  if( kind == diagnostics::kind::ignored ) return;
+
+  if( (option = cbl_diagnostic_option(id)) != nullptr ) {
+    msg = xasprintf("%s [%s]", gmsgid, option);
+    gmsgid = msg;
+  }
+
   va_list ap;
+
   va_start(ap, gmsgid);
-  emit_diagnostic_valist( DK_SORRY, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( kind, token_location, option_zero, gmsgid, &ap );
   va_end(ap);
+  free(msg);
 }
 
 void
@@ -2289,23 +3923,25 @@ cbl_unimplemented(const char *gmsgid, ...) {
   auto_diagnostic_group d;
   va_list ap;
   va_start(ap, gmsgid);
-  emit_diagnostic_valist( DK_SORRY, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( diagnostics::kind::sorry,
+			  token_location, option_zero, gmsgid, &ap );
   va_end(ap);
 }
 
 void
-cbl_unimplemented_at( const YYLTYPE& loc, const char *gmsgid, ... ) {
+cbl_unimplemented_at( const cbl_loc_t& loc, const char *gmsgid, ... ) {
   temp_loc_t looker(loc);
   verify_format(gmsgid);
   auto_diagnostic_group d;
   va_list ap;
   va_start(ap, gmsgid);
-  emit_diagnostic_valist( DK_SORRY, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( diagnostics::kind::sorry,
+			  token_location, option_zero, gmsgid, &ap );
   va_end(ap);
 }
 
-/* 
- * analogs to err(3) and errx(3). 
+/*
+ * analogs to err(3) and errx(3).
  */
 
 #pragma GCC diagnostic push
@@ -2317,7 +3953,8 @@ cbl_err(const char *fmt, ...) {
   verify_format(gmsgid);
   va_list ap;
   va_start(ap, fmt);
-  emit_diagnostic_valist( DK_FATAL, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( diagnostics::kind::fatal,
+			  token_location, option_zero, gmsgid, &ap );
   va_end(ap);
 }
 #pragma GCC diagnostic pop
@@ -2328,10 +3965,18 @@ cbl_errx(const char *gmsgid, ...) {
   auto_diagnostic_group d;
   va_list ap;
   va_start(ap, gmsgid);
-  emit_diagnostic_valist( DK_FATAL, token_location, option_zero, gmsgid, &ap );
+  emit_diagnostic_valist( diagnostics::kind::fatal,
+			  token_location, option_zero, gmsgid, &ap );
   va_end(ap);
   }
 
+/*
+ * For a function that uses host *printf, %zu or %td or %wu are not ok, sadly.
+ * not all supported host arches support those.  So, for *printf family one
+ * needs to use macros like HOST_WIDE_INT_PRINT_DEC (for HOST_WIDE_INT
+ * argument), or HOST_SIZE_T_PRINT_UNSIGNED (for size_t, with casts to
+ * (fmt_size_t)).
+ */
 void
 dbgmsg(const char *msg, ...) {
   if( yy_flex_debug || yydebug ) {
@@ -2344,12 +3989,6 @@ dbgmsg(const char *msg, ...) {
   }
 }
 
-void
-dialect_error( const YYLTYPE& loc, const char term[], const char dialect[] ) {
-  error_msg(loc, "%s is not ISO syntax, requires %<-dialect %s%>",
-           term, dialect);
-}
-
 bool fisdigit(int c)
   {
   return ISDIGIT(c);
@@ -2357,7 +3996,7 @@ bool fisdigit(int c)
 bool fisspace(int c)
   {
   return ISSPACE(c);
-  };
+  }
 int  ftolower(int c)
   {
   return TOLOWER(c);
@@ -2369,7 +4008,7 @@ int  ftoupper(int c)
 bool fisprint(int c)
   {
   return ISPRINT(c);
-  };
+  }
 
 // 8.9 Reserved words
 static const std::set<std::string> reserved_words = {
@@ -2440,7 +4079,7 @@ static const std::set<std::string> reserved_words = {
   "VOLATILE",
   "XML",
   "END-START",
-  
+
   // ISO 2023 keywords
   "ACCEPT",
   "ACCESS",

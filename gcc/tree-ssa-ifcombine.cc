@@ -1,5 +1,5 @@
 /* Combining of if-expressions on trees.
-   Copyright (C) 2007-2025 Free Software Foundation, Inc.
+   Copyright (C) 2007-2026 Free Software Foundation, Inc.
    Contributed by Richard Guenther <rguenther@suse.de>
 
 This file is part of GCC.
@@ -40,9 +40,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimplify-me.h"
 #include "tree-cfg.h"
 #include "tree-ssa.h"
+#include "tree-ssa-ifcombine.h"
 #include "attribs.h"
 #include "asan.h"
 #include "bitmap.h"
+#include "cfgloop.h"
 
 #ifndef LOGICAL_OP_NON_SHORT_CIRCUIT
 #define LOGICAL_OP_NON_SHORT_CIRCUIT \
@@ -94,10 +96,10 @@ known_succ_p (basic_block cond_bb)
    basic-blocks to make the pattern match.  If SUCCS_ANY, *THEN_BB and *ELSE_BB
    will not be filled in, and they will be found to match even if reversed.  */
 
-static bool
+bool
 recognize_if_then_else (basic_block cond_bb,
 			basic_block *then_bb, basic_block *else_bb,
-			bool succs_any = false)
+			bool succs_any)
 {
   edge t, e;
 
@@ -798,6 +800,28 @@ can_combine_bbs_with_short_circuit (basic_block inner_cond_bb, tree lhs, tree rh
   return false;
 }
 
+/* Return true if BB guards entry to a loop: a successor edge reaches a loop
+   header BB does not belong to, directly or through a single-successor
+   preheader.  Combining the scalar conditions guarding a loop into a single
+   boolean leaves the number-of-iterations analysis unable to prove the loop
+   runs at least once, pessimizing later loop passes such as ivopts.  */
+
+static bool
+bb_guards_loop_p (basic_block bb)
+{
+  edge e;
+  edge_iterator ei;
+  FOR_EACH_EDGE (e, ei, bb->succs)
+    {
+      basic_block h = e->dest;
+      if (single_succ_p (h) && !bb_loop_header_p (h))
+	h = single_succ (h);
+      if (bb_loop_header_p (h) && !dominated_by_p (CDI_DOMINATORS, bb, h))
+	return true;
+    }
+  return false;
+}
+
 /* If-convert on a and pattern with a common else block.  The inner
    if is specified by its INNER_COND_BB, the outer by OUTER_COND_BB.
    inner_inv, outer_inv indicate whether the conditions are inverted.
@@ -818,6 +842,23 @@ ifcombine_ifandif (basic_block inner_cond_bb, bool inner_inv,
   if (!outer_cond)
     return false;
 
+  /* niter analysis does not cope with boolean typed loop exit conditions, nor
+     with boolean loop guards.  Avoid turning an analyzable loop exit or guard
+     into an unanalyzable one.  */
+  if ((inner_cond_bb->loop_father == outer_cond_bb->loop_father
+       && loop_exits_from_bb_p (inner_cond_bb->loop_father, inner_cond_bb)
+       && loop_exits_from_bb_p (outer_cond_bb->loop_father, outer_cond_bb))
+      || bb_guards_loop_p (inner_cond_bb))
+    {
+      tree outer_type = TREE_TYPE (gimple_cond_lhs (outer_cond));
+      tree inner_type = TREE_TYPE (gimple_cond_lhs (inner_cond));
+      if (TREE_CODE (outer_type) == INTEGER_TYPE
+	  || POINTER_TYPE_P (outer_type)
+	  || TREE_CODE (inner_type) == INTEGER_TYPE
+	  || POINTER_TYPE_P (inner_type))
+	return false;
+    }
+
   /* See if we test a single bit of the same name in both tests.  In
      that case remove the outer test, merging both else edges,
      and change the inner one to test for
@@ -834,16 +875,18 @@ ifcombine_ifandif (basic_block inner_cond_bb, bool inner_inv,
 
       /* Do it.  */
       gsi = gsi_for_stmt (inner_cond);
-      t = fold_build2 (LSHIFT_EXPR, TREE_TYPE (name1),
-		       build_int_cst (TREE_TYPE (name1), 1), bit1);
-      t2 = fold_build2 (LSHIFT_EXPR, TREE_TYPE (name1),
-		        build_int_cst (TREE_TYPE (name1), 1), bit2);
-      t = fold_build2 (BIT_IOR_EXPR, TREE_TYPE (name1), t, t2);
-      t = force_gimple_operand_gsi (&gsi, t, true, NULL_TREE,
-				    true, GSI_SAME_STMT);
-      t2 = fold_build2 (BIT_AND_EXPR, TREE_TYPE (name1), name1, t);
-      t2 = force_gimple_operand_gsi (&gsi, t2, true, NULL_TREE,
-				     true, GSI_SAME_STMT);
+      location_t loc1 = gimple_location (inner_cond);
+      location_t loc2 = gimple_location (outer_cond);
+      t = gimple_build (&gsi, true, GSI_SAME_STMT, loc1, LSHIFT_EXPR,
+			TREE_TYPE (name1),
+			build_int_cst (TREE_TYPE (name1), 1), bit1);
+      t2 = gimple_build (&gsi, true, GSI_SAME_STMT, loc2, LSHIFT_EXPR,
+			 TREE_TYPE (name1),
+			 build_int_cst (TREE_TYPE (name1), 1), bit2);
+      t = gimple_build (&gsi, true, GSI_SAME_STMT, loc1, BIT_IOR_EXPR,
+			TREE_TYPE (name1), t, t2);
+      t2 = gimple_build (&gsi, true, GSI_SAME_STMT, loc1, BIT_AND_EXPR,
+			 TREE_TYPE (name1), name1, t);
 
       t = fold_build2 (EQ_EXPR, boolean_type_node, t2, t);
 
@@ -1046,7 +1089,7 @@ tree_ssa_ifcombine_bb_1 (basic_block inner_cond_bb, basic_block outer_cond_bb,
 			 basic_block phi_pred_bb, basic_block outer_succ_bb)
 {
   /* The && form is characterized by a common else_bb with
-     the two edges leading to it mergable.  The latter is
+     the two edges leading to it mergeable.  The latter is
      guaranteed by matching PHI arguments in the else_bb and
      the inner cond_bb having no side-effects.  */
   if (phi_pred_bb != else_bb
@@ -1124,7 +1167,7 @@ tree_ssa_ifcombine_bb_1 (basic_block inner_cond_bb, basic_block outer_cond_bb,
    if-conversion helper.  We start with BB as the innermost
    worker basic-block.  Returns true if a transformation was done.  */
 
-static bool
+bool
 tree_ssa_ifcombine_bb (basic_block inner_cond_bb)
 {
   bool ret = false;
@@ -1382,7 +1425,7 @@ pass_tree_ifcombine::execute (function *fun)
 
      We walk the blocks in order that guarantees that a block with
      a single predecessor is processed after the predecessor.
-     This ensures that we collapse outter ifs before visiting the
+     This ensures that we collapse outer ifs before visiting the
      inner ones, and also that we do not try to visit a removed
      block.  This is opposite of PHI-OPT, because we cascade the
      combining rather than cascading PHIs. */

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2015-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 2015-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -25,7 +25,6 @@
 
 with Aspects;        use Aspects;
 with Atree;          use Atree;
-with Einfo;          use Einfo;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
 with Elists;         use Elists;
@@ -50,7 +49,6 @@ with Sem_Disp;       use Sem_Disp;
 with Sem_Prag;       use Sem_Prag;
 with Sem_Type;       use Sem_Type;
 with Sem_Util;       use Sem_Util;
-with Sinfo;          use Sinfo;
 with Sinfo.Nodes;    use Sinfo.Nodes;
 with Sinfo.Utils;    use Sinfo.Utils;
 with Sinput;         use Sinput;
@@ -232,6 +230,7 @@ package body Contracts is
       --    Exceptional_Cases
       --    Extensions_Visible
       --    Global
+      --    Modifies
       --    Interrupt_Handler
       --    Postcondition
       --    Precondition
@@ -268,6 +267,7 @@ package body Contracts is
                          | Name_Contract_Cases
                          | Name_Exceptional_Cases
                          | Name_Exit_Cases
+                         | Name_Modifies
                          | Name_Program_Exit
                          | Name_Subprogram_Variant
                          | Name_Test_Case
@@ -454,6 +454,8 @@ package body Contracts is
 
          if Nkind (Decl) in N_Abstract_Subprogram_Declaration
                           | N_Entry_Declaration
+                          | N_Formal_Abstract_Subprogram_Declaration
+                          | N_Formal_Concrete_Subprogram_Declaration
                           | N_Generic_Subprogram_Declaration
                           | N_Subprogram_Declaration
          then
@@ -649,9 +651,9 @@ package body Contracts is
       end if;
 
       --  Deal with preconditions, [refined] postconditions, Always_Terminates,
-      --  Contract_Cases, Exceptional_Cases, Program_Exit, Subprogram_Variant,
-      --  invariants and predicates associated with body and its spec. Do not
-      --  expand the contract of subprogram body stubs.
+      --  Contract_Cases, Exceptional_Cases, Modifies, Program_Exit,
+      --  Subprogram_Variant, invariants and predicates associated with body
+      --  and its spec. Do not expand the contract of subprogram body stubs.
 
       if Nkind (Body_Decl) = N_Subprogram_Body then
          Expand_Subprogram_Contract (Body_Id);
@@ -753,13 +755,13 @@ package body Contracts is
                   if Freeze_Types
                     and then Present (Corresponding_Aspect (Prag))
                   then
-                     Freeze_Expr_Types
-                       (Def_Id => Subp_Id,
-                        Typ    => Standard_Boolean,
+                     Freeze_Expr_Types_Before
+                       (N      => Bod,
                         Expr   =>
                           Expression
                             (First (Pragma_Argument_Associations (Prag))),
-                        N      => Bod);
+                        Def_Id => Subp_Id,
+                        Typ    => Standard_Boolean);
                   end if;
 
                   Analyze_Pre_Post_Condition_In_Decl_Part (Prag, Freeze_Id);
@@ -798,6 +800,9 @@ package body Contracts is
 
             elsif Prag_Nam = Name_Exceptional_Cases then
                Analyze_Exceptional_Cases_In_Decl_Part (Prag);
+
+            elsif Prag_Nam = Name_Modifies then
+               Analyze_Modifies_In_Decl_Part (Prag);
 
             elsif Prag_Nam = Name_Program_Exit then
                Analyze_Program_Exit_In_Decl_Part (Prag);
@@ -1131,12 +1136,12 @@ package body Contracts is
       if Comes_From_Source (Obj_Id) and then Is_Ghost_Entity (Obj_Id) then
 
          --  A Ghost object cannot be of a type that yields a synchronized
-         --  object (SPARK RM 6.9(21)).
+         --  object (SPARK RM 6.9(22)).
 
          if Yields_Synchronized_Object (Obj_Typ) then
             Error_Msg_N ("ghost object & cannot be synchronized", Obj_Id);
 
-         --  A Ghost object cannot be imported or exported (SPARK RM 6.9(7)).
+         --  A Ghost object cannot be imported or exported (SPARK RM 6.9(9)).
          --  One exception to this is the object that represents the dispatch
          --  table of a Ghost tagged type, as the symbol needs to be exported.
 
@@ -1278,7 +1283,12 @@ package body Contracts is
          while Present (Prag) loop
             Prag_Nam := Pragma_Name (Prag);
 
-            if Prag_Nam = Name_Initial_Condition then
+            --  When Assertion_Levels are used then the pacakage can have
+            --  multiple consecutive Initial_Condition pragmas.
+            --  Find the first one here and then iterate over all of them
+            --  later.
+
+            if Prag_Nam = Name_Initial_Condition and then No (Init_Cond) then
                Init_Cond := Prag;
 
             elsif Prag_Nam = Name_Initializes then
@@ -1295,9 +1305,12 @@ package body Contracts is
             Analyze_Initializes_In_Decl_Part (Init);
          end if;
 
-         if Present (Init_Cond) then
+         while Present (Init_Cond)
+           and then Pragma_Name (Init_Cond) = Name_Initial_Condition
+         loop
             Analyze_Initial_Condition_In_Decl_Part (Init_Cond);
-         end if;
+            Init_Cond := Next_Pragma (Init_Cond);
+         end loop;
       end if;
 
       --  Restore the SPARK_Mode of the enclosing context after all delayed
@@ -1416,6 +1429,7 @@ package body Contracts is
       --    Depends
       --    Exceptional_Cases
       --    Global
+      --    Modifies
       --    Postcondition
       --    Precondition
       --    Program_Exit
@@ -2323,7 +2337,7 @@ package body Contracts is
                --  An Initialization procedure must be considered visible even
                --  though it is internally generated.
 
-               if Is_Init_Proc (Defining_Entity (Subp_Decl)) then
+               if Is_Init_Proc (Subp_Id) then
                   return True;
 
                elsif Ekind (Scope (Typ)) /= E_Package then
@@ -2335,10 +2349,8 @@ package body Contracts is
                --  last check.
 
                elsif not Comes_From_Source (Subp_Decl)
-                 and then
-                   (Nkind (Original_Node (Subp_Decl)) /= N_Expression_Function
-                      or else not
-                        Comes_From_Source (Defining_Entity (Subp_Decl)))
+                 and then (not Is_Expression_Function (Subp_Id)
+                            or else not Comes_From_Source (Subp_Id))
                then
                   return False;
 
@@ -2350,8 +2362,7 @@ package body Contracts is
                   declare
                      Decls      : constant List_Id   :=
                                     List_Containing (Subp_Decl);
-                     Subp_Scope : constant Entity_Id :=
-                                    Scope (Defining_Entity (Subp_Decl));
+                     Subp_Scope : constant Entity_Id := Scope (Subp_Id);
                      Typ_Scope  : constant Entity_Id := Scope (Typ);
 
                   begin
@@ -2379,8 +2390,7 @@ package body Contracts is
                     (Nkind (Parent (Subp_Decl)) = N_Compilation_Unit);
 
                   declare
-                     Subp_Scope : constant Entity_Id :=
-                                    Scope (Defining_Entity (Subp_Decl));
+                     Subp_Scope : constant Entity_Id := Scope (Subp_Id);
                      Typ_Scope  : constant Entity_Id := Scope (Typ);
 
                   begin
@@ -2714,10 +2724,11 @@ package body Contracts is
 
       procedure Append_Enabled_Item (Item : Node_Id; List : in out List_Id) is
       begin
-         --  Do not chain ignored or disabled pragmas
+         --  Do not chain ignored or disabled pragmas. Note that disabled
+         --  pragmas are also considered ignored.
 
          if Nkind (Item) = N_Pragma
-           and then (Is_Ignored (Item) or else Is_Disabled (Item))
+           and then Is_Ignored_In_Codegen (Item)
          then
             null;
 
@@ -3097,13 +3108,13 @@ package body Contracts is
                      if Freeze_T
                        and then Present (Corresponding_Aspect (Prag))
                      then
-                        Freeze_Expr_Types
-                          (Def_Id => Subp_Id,
-                           Typ    => Standard_Boolean,
+                        Freeze_Expr_Types_Before
+                          (N      => Body_Decl,
                            Expr   =>
                              Expression
                                (First (Pragma_Argument_Associations (Prag))),
-                           N      => Body_Decl);
+                           Def_Id => Subp_Id,
+                           Typ    => Standard_Boolean);
                      end if;
 
                      Prepend_Pragma_To_Decls (Prag);
@@ -3273,7 +3284,7 @@ package body Contracts is
       --  The contract of an ignored Ghost subprogram does not need expansion,
       --  because the subprogram and all calls to it will be removed.
 
-      elsif Is_Ignored_Ghost_Entity (Subp_Id) then
+      elsif Is_Ignored_Ghost_Entity_In_Codegen (Subp_Id) then
          return;
 
       --  No action needed for helpers and indirect-call wrapper built to
@@ -3372,12 +3383,12 @@ package body Contracts is
       --  Step 6: Construct subprogram _wrapped_statements
 
       --  When no statements are present we still need to insert contract
-      --  related declarations.
+      --  related declarations. There's also no need to create the contracts
+      --  wrapper when the subprogram is marked as not returning, since
+      --  postconditions and invariant checks won't be reached in that case.
 
-      if No (Stmts) then
+      if No (Stmts) or else No_Return (Subp_Id) then
          Prepend_List_To (Declarations (Body_Decl), Decls);
-
-      --  Otherwise, we need a wrapper
 
       else
          Build_Subprogram_Contract_Wrapper (Body_Id, Stmts, Decls, Result);
@@ -4870,9 +4881,34 @@ package body Contracts is
      (Templ  : Node_Id;
       Gen_Id : Entity_Id)
    is
+      procedure Save_Global_References_In_Aspects (N : Node_Id);
+      --  Save all global references found in the expressions of all aspects
+      --  that appear on node N.
+
       procedure Save_Global_References_In_List (First_Prag : Node_Id);
       --  Save all global references in contract-related source pragmas found
       --  in the list, starting with pragma First_Prag.
+
+      ---------------------------------------
+      -- Save_Global_References_In_Aspects --
+      ---------------------------------------
+
+      procedure Save_Global_References_In_Aspects (N : Node_Id) is
+         Asp  : Node_Id;
+         Expr : Node_Id;
+
+      begin
+         Asp := First (Aspect_Specifications (N));
+         while Present (Asp) loop
+            Expr := Expression (Asp);
+
+            if Present (Expr) then
+               Save_Global_References (Expr);
+            end if;
+
+            Next (Asp);
+         end loop;
+      end Save_Global_References_In_Aspects;
 
       ------------------------------------
       -- Save_Global_References_In_List --

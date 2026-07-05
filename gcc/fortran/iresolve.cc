@@ -1,5 +1,5 @@
 /* Intrinsic function resolution.
-   Copyright (C) 2000-2025 Free Software Foundation, Inc.
+   Copyright (C) 2000-2026 Free Software Foundation, Inc.
    Contributed by Andy Vaught & Katherine Holcomb
 
 This file is part of GCC.
@@ -101,6 +101,25 @@ check_charlen_present (gfc_expr *source)
       if (source->ts.u.cl->length == NULL)
 	gfc_internal_error ("check_charlen_present(): length not set");
     }
+}
+
+static gfc_intrinsic_sym *
+copy_intrinsic_sym (const gfc_intrinsic_sym *src)
+{
+  gfc_intrinsic_sym *copy = XCNEW (gfc_intrinsic_sym);
+  gfc_intrinsic_arg *head = NULL;
+  gfc_intrinsic_arg **tail = &head;
+
+  *copy = *src;
+  for (const gfc_intrinsic_arg *arg = src->formal; arg; arg = arg->next)
+    {
+      *tail = XCNEW (gfc_intrinsic_arg);
+      **tail = *arg;
+      (*tail)->next = NULL;
+      tail = &(*tail)->next;
+    }
+  copy->formal = head;
+  return copy;
 }
 
 /* Helper function for resolving the "mask" argument.  */
@@ -729,6 +748,25 @@ gfc_resolve_cosh (gfc_expr *f, gfc_expr *x)
   f->value.function.name
     = gfc_get_string ("__cosh_%c%d", gfc_type_letter (x->ts.type),
 		      gfc_type_abi_kind (&x->ts));
+}
+
+
+void
+gfc_resolve_coshape (gfc_expr *f, gfc_expr *array, gfc_expr *kind)
+{
+  f->ts.type = BT_INTEGER;
+  if (kind)
+    f->ts.kind = mpz_get_si (kind->value.integer);
+  else
+    f->ts.kind = gfc_default_integer_kind;
+
+  f->value.function.name
+    = gfc_get_string ("__coshape_%c%d", gfc_type_letter (array->ts.type),
+		      gfc_type_abi_kind (&array->ts));
+  f->rank = 1;
+  f->corank = 0;
+  f->shape = gfc_get_shape (1);
+  mpz_init_set_si (f->shape[0], array->corank);
 }
 
 
@@ -2939,7 +2977,11 @@ gfc_resolve_spread (gfc_expr *f, gfc_expr *source, gfc_expr *dim,
     gfc_resolve_substring_charlen (source);
 
   if (source->ts.type == BT_CHARACTER)
-    check_charlen_present (source);
+    {
+      check_charlen_present (source);
+      f->value.function.isym = copy_intrinsic_sym (f->value.function.isym);
+      f->value.function.isym->formal->ts = source->ts;
+    }
 
   f->ts = source->ts;
   f->rank = source->rank + 1;
@@ -3000,30 +3042,28 @@ gfc_resolve_sqrt (gfc_expr *f, gfc_expr *x)
 /* Resolve the g77 compatibility function STAT AND FSTAT.  */
 
 void
-gfc_resolve_stat (gfc_expr *f, gfc_expr *n ATTRIBUTE_UNUSED,
-		  gfc_expr *a ATTRIBUTE_UNUSED)
+gfc_resolve_stat (gfc_expr *f, gfc_expr *n ATTRIBUTE_UNUSED, gfc_expr *a)
 {
   f->ts.type = BT_INTEGER;
-  f->ts.kind = gfc_default_integer_kind;
+  f->ts.kind = a->ts.kind;
   f->value.function.name = gfc_get_string (PREFIX ("stat_i%d"), f->ts.kind);
 }
 
 
 void
-gfc_resolve_lstat (gfc_expr *f, gfc_expr *n ATTRIBUTE_UNUSED,
-		   gfc_expr *a ATTRIBUTE_UNUSED)
+gfc_resolve_lstat (gfc_expr *f, gfc_expr *n ATTRIBUTE_UNUSED, gfc_expr *a)
 {
   f->ts.type = BT_INTEGER;
-  f->ts.kind = gfc_default_integer_kind;
+  f->ts.kind = a->ts.kind;
   f->value.function.name = gfc_get_string (PREFIX ("lstat_i%d"), f->ts.kind);
 }
 
 
 void
-gfc_resolve_fstat (gfc_expr *f, gfc_expr *n, gfc_expr *a ATTRIBUTE_UNUSED)
+gfc_resolve_fstat (gfc_expr *f, gfc_expr *n, gfc_expr *a)
 {
   f->ts.type = BT_INTEGER;
-  f->ts.kind = gfc_default_integer_kind;
+  f->ts.kind = a->ts.kind;
   if (n->ts.kind != f->ts.kind)
     gfc_convert_type (n, &f->ts, 2);
 
@@ -3863,6 +3903,19 @@ gfc_resolve_sleep_sub (gfc_code *c)
   c->resolved_sym = gfc_get_intrinsic_sub_symbol (name);
 }
 
+void
+gfc_resolve_split (gfc_code *c)
+{
+  const char *name;
+  gfc_expr *string;
+
+  string = c->ext.actual->expr;
+  if (string->ts.type == BT_CHARACTER && string->ts.kind == 4)
+    name = "__split_char4";
+  else
+    name = "__split";
+  c->resolved_sym = gfc_get_intrinsic_sub_symbol (name);
+}
 
 /* G77 compatibility function srand().  */
 
@@ -4146,7 +4199,9 @@ void
 gfc_resolve_stat_sub (gfc_code *c)
 {
   const char *name;
-  name = gfc_get_string (PREFIX ("stat_i%d_sub"), gfc_default_integer_kind);
+  gfc_typespec *ts;
+  ts = &c->ext.actual->next->expr->ts;
+  name = gfc_get_string (PREFIX ("stat_i%d_sub"), ts->kind);
   c->resolved_sym = gfc_get_intrinsic_sub_symbol (name);
 }
 
@@ -4155,7 +4210,9 @@ void
 gfc_resolve_lstat_sub (gfc_code *c)
 {
   const char *name;
-  name = gfc_get_string (PREFIX ("lstat_i%d_sub"), gfc_default_integer_kind);
+  gfc_typespec *ts;
+  ts = &c->ext.actual->next->expr->ts;
+  name = gfc_get_string (PREFIX ("lstat_i%d_sub"), ts->kind);
   c->resolved_sym = gfc_get_intrinsic_sub_symbol (name);
 }
 

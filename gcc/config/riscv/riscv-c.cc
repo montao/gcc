@@ -1,5 +1,5 @@
 /* RISC-V-specific code for C family languages.
-   Copyright (C) 2011-2025 Free Software Foundation, Inc.
+   Copyright (C) 2011-2026 Free Software Foundation, Inc.
    Contributed by Andrew Waterman (andrew@sifive.com).
 
 This file is part of GCC.
@@ -33,77 +33,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "riscv-subset.h"
 
 #define builtin_define(TXT) cpp_define (pfile, TXT)
-
-struct pragma_intrinsic_flags
-{
-  int intrinsic_riscv_isa_flags;
-
-  int intrinsic_riscv_vector_elen_flags;
-  int intrinsic_riscv_zvl_subext;
-  int intrinsic_riscv_zvb_subext;
-  int intrinsic_riscv_zvk_subext;
-};
-
-static void
-riscv_pragma_intrinsic_flags_pollute (struct pragma_intrinsic_flags *flags)
-{
-  flags->intrinsic_riscv_isa_flags = riscv_isa_flags;
-  flags->intrinsic_riscv_vector_elen_flags = riscv_vector_elen_flags;
-  flags->intrinsic_riscv_zvl_subext = riscv_zvl_subext;
-  flags->intrinsic_riscv_zvb_subext = riscv_zvb_subext;
-  flags->intrinsic_riscv_zvk_subext = riscv_zvk_subext;
-
-  riscv_isa_flags = riscv_isa_flags
-    | MASK_VECTOR;
-
-  riscv_zvl_subext = riscv_zvl_subext
-    | MASK_ZVL32B
-    | MASK_ZVL64B
-    | MASK_ZVL128B
-    | MASK_ZVL256B
-    | MASK_ZVL512B
-    | MASK_ZVL1024B
-    | MASK_ZVL2048B
-    | MASK_ZVL4096B;
-
-  riscv_vector_elen_flags = riscv_vector_elen_flags
-    | MASK_VECTOR_ELEN_32
-    | MASK_VECTOR_ELEN_64
-    | MASK_VECTOR_ELEN_FP_16
-    | MASK_VECTOR_ELEN_FP_32
-    | MASK_VECTOR_ELEN_FP_64;
-
-  riscv_zvb_subext = riscv_zvb_subext
-    | MASK_ZVBB
-    | MASK_ZVBC
-    | MASK_ZVKB;
-
-  riscv_zvk_subext = riscv_zvk_subext
-    | MASK_ZVKG
-    | MASK_ZVKNED
-    | MASK_ZVKNHA
-    | MASK_ZVKNHB
-    | MASK_ZVKSED
-    | MASK_ZVKSH
-    | MASK_ZVKN
-    | MASK_ZVKNC
-    | MASK_ZVKNG
-    | MASK_ZVKS
-    | MASK_ZVKSC
-    | MASK_ZVKSG
-    | MASK_ZVKT;
-}
-
-static void
-riscv_pragma_intrinsic_flags_restore (struct pragma_intrinsic_flags *flags)
-{
-  riscv_isa_flags = flags->intrinsic_riscv_isa_flags;
-
-  riscv_vector_elen_flags = flags->intrinsic_riscv_vector_elen_flags;
-  riscv_zvl_subext = flags->intrinsic_riscv_zvl_subext;
-  riscv_zvb_subext = flags->intrinsic_riscv_zvb_subext;
-  riscv_zvk_subext = flags->intrinsic_riscv_zvk_subext;
-}
 
 static int
 riscv_ext_version_value (unsigned major, unsigned minor)
@@ -210,7 +139,7 @@ riscv_cpu_cpp_builtins (cpp_reader *pfile)
     {
       builtin_define ("__riscv_vector");
       builtin_define_with_int_value ("__riscv_v_intrinsic",
-				     riscv_ext_version_value (0, 12));
+				     riscv_ext_version_value (1, 0));
 
       if (rvv_vector_bits == RVV_VECTOR_BITS_ZVL)
 	builtin_define_with_int_value ("__riscv_v_fixed_vlen", TARGET_MIN_VLEN);
@@ -278,23 +207,53 @@ riscv_pragma_intrinsic (cpp_reader *)
       || strcmp (name, "xtheadvector") == 0
       || strcmp (name, "xsfvcp") == 0)
     {
-      struct pragma_intrinsic_flags backup_flags;
-
-      riscv_pragma_intrinsic_flags_pollute (&backup_flags);
-
-      riscv_option_override ();
-      init_adjust_machine_modes ();
-      riscv_vector::reinit_builtins ();
       riscv_vector::handle_pragma_vector ();
-
-      riscv_pragma_intrinsic_flags_restore (&backup_flags);
-
-      /* Re-initialize after the flags are restored.  */
-      riscv_option_override ();
-      init_adjust_machine_modes ();
     }
   else
     error ("unknown %<#pragma riscv intrinsic%> option %qs", name);
+}
+
+/* Implement TARGETM.TARGET_OPTION.PRAGMA_PARSE.  */
+
+static bool
+riscv_pragma_target_parse (tree args, tree pop_target)
+{
+  /* If args is not NULL then process it and setup the target-specific
+     information that it specifies.  */
+  if (args)
+    {
+      if (!riscv_process_target_attr_for_pragma (args))
+	return false;
+
+      riscv_override_options_internal (&global_options);
+    }
+  /* args is NULL, restore to the state described in pop_target.  */
+  else
+    {
+      pop_target = pop_target ? pop_target : target_option_default_node;
+      cl_target_option_restore (&global_options, &global_options_set,
+				TREE_TARGET_OPTION (pop_target));
+    }
+
+  target_option_current_node
+    = build_target_option_node (&global_options, &global_options_set);
+
+  riscv_reset_previous_fndecl ();
+
+  /* For the definitions, ensure all newly defined macros are considered
+     as used for -Wunused-macros.  There is no point warning about the
+     compiler predefined macros.  */
+  cpp_options *cpp_opts = cpp_get_options (parse_in);
+  unsigned char saved_warn_unused_macros = cpp_opts->warn_unused_macros;
+  cpp_opts->warn_unused_macros = 0;
+
+  cpp_force_token_locations (parse_in, BUILTINS_LOCATION);
+  riscv_cpu_cpp_builtins (parse_in);
+  cpp_stop_forcing_token_locations (parse_in);
+
+  cpp_opts->warn_unused_macros = saved_warn_unused_macros;
+
+  return true;
 }
 
 /* Implement TARGET_CHECK_BUILTIN_CALL.  */
@@ -356,5 +315,6 @@ riscv_register_pragmas (void)
 {
   targetm.resolve_overloaded_builtin = riscv_resolve_overloaded_builtin;
   targetm.check_builtin_call = riscv_check_builtin_call;
+  targetm.target_option.pragma_parse = riscv_pragma_target_parse;
   c_register_pragma ("riscv", "intrinsic", riscv_pragma_intrinsic);
 }

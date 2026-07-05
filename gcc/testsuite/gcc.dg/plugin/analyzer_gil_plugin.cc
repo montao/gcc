@@ -4,6 +4,7 @@
 */
 /* { dg-options "-g" } */
 
+#define INCLUDE_LIST
 #define INCLUDE_MEMORY
 #define INCLUDE_STRING
 #define INCLUDE_VECTOR
@@ -16,7 +17,9 @@
 #include "gimple.h"
 #include "gimple-iterator.h"
 #include "gimple-walk.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
+#include "context.h"
+#include "channels.h"
 #include "analyzer/common.h"
 #include "analyzer/analyzer-logging.h"
 #include "json.h"
@@ -53,19 +56,16 @@ public:
   bool inherited_state_p () const final override { return false; }
 
   bool on_stmt (sm_context &sm_ctxt,
-		const supernode *node,
 		const gimple *stmt) const final override;
 
   bool can_purge_p (state_t s) const final override;
 
   void check_for_pyobject_usage_without_gil (sm_context &sm_ctxt,
-					     const supernode *node,
 					     const gimple *stmt,
 					     tree op) const;
 
  private:
   void check_for_pyobject_in_call (sm_context &sm_ctxt,
-				   const supernode *node,
 				   const gcall &call,
 				   tree callee_fndecl) const;
 
@@ -120,20 +120,22 @@ public:
     return false;
   }
 
-  diagnostic_event::meaning
+  diagnostics::paths::event::meaning
   get_meaning_for_state_change (const evdesc::state_change &change)
     const final override
   {
+    using event = diagnostics::paths::event;
+
     if (change.is_global_p ())
       {
 	if (change.m_new_state == m_sm.m_released_gil)
-	  return diagnostic_event::meaning (diagnostic_event::VERB_release,
-					    diagnostic_event::NOUN_lock);
+	  return event::meaning (event::verb::release,
+				 event::noun::lock);
 	else if (change.m_new_state == m_sm.get_start_state ())
-	  return diagnostic_event::meaning (diagnostic_event::VERB_acquire,
-					    diagnostic_event::NOUN_lock);
+	  return event::meaning (event::verb::acquire,
+				 event::noun::lock);
       }
-    return diagnostic_event::meaning ();
+    return event::meaning ();
   }
  protected:
   gil_diagnostic (const gil_state_machine &sm) : m_sm (sm)
@@ -287,14 +289,13 @@ gil_state_machine::gil_state_machine (logger *logger)
 struct cb_data
 {
   cb_data (const gil_state_machine &sm, sm_context &sm_ctxt,
-	   const supernode *snode, const gimple *stmt)
-  : m_sm (sm), m_sm_ctxt (sm_ctxt), m_snode (snode), m_stmt (stmt)
+	   const gimple *stmt)
+  : m_sm (sm), m_sm_ctxt (sm_ctxt), m_stmt (stmt)
   {
   }
 
   const gil_state_machine &m_sm;
   sm_context &m_sm_ctxt;
-  const supernode *m_snode;
   const gimple *m_stmt;
 };
 
@@ -302,7 +303,7 @@ static bool
 check_for_pyobject (gimple *, tree op, tree, void *data)
 {
   cb_data *d = (cb_data *)data;
-  d->m_sm.check_for_pyobject_usage_without_gil (d->m_sm_ctxt, d->m_snode,
+  d->m_sm.check_for_pyobject_usage_without_gil (d->m_sm_ctxt,
 						d->m_stmt, op);
   return true;
 }
@@ -312,7 +313,6 @@ check_for_pyobject (gimple *, tree op, tree, void *data)
 
 void
 gil_state_machine::check_for_pyobject_in_call (sm_context &sm_ctxt,
-					       const supernode *node,
 					       const gcall &call,
 					       tree callee_fndecl) const
 {
@@ -324,7 +324,7 @@ gil_state_machine::check_for_pyobject_in_call (sm_context &sm_ctxt,
       tree type = TREE_TYPE (TREE_TYPE (arg));
       if (type_based_on_pyobject_p (type))
 	{
-	  sm_ctxt.warn (node, &call, NULL_TREE,
+	  sm_ctxt.warn (NULL_TREE,
 			std::make_unique<fncall_without_gil> (*this, call,
 							      callee_fndecl,
 							      i));
@@ -337,7 +337,6 @@ gil_state_machine::check_for_pyobject_in_call (sm_context &sm_ctxt,
 
 bool
 gil_state_machine::on_stmt (sm_context &sm_ctxt,
-			    const supernode *node,
 			    const gimple *stmt) const
 {
   const state_t global_state = sm_ctxt.get_global_state ();
@@ -353,7 +352,7 @@ gil_state_machine::on_stmt (sm_context &sm_ctxt,
 			"PyEval_SaveThread");
 	      if (global_state == m_released_gil)
 		{
-		  sm_ctxt.warn (node, stmt, NULL_TREE,
+		  sm_ctxt.warn (NULL_TREE,
 				std::make_unique<double_save_thread> (*this, call));
 		  sm_ctxt.set_global_state (m_stop);
 		}
@@ -375,17 +374,17 @@ gil_state_machine::on_stmt (sm_context &sm_ctxt,
 	    {
 	      /* Find PyObject * args of calls to fns with unknown bodies.  */
 	      if (!fndecl_has_gimple_body_p (callee_fndecl))
-		check_for_pyobject_in_call (sm_ctxt, node, call, callee_fndecl);
+		check_for_pyobject_in_call (sm_ctxt, call, callee_fndecl);
 	    }
 	}
       else if (global_state == m_released_gil)
-	check_for_pyobject_in_call (sm_ctxt, node, call, NULL);
+	check_for_pyobject_in_call (sm_ctxt, call, NULL);
     }
   else
     if (global_state == m_released_gil)
       {
 	/* Walk the stmt, finding uses of PyObject (or "subclasses").  */
-	cb_data d (*this, sm_ctxt, node, stmt);
+	cb_data d (*this, sm_ctxt, stmt);
 	walk_stmt_load_store_addr_ops (const_cast <gimple *> (stmt), &d,
 				       check_for_pyobject,
 				       check_for_pyobject,
@@ -402,32 +401,31 @@ gil_state_machine::can_purge_p (state_t s ATTRIBUTE_UNUSED) const
 
 void
 gil_state_machine::check_for_pyobject_usage_without_gil (sm_context &sm_ctxt,
-							 const supernode *node,
 							 const gimple *stmt,
 							 tree op) const
 {
   tree type = TREE_TYPE (op);
   if (type_based_on_pyobject_p (type))
     {
-      sm_ctxt.warn (node, stmt, NULL_TREE,
+      sm_ctxt.warn (NULL_TREE,
 		    std::make_unique<pyobject_usage_without_gil> (*this, op));
       sm_ctxt.set_global_state (m_stop);
     }
 }
 
-/* Callback handler for the PLUGIN_ANALYZER_INIT event.  */
+namespace analyzer_events = ::gcc::topics::analyzer_events;
 
-static void
-gil_analyzer_init_cb (void *gcc_data, void */*user_data*/)
+class gil_analyzer_events_subscriber : public analyzer_events::subscriber
 {
-  ana::plugin_analyzer_init_iface *iface
-    = (ana::plugin_analyzer_init_iface *)gcc_data;
-  LOG_SCOPE (iface->get_logger ());
-  if (0)
-    inform (input_location, "got here: gil_analyzer_init_cb");
-  iface->register_state_machine
-    (std::make_unique<gil_state_machine> (iface->get_logger ()));
-}
+public:
+  void
+  on_message (const analyzer_events::on_ana_init &m) final override
+  {
+    LOG_SCOPE (m.get_logger ());
+    m.register_state_machine
+      (std::make_unique<gil_state_machine> (m.get_logger ()));
+  }
+} gil_sub;
 
 } // namespace ana
 
@@ -441,10 +439,7 @@ plugin_init (struct plugin_name_args *plugin_info,
   const char *plugin_name = plugin_info->base_name;
   if (0)
     inform (input_location, "got here; %qs", plugin_name);
-  register_callback (plugin_info->base_name,
-		     PLUGIN_ANALYZER_INIT,
-		     ana::gil_analyzer_init_cb,
-		     NULL); /* void *user_data */
+  g->get_channels ().analyzer_events_channel.add_subscriber (ana::gil_sub);
 #else
   sorry_no_analyzer ();
 #endif

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2025 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -21,17 +21,15 @@
 #include "rust-hir-expr.h"
 #include "rust-hir-stmt.h"
 #include "rust-hir-item.h"
+#include "rust-rib.h"
 #include "rust-system.h"
-#include "rust-immutable-name-resolution-context.h"
-
-// for flag_name_resolution_2_0
-#include "options.h"
+#include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace HIR {
 
 ConstChecker::ConstChecker ()
-  : resolver (*Resolver::Resolver::get ()),
+  : resolver (Resolver2_0::FinalizedNameResolutionContext::get ()),
     mappings (Analysis::Mappings::get ())
 {}
 
@@ -358,18 +356,9 @@ ConstChecker::visit (CallExpr &expr)
   NodeId ast_node_id = expr.get_fnexpr ().get_mappings ().get_nodeid ();
   NodeId ref_node_id;
 
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx
-	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
-
-      if (auto id = nr_ctx.lookup (ast_node_id))
-	ref_node_id = *id;
-      else
-	return;
-    }
-  // We don't care about types here
-  else if (!resolver.lookup_resolved_name (ast_node_id, &ref_node_id))
+  if (auto id = resolver.lookup (ast_node_id, Resolver2_0::Namespace::Values))
+    ref_node_id = *id;
+  else
     return;
 
   if (auto definition_id = mappings.lookup_node_to_hir (ref_node_id))
@@ -414,6 +403,26 @@ ConstChecker::visit (BlockExpr &expr)
 
   if (expr.has_expr ())
     expr.get_final_expr ().accept_vis (*this);
+}
+
+void
+ConstChecker::visit (AnonConst &expr)
+{
+  const_context.enter (expr.get_mappings ().get_hirid ());
+
+  expr.get_inner_expr ().accept_vis (*this);
+
+  const_context.exit ();
+}
+
+void
+ConstChecker::visit (ConstBlock &expr)
+{
+  const_context.enter (expr.get_mappings ().get_hirid ());
+
+  expr.get_const_expr ().accept_vis (*this);
+
+  const_context.exit ();
 }
 
 void
@@ -538,6 +547,10 @@ ConstChecker::visit (InlineAsm &)
 
 void
 ConstChecker::visit (LlvmInlineAsm &)
+{}
+
+void
+ConstChecker::visit (OffsetOf &)
 {}
 
 void
@@ -789,11 +802,11 @@ ConstChecker::visit (StructPattern &)
 {}
 
 void
-ConstChecker::visit (TupleStructItemsNoRange &)
+ConstChecker::visit (TupleStructItemsNoRest &)
 {}
 
 void
-ConstChecker::visit (TupleStructItemsRange &)
+ConstChecker::visit (TupleStructItemsHasRest &)
 {}
 
 void
@@ -801,15 +814,23 @@ ConstChecker::visit (TupleStructPattern &)
 {}
 
 void
-ConstChecker::visit (TuplePatternItemsMultiple &)
+ConstChecker::visit (TuplePatternItemsNoRest &)
 {}
 
 void
-ConstChecker::visit (TuplePatternItemsRanged &)
+ConstChecker::visit (TuplePatternItemsHasRest &)
 {}
 
 void
 ConstChecker::visit (TuplePattern &)
+{}
+
+void
+ConstChecker::visit (SlicePatternItemsNoRest &)
+{}
+
+void
+ConstChecker::visit (SlicePatternItemsHasRest &)
 {}
 
 void

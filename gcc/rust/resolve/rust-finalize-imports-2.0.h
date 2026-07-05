@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2026 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -18,6 +18,7 @@
 
 #include "rust-ast.h"
 #include "rust-expr.h"
+#include "rust-item.h"
 #include "rust-name-resolution-context.h"
 #include "rust-toplevel-name-resolver-2.0.h"
 #include "rust-early-name-resolver-2.0.h"
@@ -32,7 +33,12 @@ class GlobbingVisitor : public AST::DefaultASTVisitor
 public:
   GlobbingVisitor (NameResolutionContext &ctx) : ctx (ctx) {}
 
-  void go (AST::Module *module);
+  void go (AST::GlobContainer *container);
+
+  void visit_crate_container (AST::Crate &crate);
+  void visit_module_container (AST::Module &module);
+  void visit_enum_container (AST::Enum &item);
+
   void visit (AST::Module &module) override;
   void visit (AST::MacroRulesDefinition &macro) override;
   void visit (AST::Function &function) override;
@@ -42,6 +48,10 @@ public:
   void visit (AST::Enum &enum_item) override;
   void visit (AST::Union &union_item) override;
   void visit (AST::ConstantItem &const_item) override;
+  void visit (AST::TypeAlias &type) override;
+  void visit (AST::Trait &trait) override;
+  void visit (AST::InherentImpl &impl) override;
+  void visit (AST::TraitImpl &impl) override;
   void visit (AST::ExternCrate &crate) override;
   void visit (AST::UseDeclaration &use) override;
 

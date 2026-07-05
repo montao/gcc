@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE (__ARM_FEATURE_SVE intrinsics)
-   Copyright (C) 2018-2025 Free Software Foundation, Inc.
+   Copyright (C) 2018-2026 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -40,7 +40,7 @@
 #include "tree-vector-builder.h"
 #include "rtx-vector-builder.h"
 #include "vec-perm-indices.h"
-#include "aarch64-sve-builtins.h"
+#include "aarch64-acle-builtins.h"
 #include "aarch64-sve-builtins-shapes.h"
 #include "aarch64-sve-builtins-base.h"
 #include "aarch64-sve-builtins-functions.h"
@@ -49,7 +49,7 @@
 #include "gimple-fold.h"
 #include "tree-ssa.h"
 
-using namespace aarch64_sve;
+using namespace aarch64_acle;
 
 namespace {
 
@@ -214,7 +214,8 @@ public:
   expand (function_expander &e) const override
   {
     e.add_ptrue_hint (0, e.gp_mode (0));
-    insn_code icode = code_for_aarch64_pred_fac (m_unspec, e.vector_mode (0));
+    insn_code icode = code_for_aarch64_pred_fac_acle (m_unspec,
+						      e.vector_mode (0));
     return e.use_exact_insn (icode);
   }
 
@@ -497,10 +498,10 @@ public:
       {
 	bool unsigned_p = e.type_suffix (0).unsigned_p;
 	rtx_code code = get_rtx_code (m_code, unsigned_p);
-	return e.use_exact_insn (code_for_aarch64_pred_cmp (code, mode));
+	return e.use_exact_insn (code_for_aarch64_pred_cmp_acle (code, mode));
       }
 
-    insn_code icode = code_for_aarch64_pred_fcm (m_unspec_for_fp, mode);
+    insn_code icode = code_for_aarch64_pred_fcm_acle (m_unspec_for_fp, mode);
     return e.use_exact_insn (icode);
   }
 
@@ -542,7 +543,7 @@ public:
 
     /* If the argument is a constant that the unwidened comparisons
        can handle directly, use them instead.  */
-    insn_code icode = code_for_aarch64_pred_cmp (code, mode);
+    insn_code icode = code_for_aarch64_pred_cmp_acle (code, mode);
     rtx op2 = unwrap_const_vec_duplicate (e.args[3]);
     if (CONSTANT_P (op2)
 	&& insn_data[icode].operand[4].predicate (op2, DImode))
@@ -581,7 +582,8 @@ public:
   expand (function_expander &e) const override
   {
     e.add_ptrue_hint (0, e.gp_mode (0));
-    return e.use_exact_insn (code_for_aarch64_pred_fcmuo (e.vector_mode (0)));
+    auto mode = e.vector_mode (0);
+    return e.use_exact_insn (code_for_aarch64_pred_fcmuo_acle (mode));
   }
 };
 
@@ -777,17 +779,23 @@ public:
       {
 	machine_mode mode0 = e.result_mode ();
 	machine_mode mode1 = GET_MODE (e.args[0]);
-	convert_optab optab;
-	if (e.type_suffix (0).integer_p)
-	  optab = e.type_suffix (0).unsigned_p ? ufix_optab : sfix_optab;
-	else if (e.type_suffix (1).integer_p)
-	  optab = e.type_suffix (1).unsigned_p ? ufloat_optab : sfloat_optab;
-	else if (e.type_suffix (0).element_bits
-		 < e.type_suffix (1).element_bits)
-	  optab = trunc_optab;
+	if (e.fpm_mode == aarch64_acle::FPM_set)
+	  icode = code_for_aarch64_sme2_fp8_cvt (mode1);
 	else
-	  optab = sext_optab;
-	icode = convert_optab_handler (optab, mode0, mode1);
+	  {
+	    convert_optab optab;
+	    if (e.type_suffix (0).integer_p)
+	      optab = e.type_suffix (0).unsigned_p ? ufix_optab : sfix_optab;
+	    else if (e.type_suffix (1).integer_p)
+	      optab = e.type_suffix (1).unsigned_p ? ufloat_optab
+						   : sfloat_optab;
+	    else if (e.type_suffix (0).element_bits
+		     < e.type_suffix (1).element_bits)
+	      optab = trunc_optab;
+	    else
+	      optab = sext_optab;
+	    icode = convert_optab_handler (optab, mode0, mode1);
+	  }
 	gcc_assert (icode != CODE_FOR_nothing);
 	return e.use_exact_insn (icode);
       }
@@ -844,18 +852,6 @@ public:
     if (e.pred == PRED_x)
       return e.use_pred_x_insn (icode);
     return e.use_cond_insn (icode);
-  }
-};
-
-class svcvtnt_impl : public CODE_FOR_MODE0 (aarch64_sve_cvtnt)
-{
-public:
-  gimple *
-  fold (gimple_folder &f) const override
-  {
-    if (f.pred == PRED_x && is_pfalse (gimple_call_arg (f.call, 1)))
-      f.fold_call_to (build_zero_cst (TREE_TYPE (f.lhs)));
-    return NULL;
   }
 };
 
@@ -949,7 +945,7 @@ public:
   expand (function_expander &e) const override
   {
     insn_code icode;
-    if (e.fpm_mode == aarch64_sve::FPM_set)
+    if (e.fpm_mode == aarch64_acle::FPM_set)
       icode = code_for_aarch64_sve_dot (e.result_mode ());
     else
       {
@@ -983,7 +979,7 @@ public:
     insn_code icode;
     machine_mode mode0 = GET_MODE (e.args[0]);
     machine_mode mode1 = GET_MODE (e.args[1]);
-    if (e.fpm_mode == aarch64_sve::FPM_set)
+    if (e.fpm_mode == aarch64_acle::FPM_set)
       {
 	icode = code_for_aarch64_sve_dot_lane (mode0);
       }
@@ -1048,6 +1044,23 @@ public:
   rtx
   expand (function_expander &e) const override
   {
+    machine_mode mode = e.vector_mode (0);
+    if (GET_MODE_CLASS (mode) == MODE_VECTOR_BOOL)
+      {
+	gcc_assert (e.pred == PRED_none);
+
+	rtx src = e.args[0];
+	if (GET_CODE (src) == CONST_INT)
+	  return (src == const0_rtx
+		  ? CONST0_RTX (VNx16BImode)
+		  : aarch64_ptrue_all (e.type_suffix (0).element_bytes));
+
+	rtx dest = e.get_reg_target ();
+	src = force_reg (GET_MODE (src), src);
+	aarch64_emit_sve_pred_vec_duplicate (mode, dest, src);
+	return dest;
+      }
+
     if (e.pred == PRED_none || e.pred == PRED_x)
       /* There's no benefit to using predicated instructions for _x here.  */
       return e.use_unpred_insn (e.direct_optab_handler (vec_duplicate_optab));
@@ -1056,7 +1069,6 @@ public:
        the duplicate of the function argument and the "false" value
        is the value of inactive lanes.  */
     insn_code icode;
-    machine_mode mode = e.vector_mode (0);
     if (valid_for_const_vector_p (GET_MODE_INNER (mode), e.args.last ()))
       /* Duplicate the constant to fill a vector.  The pattern optimizes
 	 various cases involving constant operands, falling back to SEL
@@ -1197,8 +1209,7 @@ public:
     if (mode != e.vector_mode (0))
       {
 	rtx data_dupq = aarch64_expand_sve_dupq (NULL, mode, vq_reg);
-	return aarch64_convert_sve_data_to_pred (e.possible_target,
-						 e.vector_mode (0), data_dupq);
+	return aarch64_convert_sve_data_to_pred (e.possible_target, data_dupq);
       }
 
     return aarch64_expand_sve_dupq (e.possible_target, mode, vq_reg);
@@ -1259,9 +1270,10 @@ public:
 	index = target;
       }
 
-    e.args[0] = gen_lowpart (VNx2DImode, e.args[0]);
+    e.args[0] = aarch64_sve_reinterpret (VNx2DImode, e.args[0]);
     e.args[1] = index;
-    return e.use_exact_insn (CODE_FOR_aarch64_sve_tblvnx2di);
+    rtx res = e.use_exact_insn (CODE_FOR_aarch64_sve_tblvnx2di);
+    return aarch64_sve_reinterpret (mode, res);
   }
 };
 
@@ -1279,12 +1291,44 @@ public:
   }
 };
 
+class svexpand_impl
+  : public QUIET_CODE_FOR_MODE0 (aarch64_sve_expand)
+{
+public:
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    if (is_pfalse (gimple_call_arg (f.call, 0)))
+      return f.fold_call_to (build_zero_cst (TREE_TYPE (f.lhs)));
+    return NULL;
+  }
+};
+
 /* Implements svextb, svexth and svextw.  */
 class svext_bhw_impl : public function_base
 {
 public:
   CONSTEXPR svext_bhw_impl (scalar_int_mode from_mode)
     : m_from_mode (from_mode) {}
+
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    /* For unsigned types this is a zero-extend, i.e. a bitwise AND with a
+       constant mask.  The _x form and an all-true _z already lower to that
+       AND; fold the merging form with an all-true predicate to it too, since
+       the predicate makes the inactive operand dead.  */
+    if (f.pred != PRED_m
+	|| !f.type_suffix (0).unsigned_p
+	|| !is_ptrue (f.gp_value (f.call), f.type_suffix (0).element_bytes))
+      return NULL;
+
+    tree op = gimple_call_arg (f.call, 2);
+    tree mask = build_int_cstu (TREE_TYPE (TREE_TYPE (f.lhs)),
+				GET_MODE_MASK (m_from_mode));
+    tree mask_vec = build_vector_from_val (TREE_TYPE (f.lhs), mask);
+    return gimple_build_assign (f.lhs, BIT_AND_EXPR, op, mask_vec);
+  }
 
   rtx
   expand (function_expander &e) const override
@@ -1830,6 +1874,20 @@ public:
 	gimple_seq_add_stmt_without_update (&stmts, mem_ref_stmt);
 
 	int source_nelts = TYPE_VECTOR_SUBPARTS (access_type).to_constant ();
+
+	/* When the SVE vector has the same number of elements as the
+	   128-bit quadword (i.e. VL == 128), the load fills the entire
+	   register and no replication is needed.  Just convert the
+	   loaded value from the Advanced SIMD type to the SVE type.  */
+	if (known_eq (lhs_len, (unsigned int) source_nelts))
+	  {
+	    gimple *g
+	      = gimple_build_assign (lhs, build1 (VIEW_CONVERT_EXPR,
+						  lhs_type, mem_ref_lhs));
+	    gimple_seq_add_stmt_without_update (&stmts, g);
+	    gsi_replace_with_seq_vops (f.gsi, stmts);
+	    return g;
+	  }
 	vec_perm_builder sel (lhs_len, source_nelts, 1);
 	for (int i = 0; i < source_nelts; i++)
 	  sel.quick_push (i);
@@ -2265,7 +2323,14 @@ public:
 	  icode = code_for_aarch64_sve_add (UNSPEC_SMATMUL, e.vector_mode (0));
       }
     else
-      icode = code_for_aarch64_sve (UNSPEC_FMMLA, e.vector_mode (0));
+      {
+	if (e.type_suffix_ids[1] == NUM_TYPE_SUFFIXES)
+	  icode = code_for_aarch64_sve (UNSPEC_FMMLA, e.vector_mode (0));
+	else
+	  icode = code_for_aarch64_sve2 (UNSPEC_FMMLA,
+					e.vector_mode (0),
+					e.vector_mode (1));
+      }
     return e.use_exact_insn (icode);
   }
 };
@@ -2284,11 +2349,18 @@ class svmul_impl : public rtx_code_function
 {
 public:
   CONSTEXPR svmul_impl ()
-    : rtx_code_function (MULT, MULT, UNSPEC_COND_FMUL) {}
+    : rtx_code_function (MULT, MULT, UNSPEC_COND_FMUL, UNSPEC_FMUL) {}
 
   gimple *
   fold (gimple_folder &f) const override
   {
+    /* The code below assumes that the function has 3 arguments (pg, rn, rm).
+       Unpredicated functions have only 2 arguments (rn, rm) so will cause the
+       code below to crash.  Also skip if it does not operate on integers,
+       since all the optimizations below are for integer multiplication.  */
+    if (!f.type_suffix (0).integer_p || f.pred == aarch64_acle::PRED_none)
+      return nullptr;
+
     if (auto *res = f.fold_const_binary (MULT_EXPR))
       return res;
 
@@ -2317,9 +2389,11 @@ public:
 	    tree negated_op = op1;
 	    if (integer_minus_onep (op1))
 	      negated_op = op2;
-	    type_suffix_pair signed_tsp =
-	      {find_type_suffix (TYPE_signed, f.type_suffix (0).element_bits),
-		f.type_suffix_ids[1]};
+	    type_suffix_triple signed_tsp = {
+	      find_type_suffix (TYPE_signed, f.type_suffix (0).element_bits),
+	      f.type_suffix_ids[1],
+	      NUM_TYPE_SUFFIXES
+	    };
 	    function_instance instance ("svneg", functions::svneg,
 					shapes::unary, MODE_none, signed_tsp,
 					GROUP_none, f.pred, FPM_unused);
@@ -2857,7 +2931,10 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    return e.use_exact_insn (code_for_aarch64_sve_rev (e.vector_mode (0)));
+    auto mode = e.vector_mode (0);
+    return e.use_exact_insn (e.type_suffix (0).bool_p
+			     ? code_for_aarch64_sve_rev_acle (mode)
+			     : code_for_aarch64_sve_rev (mode));
   }
 };
 
@@ -2934,12 +3011,12 @@ public:
        The fold routines expect the replacement statement to have the
        same lhs as the original call, so return the copy statement
        rather than the field update.  */
-    gassign *copy = gimple_build_assign (unshare_expr (f.lhs), rhs_tuple);
+    gassign *copy = gimple_build_assign (f.lhs, rhs_tuple);
 
     /* Get a reference to the individual vector.  */
     tree field = tuple_type_field (TREE_TYPE (f.lhs));
     tree lhs_array = build3 (COMPONENT_REF, TREE_TYPE (field),
-			     f.lhs, field, NULL_TREE);
+			     unshare_expr (f.lhs), field, NULL_TREE);
     tree lhs_vector = build4 (ARRAY_REF, TREE_TYPE (rhs_vector),
 			      lhs_array, index, NULL_TREE, NULL_TREE);
     gassign *update = gimple_build_assign (lhs_vector, rhs_vector);
@@ -3248,7 +3325,7 @@ public:
     unsigned int unpacks = m_high_p ? UNSPEC_UNPACKSHI : UNSPEC_UNPACKSLO;
     insn_code icode;
     if (GET_MODE_CLASS (mode) == MODE_VECTOR_BOOL)
-      icode = code_for_aarch64_sve_punpk (unpacku, mode);
+      icode = code_for_aarch64_sve_punpk_acle (unpacku);
     else
       {
 	int unspec = e.type_suffix (0).unsigned_p ? unpacku : unpacks;
@@ -3438,9 +3515,28 @@ public:
   unsigned int m_base;
 };
 
+class svscale_impl : public function_base
+{
+public:
+  rtx
+  expand (function_expander &e) const override
+  {
+    if (vectors_per_tuple (e) == 1)
+      return e.map_to_unspecs (-1, -1, UNSPEC_COND_FSCALE);
+    else
+      {
+	machine_mode mode = GET_MODE (e.args[0]);
+	insn_code code = (e.mode_suffix_id == MODE_single
+	  ? code_for_aarch64_sve_single_fscale (mode)
+	  : code_for_aarch64_sve_fscale (mode));
+	return e.use_exact_insn (code);
+      }
+  }
+};
+
 } /* end anonymous namespace */
 
-namespace aarch64_sve {
+namespace aarch64_acle {
 
 FUNCTION (svabd, svabd_impl,)
 FUNCTION (svabs, quiet<rtx_code_function>, (ABS, ABS, UNSPEC_COND_FABS))
@@ -3518,7 +3614,7 @@ FUNCTION (svcreate2, svcreate_impl, (2))
 FUNCTION (svcreate3, svcreate_impl, (3))
 FUNCTION (svcreate4, svcreate_impl, (4))
 FUNCTION (svcvt, svcvt_impl,)
-FUNCTION (svcvtnt, svcvtnt_impl,)
+FUNCTION (svcvtnt, NARROWING_TOP_CONVERT0 (aarch64_sve_cvtnt),)
 FUNCTION (svdiv, svdiv_impl,)
 FUNCTION (svdivr, rtx_code_function_rotated, (DIV, UDIV, UNSPEC_COND_FDIV))
 FUNCTION (svdot, svdot_impl,)
@@ -3531,6 +3627,7 @@ FUNCTION (svdupq_lane, svdupq_lane_impl,)
 FUNCTION (sveor, rtx_code_function, (XOR, XOR, -1))
 FUNCTION (sveorv, sveorv_impl,)
 FUNCTION (svexpa, unspec_based_function, (-1, -1, UNSPEC_FEXPA))
+FUNCTION (svexpand, svexpand_impl,)
 FUNCTION (svext, QUIET_CODE_FOR_MODE0 (aarch64_sve_ext),)
 FUNCTION (svextb, svext_bhw_impl, (QImode))
 FUNCTION (svexth, svext_bhw_impl, (HImode))
@@ -3679,7 +3776,7 @@ FUNCTION (svrintx, svrint_impl, (rint_optab, UNSPEC_COND_FRINTX))
 FUNCTION (svrintz, svrint_impl, (btrunc_optab, UNSPEC_COND_FRINTZ))
 FUNCTION (svrsqrte, unspec_based_function, (-1, UNSPEC_RSQRTE, UNSPEC_RSQRTE))
 FUNCTION (svrsqrts, unspec_based_function, (-1, -1, UNSPEC_RSQRTS))
-FUNCTION (svscale, unspec_based_function, (-1, -1, UNSPEC_COND_FSCALE))
+FUNCTION (svscale, svscale_impl,)
 FUNCTION (svsel, svsel_impl,)
 FUNCTION (svset2, svset_impl, (2))
 FUNCTION (svset3, svset_impl, (3))
@@ -3742,4 +3839,4 @@ NEON_SVE_BRIDGE_FUNCTION (svget_neonq, svget_neonq_impl,)
 NEON_SVE_BRIDGE_FUNCTION (svset_neonq, svset_neonq_impl,)
 NEON_SVE_BRIDGE_FUNCTION (svdup_neonq, svdup_neonq_impl,)
 
-} /* end namespace aarch64_sve */
+}

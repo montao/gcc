@@ -1,5 +1,5 @@
 /* Parser header
-   Copyright (C) 2003-2025 Free Software Foundation, Inc.
+   Copyright (C) 2003-2026 Free Software Foundation, Inc.
    Contributed by Steven Bosscher
 
 This file is part of GCC.
@@ -21,6 +21,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #ifndef GFC_PARSE_H
 #define GFC_PARSE_H
+
+#include "vec.h"
 
 /* Enum for what the compiler is currently doing.  */
 enum gfc_compile_state
@@ -76,6 +78,7 @@ extern bool gfc_matching_function;
 extern bool gfc_matching_omp_context_selector;
 extern bool gfc_in_omp_metadirective_body;
 extern int gfc_omp_metadirective_region_count;
+extern vec<int> gfc_omp_metadirective_region_stack;
 
 match gfc_match_prefix (gfc_typespec *);
 bool is_oacc (gfc_state_data *);

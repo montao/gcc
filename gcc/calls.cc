@@ -1,5 +1,5 @@
 /* Convert function calls to rtl insns, for GNU C compiler.
-   Copyright (C) 1989-2025 Free Software Foundation, Inc.
+   Copyright (C) 1989-2026 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -61,6 +61,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "value-query.h"
 #include "tree-pretty-print.h"
 #include "tree-eh.h"
+#include "regs.h"
+#include "function-abi.h"
 
 /* Like PREFERRED_STACK_BOUNDARY but in units of bytes, not bits.  */
 #define STACK_BYTES (PREFERRED_STACK_BOUNDARY / BITS_PER_UNIT)
@@ -512,6 +514,7 @@ emit_call_1 (rtx funexp, tree fntree ATTRIBUTE_UNUSED, tree fndecl ATTRIBUTE_UNU
       cfun->calls_setjmp = 1;
     }
 
+  CALL_INSN_ABI_ID (call_insn) = (funtype ? fntype_abi (funtype).id () : 0);
   SIBLING_CALL_P (call_insn) = ((ecf_flags & ECF_SIBCALL) != 0);
 
   /* Restore this now, so that we do defer pops for this call's args
@@ -1396,10 +1399,6 @@ initialize_argument_information (int num_actuals ATTRIBUTE_UNUSED,
       /* Replace erroneous argument with constant zero.  */
       if (type == error_mark_node || !COMPLETE_TYPE_P (type))
 	args[i].tree_value = integer_zero_node, type = integer_type_node;
-      else if (promote_p
-	       && INTEGRAL_TYPE_P (type)
-	       && TYPE_PRECISION (type) < TYPE_PRECISION (integer_type_node))
-	type = integer_type_node;
 
       /* If TYPE is a transparent union or record, pass things the way
 	 we would pass the first field of the union or record.  We have
@@ -1541,6 +1540,11 @@ initialize_argument_information (int num_actuals ATTRIBUTE_UNUSED,
 	}
 
       unsignedp = TYPE_UNSIGNED (type);
+      if (promote_p
+	  && INTEGRAL_TYPE_P (type)
+	  && TYPE_PRECISION (type) < TYPE_PRECISION (integer_type_node))
+	type = integer_type_node;
+
       arg.type = type;
       arg.mode
 	= promote_function_mode (type, TYPE_MODE (type), &unsignedp,
@@ -2251,10 +2255,20 @@ load_register_parameters (struct arg_data *args, int num_actuals,
 		   && !TREE_SIDE_EFFECTS (tree_value)
 		   && immediate_const_ctor_p (DECL_INITIAL (tree_value)))
 	    {
+	      HOST_WIDE_INT size = int_expr_size (DECL_INITIAL (tree_value));
 	      rtx target = gen_reg_rtx (word_mode);
 	      store_constructor (DECL_INITIAL (tree_value), target, 0,
-				 int_expr_size (DECL_INITIAL (tree_value)),
-				 false);
+				 size, false);
+	      /* On big-endian targets, store_constructor places fields
+		 from the MSB, which places any padding bits in the least
+		 significant bytes.  If required, use a logical right shift
+		 to place things where expected in a register parameter.  */
+	      if (BYTES_BIG_ENDIAN
+		  && size < UNITS_PER_WORD
+		  && args[i].locate.where_pad == PAD_DOWNWARD)
+		target = expand_shift (RSHIFT_EXPR, word_mode, target,
+				       (UNITS_PER_WORD - size) * BITS_PER_UNIT,
+				       NULL_RTX, 1);
 	      reg = gen_rtx_REG (word_mode, REGNO (reg));
 	      emit_move_insn (reg, target);
 	    }
@@ -2589,7 +2603,8 @@ can_implement_as_sibling_call_p (tree exp,
       return false;
     }
 
-  if (TYPE_VOLATILE (TREE_TYPE (TREE_TYPE (addr))))
+  if (TYPE_VOLATILE (TREE_TYPE (TREE_TYPE (addr)))
+      && !CALL_EXPR_MUST_TAIL_CALL (exp))
     {
       maybe_complain_about_tail_call (exp, _("volatile function type"));
       return false;
@@ -3234,11 +3249,6 @@ expand_call (tree exp, rtx target, int ignore)
       if (pass)
 	precompute_arguments (num_actuals, args);
 
-      /* Now we are about to start emitting insns that can be deleted
-	 if a libcall is deleted.  */
-      if (pass && (flags & ECF_MALLOC))
-	start_sequence ();
-
       /* Check the canary value for sibcall or function which doesn't
 	 return and could throw.  */
       if ((pass == 0
@@ -3583,7 +3593,8 @@ expand_call (tree exp, rtx target, int ignore)
 		      && check_sibcall_argument_overlap (before_arg,
 							 &args[i], true)))
 		sibcall_failure = true;
-	      }
+	      gcc_checking_assert (!args[i].stack || argblock);
+	    }
 
 	  if (args[i].stack)
 	    call_fusage
@@ -3680,6 +3691,32 @@ expand_call (tree exp, rtx target, int ignore)
 	  && !must_preallocate && reg_parm_stack_space > 0)
 	anti_adjust_stack (GEN_INT (reg_parm_stack_space));
 
+      /* Cover pushed arguments with call usage, so that cselib knows to
+	 invalidate the stores in them at the call insn.  */
+      if (pass == 1 && !argblock
+	  && (maybe_ne (adjusted_args_size.constant, 0)
+	      || adjusted_args_size.var))
+	{
+	  rtx addr = virtual_outgoing_args_rtx;
+	  poly_int64 size = adjusted_args_size.constant;
+	  if (!STACK_GROWS_DOWNWARD)
+	    {
+	      if (adjusted_args_size.var)
+		/* ??? We can't compute the exact base address.  */
+		addr = gen_rtx_PLUS (GET_MODE (addr), addr,
+				     gen_rtx_SCRATCH (GET_MODE (addr)));
+	      else
+		addr = plus_constant (GET_MODE (addr), addr, -size);
+	    }
+	  rtx fu = gen_rtx_MEM (BLKmode, addr);
+	  if (adjusted_args_size.var == 0)
+	    set_mem_size (fu, size);
+	  call_fusage
+	    = gen_rtx_EXPR_LIST (BLKmode,
+				 gen_rtx_USE (VOIDmode, fu),
+				 call_fusage);
+	}
+
       /* Pass the function the address in which to return a
 	 structure value.  */
       if (pass != 0 && structure_value_addr && ! structure_value_addr_parm)
@@ -3770,25 +3807,23 @@ expand_call (tree exp, rtx target, int ignore)
 	  valreg = gen_rtx_REG (TYPE_MODE (rettype), REGNO (valreg));
 	}
 
-      if (pass && (flags & ECF_MALLOC))
+      /* If the return register exists, for malloc like
+	 function calls, mark the return register with the
+	 alignment and noalias reg note.  */
+      if (pass && (flags & ECF_MALLOC) && valreg)
 	{
 	  rtx temp = gen_reg_rtx (GET_MODE (valreg));
-	  rtx_insn *last, *insns;
+	  rtx_insn *last;
 
 	  /* The return value from a malloc-like function is a pointer.  */
 	  if (TREE_CODE (rettype) == POINTER_TYPE)
 	    mark_reg_pointer (temp, MALLOC_ABI_ALIGNMENT);
 
-	  emit_move_insn (temp, valreg);
+	  last = emit_move_insn (temp, valreg);
 
 	  /* The return value from a malloc-like function cannot alias
 	     anything else.  */
-	  last = get_last_insn ();
 	  add_reg_note (last, REG_NOALIAS, temp);
-
-	  /* Write out the sequence.  */
-	  insns = end_sequence ();
-	  emit_insn (insns);
 	  valreg = temp;
 	}
 

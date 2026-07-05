@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -76,17 +76,6 @@ ec_level( ec_type_t ec ) {
 }
 
 void
-cbl_enabled_exception_t::dump( int i ) const {
-  cbl_message(2, "cbl_enabled_exception_t: %2d  {%s, %s, %zu}",
-              i,
-              location? "location" : "    none",
-              ec_type_str(ec),
-              file );
-}
-
-cbl_enabled_exceptions_t enabled_exceptions;
-
-void
 cbl_enabled_exceptions_t::dump() const {
   extern int yydebug;
   int debug = 1;
@@ -98,12 +87,12 @@ cbl_enabled_exceptions_t::dump() const {
     return;
   }
   int i = 1;
-  for( auto& elem : *this ) {
-    dbgmsg("cbl_enabled_exceptions_t: %2d  {%s, %s, %zu}",
+  for( auto& elem : *this ) { // cppcheck-suppress constVariableReference
+    dbgmsg("cbl_enabled_exceptions_t: %2d  {%s, %s, %lu}",
            i++,
            elem.location? "with location" : "  no location", 
            ec_type_str(elem.ec),
-           elem.file );
+           gb4(elem.file) );
   }
   std::swap(debug, yydebug);
 }
@@ -200,7 +189,7 @@ cbl_enabled_exceptions_t::turn_on_off( bool enabled,
                                            ec_cmp(ec, elem.ec); } )) ) {
       erase(p);
     }
-    // Keep the EC as an override if a higher-level would othewise apply.
+    // Keep the EC as an override if a higher-level would otherwise apply.
     p = std::find_if( begin(), end(),
                       [ec = type]( const auto& elem ) {
                         return
@@ -224,7 +213,7 @@ cbl_enabled_exceptions_t::turn_on_off( bool enabled,
                                              ec_cmp(ec, elem.ec); } )) ) {
         erase(p);
       }
-      // Keep the EC as an override if a higher-level would othewise apply.
+      // Keep the EC as an override if a higher-level would otherwise apply.
       p = std::find_if( begin(), end(),
                         [ec = type, file]( const auto& elem ) {
                           return

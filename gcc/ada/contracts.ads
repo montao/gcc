@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2015-2025, Free Software Foundation, Inc.         --
+--          Copyright (C) 2015-2026, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -52,6 +52,7 @@ package Contracts is
    --    Initial_Condition
    --    Initializes
    --    Interrupt_Handler
+   --    Modifies
    --    No_Caching
    --    Part_Of
    --    Postcondition
@@ -89,6 +90,7 @@ package Contracts is
    --    Depends            (stand alone subprogram body)
    --    Exceptional_Cases  (stand alone subprogram body)
    --    Global             (stand alone subprogram body)
+   --    Modifies           (stand alone subprogram body)
    --    Postcondition      (stand alone subprogram body)
    --    Precondition       (stand alone subprogram body)
    --    Program_Exit       (stand alone subprogram body)
@@ -110,6 +112,7 @@ package Contracts is
    --    Depends
    --    Exceptional_Cases
    --    Global
+   --    Modifies
    --    Postcondition
    --    Precondition
    --    Program_Exit
@@ -187,6 +190,7 @@ package Contracts is
    --    Depends
    --    Exceptional_Cases
    --    Global
+   --    Modifies
    --    Postcondition
    --    Precondition
    --    Program_Exit

@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2025 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2026 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    Namelist input contributed by Paul Thomas
    F2003 I/O support contributed by Jerry DeLisle
@@ -211,6 +211,14 @@ next_char_default (st_parameter_dt *dtp)
   if (c != EOF && is_stream_io (dtp))
     dtp->u.p.current_unit->strm_pos++;
 
+  if (c == '\n')
+    {
+      dtp->u.p.current_unit->line_number++;
+      dtp->u.p.current_unit->column_number = 0;
+    }
+  else if (c != EOF)
+    dtp->u.p.current_unit->column_number++;
+
   dtp->u.p.at_eol = (c == '\n' || c == EOF);
   return c;
 }
@@ -241,6 +249,8 @@ next_char_internal (st_parameter_dt *dtp)
 	  int finished;
 
 	  c = '\n';
+	  dtp->u.p.current_unit->line_number++;
+	  dtp->u.p.current_unit->column_number = 0;
 	  record = next_array_record (dtp, dtp->u.p.current_unit->ls,
 				      &finished);
 
@@ -302,6 +312,14 @@ next_char_internal (st_parameter_dt *dtp)
     }
   dtp->u.p.current_unit->bytes_left--;
 
+  if (c == '\n')
+    {
+      dtp->u.p.current_unit->line_number++;
+      dtp->u.p.current_unit->column_number = 0;
+    }
+  else if (c != EOF)
+    dtp->u.p.current_unit->column_number++;
+
 done:
   dtp->u.p.at_eol = (c == '\n' || c == EOF);
   return c;
@@ -355,6 +373,14 @@ next_char_utf8 (st_parameter_dt *dtp)
     goto invalid;
 
 utf_done:
+  if (c == '\n')
+    {
+      dtp->u.p.current_unit->line_number++;
+      dtp->u.p.current_unit->column_number = 0;
+    }
+  else if (c != (gfc_char4_t) EOF)
+    dtp->u.p.current_unit->column_number++;
+
   dtp->u.p.at_eol = (c == '\n' || c == (gfc_char4_t) EOF);
   return (int) c;
 
@@ -917,6 +943,7 @@ read_logical (st_parameter_dt *dtp, int length)
   if (parse_repeat (dtp))
     return;
 
+next:
   c = safe_tolower (next_char (dtp));
   l_push_char (dtp, c);
   switch (c)
@@ -961,6 +988,9 @@ read_logical (st_parameter_dt *dtp, int length)
     case '!':
       if (!dtp->u.p.namelist_mode)
         goto bad_logical;
+      eat_line (dtp);
+      eat_spaces (dtp);
+      goto next;
 
     CASE_SEPARATORS:
     case EOF:
@@ -1076,6 +1106,7 @@ read_integer (st_parameter_dt *dtp, int length, bt type)
   int c, negative;
   negative = 0;
 
+next:
   c = next_char (dtp);
   switch (c)
     {
@@ -1091,6 +1122,9 @@ read_integer (st_parameter_dt *dtp, int length, bt type)
     case '!':
       if (!dtp->u.p.namelist_mode)
         goto bad_integer;
+      eat_line (dtp);
+      eat_spaces (dtp);
+      goto next;
 
     CASE_SEPARATORS:		/* Single null.  */
       unget_char (dtp, c);
@@ -1260,8 +1294,14 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
 
   quote = ' ';			/* Space means no quote character.  */
 
+next:
   if ((c = next_char (dtp)) == EOF)
     goto eof;
+  if (c == ';')
+    {
+      push_char (dtp, c);
+      goto get_string;
+    }
   switch (c)
     {
     CASE_DIGITS:
@@ -1279,6 +1319,15 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
       quote = c;
       goto get_string;
 
+    case '!':
+      if (dtp->u.p.namelist_mode)
+	{
+	  eat_line (dtp);
+	  eat_spaces (dtp);
+	  goto next;
+	}
+      /* Fall through...  */
+
     default:
       if (dtp->u.p.namelist_mode)
 	{
@@ -1294,6 +1343,13 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
   for (;;)
     {
       c = next_char (dtp);
+
+      if (c == ';')
+	{
+	  push_char (dtp, c);
+	  goto get_string;
+	}
+
       switch (c)
 	{
 	CASE_DIGITS:
@@ -1302,6 +1358,16 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
 
 	CASE_SEPARATORS:
 	case EOF:
+	  /* At this point we have been reading a string of digits. Now we see
+	     the end of these digits without seeing the closing quote and not
+	     seeing the '*' for a repeat count.  When in namelist mode, if it
+	     was a string of digits it should have had the closing quote.  */
+	  if (dtp->u.p.namelist_mode)
+	    {
+	      snprintf (message, IOMSG_LEN, "Missing quote while reading item %d",
+			dtp->u.p.item_count);
+	      generate_error (&dtp->common, LIBERROR_READ_VALUE, message);
+	    }
 	  unget_char (dtp, c);
 	  goto done;		/* String was only digits!  */
 
@@ -1323,6 +1389,13 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
 
   if ((c = next_char (dtp)) == EOF)
     goto eof;
+
+  if (c == ';')
+    {
+      push_char (dtp, c);
+      goto get_string;
+    }
+
   switch (c)
     {
     CASE_SEPARATORS:
@@ -1342,10 +1415,27 @@ read_character (st_parameter_dt *dtp, int length __attribute__ ((unused)))
 
  get_string:
 
+  /* We could be at the beginning of a string or partially through a string
+     that began with all digits. Either way, the quote character for a namelist
+     read should have been set.  */
+  if (dtp->u.p.namelist_mode && (quote == ' '))
+    {
+      snprintf (message, IOMSG_LEN, "Missing quote while reading item %d",
+		dtp->u.p.item_count);
+      generate_error (&dtp->common, LIBERROR_READ_VALUE, message);
+    }
+
   for (;;)
     {
       if ((c = next_char (dtp)) == EOF)
 	goto done_eof;
+
+      if (c == ';')
+	{
+	  push_char (dtp, c);
+	  continue;
+	}
+
       switch (c)
 	{
 	case '"':
@@ -1657,6 +1747,7 @@ read_complex (st_parameter_dt *dtp, void *dest, int kind, size_t size)
   if (parse_repeat (dtp))
     return;
 
+next:
   c = next_char (dtp);
   switch (c)
     {
@@ -1666,6 +1757,9 @@ read_complex (st_parameter_dt *dtp, void *dest, int kind, size_t size)
     case '!':
       if (!dtp->u.p.namelist_mode)
 	goto bad_complex;
+      eat_line (dtp);
+      eat_spaces (dtp);
+      goto next;
 
     CASE_SEPARATORS:
     case EOF:
@@ -1767,6 +1861,7 @@ read_real (st_parameter_dt *dtp, void *dest, int length)
 
   seen_dp = 0;
 
+next:
   c = next_char (dtp);
   if (dtp->u.p.current_unit->decimal_status == DECIMAL_COMMA)
     {
@@ -1798,6 +1893,9 @@ read_real (st_parameter_dt *dtp, void *dest, int length)
     case '!':
       if (!dtp->u.p.namelist_mode)
 	goto bad_real;
+      eat_line (dtp);
+      eat_spaces (dtp);
+      goto next;
 
     CASE_SEPARATORS:
       unget_char (dtp, c);		/* Single null.  */
@@ -2275,6 +2373,8 @@ list_formatted_read_scalar (st_parameter_dt *dtp, bt type, void *p,
 	}
       if (c == ',' && dtp->u.p.current_unit->decimal_status == DECIMAL_COMMA)
 	c = '.';
+      if (c == ';' && dtp->u.p.current_unit->decimal_status == DECIMAL_POINT)
+	unget_char (dtp, c);
       else if (is_separator (c))
 	{
 	  /* Found a null value.  */
@@ -2526,6 +2626,7 @@ finish_list_read (st_parameter_dt *dtp)
       return;
     }
 
+  /* Only perform the following cleanup on external files or the stdin file.  */
   if (!is_internal_unit (dtp))
     {
       int c;
@@ -2533,23 +2634,31 @@ finish_list_read (st_parameter_dt *dtp)
       /* Set the next_char and push_char worker functions.  */
       set_workers (dtp);
 
-      if (likely (dtp->u.p.child_saved_iostat == LIBERROR_OK)
-	      && ((dtp->common.flags & IOPARM_DT_HAS_UDTIO) == 0))
+      /* Make sure there were no errors from a DTIO child read.  */
+      if (likely (dtp->u.p.child_saved_iostat == LIBERROR_OK))
 	{
+	  /* Peek ahead to see where we are in the parent read.  */
 	  c = next_char (dtp);
-	  if (c == EOF)
+	  unget_char (dtp, c);
+
+	  /* If the last read used DTIO, handle end conditions differently.  */
+	  if ((dtp->common.flags & IOPARM_DT_HAS_UDTIO) != 0)
 	    {
-	      free_line (dtp);
-	      hit_eof (dtp);
-	      return;
+	      if ((c == EOF) || (c == ' '))
+		return;
+	    }
+	  else
+	    {
+	      if (c == EOF)
+		{
+		  hit_eof (dtp);
+		  return;
+		}
 	    }
 	  if (c != '\n')
 	    eat_line (dtp);
 	}
     }
-
-  free_line (dtp);
-
 }
 
 /*			NAMELIST INPUT
@@ -2569,7 +2678,8 @@ calls:
       static void nml_touch_nodes (namelist_info *nl)
       static int nml_read_obj (namelist_info *nl, index_type offset,
 			       namelist_info **prev_nl, char *, size_t,
-			       index_type clow, index_type chigh)
+			       index_type clow, index_type chigh,
+			       bool is_component)
 calls:
       -itself-  */
 
@@ -3040,7 +3150,8 @@ query_return:
 static bool
 nml_read_obj (st_parameter_dt *dtp, namelist_info *nl, index_type offset,
 	      namelist_info **pprev_nl, char *nml_err_msg,
-	      size_t nml_err_msg_size, index_type clow, index_type chigh)
+	      size_t nml_err_msg_size, index_type clow, index_type chigh,
+	      bool is_component)
 {
   namelist_info *cmp;
   char *obj_name;
@@ -3059,7 +3170,8 @@ nml_read_obj (st_parameter_dt *dtp, namelist_info *nl, index_type offset,
     return true;
 
   dtp->u.p.item_count++;  /* Used in error messages.  */
-  dtp->u.p.repeat_count = 0;
+  if (!is_component)
+    dtp->u.p.repeat_count = 0;
   eat_spaces (dtp);
 
   len = nl->len;
@@ -3113,9 +3225,60 @@ nml_read_obj (st_parameter_dt *dtp, namelist_info *nl, index_type offset,
 	      * GFC_DESCRIPTOR_STRIDE(nl,dim) * nl->size);
 	}
 
+      nml_carry = 0;
+
+      /* A default (non-DTIO) derived type does not itself hold a value to
+	 read; only its components do.  Recurse into the components on
+	 every iteration of the array loop, independently of the repeat
+	 count, so that a repeat count parsed while reading one component
+	 (e.g. "ta(1:8)%c = 8*'bogus'") gets applied to that component for
+	 each addressed array element.  */
+
+      if ((nl->type == BT_DERIVED || nl->type == BT_CLASS)
+	  && nl->dtio_sub == NULL)
+	{
+	  obj_name_len = strlen (nl->var_name) + 1;
+	  obj_name = xmalloc (obj_name_len+1);
+	  memcpy (obj_name, nl->var_name, obj_name_len-1);
+	  memcpy (obj_name + obj_name_len - 1, "%", 2);
+
+	  /* If reading a derived type, disable the expanded read warning
+	     since a single object can have multiple reads.  */
+	  dtp->u.p.expanded_read = 0;
+
+	  /* Now loop over the components.  */
+
+	  for (cmp = nl->next;
+	       cmp &&
+		 !strncmp (cmp->var_name, obj_name, obj_name_len);
+	       cmp = cmp->next)
+	    {
+	      /* Jump over nested derived type by testing if the potential
+		 component name contains '%'.  */
+	      if (strchr (cmp->var_name + obj_name_len, '%'))
+		  continue;
+
+	      if (!nml_read_obj (dtp, cmp, (index_type)(pdata - nl->mem_pos),
+				pprev_nl, nml_err_msg, nml_err_msg_size,
+				clow, chigh, true))
+		{
+		  free (obj_name);
+		  return false;
+		}
+
+	      if (dtp->u.p.input_complete)
+		{
+		  free (obj_name);
+		  return true;
+		}
+	    }
+
+	  free (obj_name);
+	  goto incr_idx;
+	}
+
       /* If we are finished with the repeat count, try to read next value.  */
 
-      nml_carry = 0;
       if (--dtp->u.p.repeat_count <= 0)
 	{
 	  if (dtp->u.p.input_complete)
@@ -3158,8 +3321,8 @@ nml_read_obj (st_parameter_dt *dtp, namelist_info *nl, index_type offset,
 
 	  case BT_DERIVED:
 	  case BT_CLASS:
-	    /* If this object has a User Defined procedure, call it.  */
-	    if (nl->dtio_sub != NULL)
+	    /* This object has a User Defined I/O procedure; objects
+	       without one were already handled above.  */
 	      {
 		GFC_INTEGER_4 unit = dtp->u.p.current_unit->unit_number;
 		char iotype[] = "NAMELIST";
@@ -3218,46 +3381,6 @@ nml_read_obj (st_parameter_dt *dtp, namelist_info *nl, index_type offset,
 
 		goto incr_idx;
 	      }
-
-	    /* Must be default derived type namelist read.  */
-	    obj_name_len = strlen (nl->var_name) + 1;
-	    obj_name = xmalloc (obj_name_len+1);
-	    memcpy (obj_name, nl->var_name, obj_name_len-1);
-	    memcpy (obj_name + obj_name_len - 1, "%", 2);
-
-	    /* If reading a derived type, disable the expanded read warning
-	       since a single object can have multiple reads.  */
-	    dtp->u.p.expanded_read = 0;
-
-	    /* Now loop over the components.  */
-
-	    for (cmp = nl->next;
-		 cmp &&
-		   !strncmp (cmp->var_name, obj_name, obj_name_len);
-		 cmp = cmp->next)
-	      {
-		/* Jump over nested derived type by testing if the potential
-		   component name contains '%'.  */
-		if (strchr (cmp->var_name + obj_name_len, '%'))
-		    continue;
-
-		if (!nml_read_obj (dtp, cmp, (index_type)(pdata - nl->mem_pos),
-				  pprev_nl, nml_err_msg, nml_err_msg_size,
-				  clow, chigh))
-		  {
-		    free (obj_name);
-		    return false;
-		  }
-
-		if (dtp->u.p.input_complete)
-		  {
-		    free (obj_name);
-		    return true;
-		  }
-	      }
-
-	    free (obj_name);
-	    goto incr_idx;
 
           default:
 	    snprintf (nml_err_msg, nml_err_msg_size,
@@ -3373,7 +3496,7 @@ incr_idx:
         }
     } while (!nml_carry);
 
-  if (dtp->u.p.repeat_count > 1)
+  if (!is_component && dtp->u.p.repeat_count > 1)
     {
       snprintf (nml_err_msg, nml_err_msg_size,
 		"Repeat count too large for namelist object %s", nl->var_name);
@@ -3697,7 +3820,7 @@ get_name:
 
   dtp->u.p.nml_read_error = 0;
   if (!nml_read_obj (dtp, nl, 0, pprev_nl, nml_err_msg, nml_err_msg_size,
-		    clow, chigh))
+		    clow, chigh, false))
     goto nml_err_ret;
 
   return true;
@@ -3823,6 +3946,77 @@ nml_err_ret:
   /* All namelist error calls return from here */
   free_saved (dtp);
   free_line (dtp);
-  generate_error (&dtp->common, LIBERROR_READ_VALUE, nml_err_msg);
+
+  if (dtp->u.p.current_unit)
+    {
+      int line = dtp->u.p.current_unit->line_number;
+      int col = dtp->u.p.current_unit->column_number;
+      char *filename = dtp->u.p.current_unit->filename;
+      char *detailed_msg;
+
+      char *line_text = NULL;
+      int line_len = 0;
+
+      if (is_internal_unit (dtp) && dtp->internal_unit)
+	{
+	  GFC_IO_INT recl = dtp->u.p.current_unit->recl;
+	  line_text = dtp->internal_unit + (line - 1) * recl;
+	  line_len = recl;
+	}
+      else if (dtp->u.p.current_unit->fbuf)
+	{
+	  struct fbuf *fb = dtp->u.p.current_unit->fbuf;
+	  ptrdiff_t pos = fb->pos;
+	  if (pos > 0)
+	    {
+	      ptrdiff_t start = pos - 1;
+	      while (start > 0 && fb->buf[start-1] != '\n')
+		start--;
+	      ptrdiff_t end = pos - 1;
+
+	      /* Scan the buffer to get a fixed length of the text, but
+		 don't exceed thr length of the line.  */
+	      while (end < (ptrdiff_t)fb->act
+		     && (fb->buf[end] != '\n')
+		     && (end - start < 128))
+		end++;
+	      line_text = fb->buf + start;
+	      line_len = end - start;
+	    }
+	}
+
+      size_t msg_len = strlen (nml_err_msg) + 200;
+      if (line_text) msg_len += line_len + col + 10;
+      if (filename) msg_len += strlen (filename);
+
+      detailed_msg = xmalloc (msg_len);
+      int offset;
+      if (filename)
+	offset = sprintf (detailed_msg, "%s at line %lld, column %lld in file %s",
+		   nml_err_msg, (long long) line, (long long) col, filename);
+      else
+	offset = sprintf (detailed_msg, "%s at line %lld, column %lld",
+		   nml_err_msg, (long long) line, (long long) col);
+
+      if (line_text && line_len > 0)
+	{
+	  detailed_msg[offset++] = '\n';
+	  memcpy (detailed_msg + offset, line_text, line_len);
+	  offset += line_len;
+	  detailed_msg[offset++] = '\n';
+
+	  for (int i = 0; i < col - 1; i++)
+	    detailed_msg[offset++] = ' ';
+	  detailed_msg[offset++] = '^';
+	  detailed_msg[offset++] = '\n';
+	  detailed_msg[offset] = '\0';
+	}
+
+      generate_error (&dtp->common, LIBERROR_READ_VALUE, detailed_msg);
+      free (detailed_msg);
+    }
+  else
+    generate_error (&dtp->common, LIBERROR_READ_VALUE, nml_err_msg);
+
   return;
 }

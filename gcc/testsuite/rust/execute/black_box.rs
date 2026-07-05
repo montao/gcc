@@ -1,5 +1,8 @@
 /* { dg-output "Value is: 42\r*\n" } */
-#![feature(rustc_attrs)]
+#![feature(no_core)]
+#![no_core]
+
+#![feature(rustc_attrs, lang_items)]
 
 extern "C" {
     fn printf(s: *const i8, ...);
@@ -21,10 +24,11 @@ pub fn black_box<T>(mut dummy: T) -> T {
     dummy
 }
 
-fn main() {
+fn main() -> i32 {
     let dummy: i32 = 42;
     let result = black_box(dummy);
     unsafe {
         printf("Value is: %i\n\0" as *const str as *const i8, result);
     }
+    0
 }

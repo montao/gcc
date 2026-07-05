@@ -4,7 +4,6 @@
 #include <utility>
 #include <testsuite_hooks.h>
 
-using std::nontype;
 using std::function_ref;
 
 using std::is_same_v;
@@ -43,7 +42,7 @@ test01()
   VERIFY( f0() == 0 );
   VERIFY( std::move(f0)() == 0 );
 
-  function_ref<int()> f1{nontype<F{}>};
+  function_ref<int()> f1{std::cw<F{}>};
   VERIFY( f1() == 1 );
   VERIFY( std::move(f1)() == 1 );
 
@@ -53,7 +52,7 @@ test01()
   VERIFY( std::move(f2)() == 1 );
   VERIFY( std::move(std::as_const(f2))() == 1 );
 
-  function_ref<int() const> f3{nontype<F{}>};
+  function_ref<int() const> f3{std::cw<F{}>};
   VERIFY( f3() == 1 );
   VERIFY( std::as_const(f3)() == 1 );
   VERIFY( std::move(f3)() == 1 );
@@ -71,11 +70,11 @@ test02()
   };
   F::Arg arg;
 
-  function_ref<int()> f0{std::nontype<F{}>, arg};
+  function_ref<int()> f0{std::cw<F{}>, arg};
   VERIFY( f0() == 0 );
   VERIFY( std::move(f0)() == 0 );
 
-  function_ref<int() const> f1{std::nontype<F{}>, arg};
+  function_ref<int() const> f1{std::cw<F{}>, arg};
   VERIFY( f1() == 1 );
   VERIFY( std::as_const(f1)() == 1 );
 }
@@ -91,11 +90,11 @@ test03()
   };
   F::Arg arg;
 
-  function_ref<int()> f0{std::nontype<F{}>, &arg};
+  function_ref<int()> f0{std::cw<F{}>, &arg};
   VERIFY( f0() == 0 );
   VERIFY( std::move(f0)() == 0 );
 
-  function_ref<int() const> f1{std::nontype<F{}>, &arg};
+  function_ref<int() const> f1{std::cw<F{}>, &arg};
   VERIFY( f1() == 1 );
   VERIFY( std::as_const(f1)() == 1 );
 }
@@ -108,7 +107,7 @@ test04()
   VERIFY( f0() == 0 );
   VERIFY( std::move(f0)() == 0 );
 
-  function_ref<int()> f1{nontype<fp>};
+  function_ref<int()> f1{std::cw<fp>};
   VERIFY( f1() == 0 );
   VERIFY( std::move(f1)() == 0 );
 
@@ -116,7 +115,7 @@ test04()
   VERIFY( f2() == 0 );
   VERIFY( std::move(f2)() == 0 );
 
-  const function_ref<int() const> f3{nontype<fp>};
+  const function_ref<int() const> f3{std::cw<fp>};
   VERIFY( f2() == 0 );
   VERIFY( std::move(f2)() == 0 );
 }
@@ -130,37 +129,112 @@ int callback_ref(ftype& f, int x) { return f(x); }
 void
 test05()
 {
-
-  function_ref<int(int)> r1(nontype<&callback_ptr>, &twice);
+  function_ref<int(int)> r1(std::cw<&callback_ptr>, &twice);
   VERIFY( r1(2) == 4 );
-  function_ref<int(int)> r2(nontype<&callback_ptr>, cube);
+  function_ref<int(int)> r2(std::cw<&callback_ptr>, cube);
   VERIFY( r2(2) == 8 );
 
-  function_ref<int(int)> r3(nontype<&callback_ref>, twice);
+  function_ref<int(int)> r3(std::cw<&callback_ref>, twice);
   VERIFY( r3(3) == 6 );
-  function_ref<int(int)> r4(nontype<&callback_ref>, cube);
+  function_ref<int(int)> r4(std::cw<&callback_ref>, cube);
   VERIFY( r4(3) == 27 );
+}
 
-  // Checks if distinction between reference and pointer
-  // is preserved.
-  struct F
-  {
-    static
-    int operator()(ftype* f, int x)
-    { return f(x) + 1000; }
+void
+test06()
+{
+  struct S { 
+   int v;
+   int& m() { return v; }
+   const int& c() const { return v; }
 
-    static
-    int operator()(ftype& f, int x)
-    { return f(x) + 2000; }
+   int& operator()(int) { return v; }
+   int const& operator()(int, int) const { return v; }
   };
-  function_ref<int(int)> r5(nontype<F{}>, &twice);
-  VERIFY( r5(2) == 1004 );
-  function_ref<int(int)> r6(nontype<F{}>, twice);
-  VERIFY( r6(2) == 2008 );
-  function_ref<int(int)> r7(nontype<F{}>, &cube);
-  VERIFY( r7(3) == 1006 );
-  function_ref<int(int)> r8(nontype<F{}>, cube);
-  VERIFY( r8(3) == 2027 );
+  S s{10};
+  std::reference_wrapper<S> sr(s);
+  std::reference_wrapper<const S> csr(s);
+
+  std::function_ref<int&(int)> e1(sr);
+  VERIFY( &e1(0) == &s.v );
+  std::function_ref<int&(int) const> e2(sr);
+  VERIFY( &e2(0) == &s.v );
+  std::function_ref<int&(int) const> e3(std::as_const(sr));
+  VERIFY( &e3(0) == &s.v );
+
+  std::function_ref<const int&(int, int)> e4(sr);
+  VERIFY( &e4(0, 0) == &s.v );
+  std::function_ref<const int&(int, int) const> e5(sr);
+  VERIFY( &e5(0, 0) == &s.v );
+  std::function_ref<const int&(int, int)> e6(csr);
+  VERIFY( &e6(0, 0) == &s.v );
+  std::function_ref<const int&(int, int) const> e7(csr);
+  VERIFY( &e7(0, 0) == &s.v );
+  std::function_ref<const int&(int, int) const> e8(std::as_const(csr));
+  VERIFY( &e8(0, 0) == &s.v );
+
+  std::function_ref<int&()> f1(std::cw<&S::v>, sr);
+  VERIFY( &f1() == &s.v );
+  std::function_ref<const int&()> f2(std::cw<&S::v>, sr);
+  VERIFY( &f2() == &s.v );
+  std::function_ref<int&()> f3(std::cw<&S::m>, sr);
+  VERIFY( &f3() == &s.v );
+  std::function_ref<const int&()> f4(std::cw<&S::c>, sr);
+  VERIFY( &f4() == &s.v );
+
+  std::function_ref<const int&()> f5(std::cw<&S::v>, csr);
+  VERIFY( &f5() == &s.v );
+  std::function_ref<const int&()> f6(std::cw<&S::c>, sr);
+  VERIFY( &f6() == &s.v );
+  static_assert( !std::is_constructible_v<
+    std::function_ref<int&()>,
+    std::constant_wrapper<&S::c>, std::reference_wrapper<S>&>
+   );
+
+  std::function_ref<int&()> f7(std::cw<&S::v>, std::as_const(sr));
+  VERIFY( &f7() == &s.v );
+  std::function_ref<const int&()> f8(std::cw<&S::m>, std::as_const(sr));
+  VERIFY( &f8() == &s.v );
+
+  // No rvalue reference_wrapper support
+  static_assert( !std::is_constructible_v<
+    std::function_ref<int&()>,
+    std::constant_wrapper<&S::v>, std::reference_wrapper<S>>
+  );
+  static_assert( !std::is_constructible_v<
+    std::function_ref<int&()>,
+    std::constant_wrapper<&S::v>, std::reference_wrapper<const S>>
+  );
+
+  // reference to reference_wrapper are bound, so mutation are visible
+  S s2{20};
+  sr = s2;
+  csr = s2;
+  VERIFY( &e1(0) == &s2.v );
+  VERIFY( &e2(0) == &s2.v );
+  VERIFY( &e3(0) == &s2.v );
+  VERIFY( &e4(0, 0) == &s2.v );
+  VERIFY( &e5(0, 0) == &s2.v );
+  VERIFY( &e6(0, 0) == &s2.v );
+  VERIFY( &e7(0, 0) == &s2.v );
+  VERIFY( &e8(0, 0) == &s2.v );
+  VERIFY( &f1() == &s2.v );
+  VERIFY( &f2() == &s2.v );
+  VERIFY( &f3() == &s2.v );
+  VERIFY( &f4() == &s2.v );
+  VERIFY( &f5() == &s2.v );
+  VERIFY( &f6() == &s2.v );
+  VERIFY( &f7() == &s2.v );
+  VERIFY( &f8() == &s2.v );
+
+  constexpr auto id = []<typename T>(const std::reference_wrapper<T>& x)
+  { return &x; };
+
+  // identity of reference_wrapper is preserved
+  std::function_ref<const std::reference_wrapper<S>*()> g1(std::cw<id>, sr);
+  VERIFY( g1() == &sr );
+  std::function_ref<const std::reference_wrapper<const S>*()> g2(std::cw<id>, csr);
+  VERIFY( g2() == &csr );
 }
 
 struct Incomplete;
@@ -182,5 +256,7 @@ int main()
   test02();
   test03();
   test04();
+  test05();
+  test06();
   test_params();
 }

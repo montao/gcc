@@ -1,5 +1,5 @@
 ;; AltiVec patterns.
-;; Copyright (C) 2002-2025 Free Software Foundation, Inc.
+;; Copyright (C) 2002-2026 Free Software Foundation, Inc.
 ;; Contributed by Aldy Hernandez (aldy@quesejoda.com)
 
 ;; This file is part of GCC.
@@ -237,6 +237,8 @@
 
 ;; Vector negate
 (define_mode_iterator VNEG [V4SI V2DI])
+
+(define_mode_iterator V16QI_V2DI [V16QI V2DI])
 
 ;; Vector move instructions.
 (define_insn "*altivec_mov<mode>"
@@ -505,12 +507,23 @@
 
 ;; add
 (define_insn "add<mode>3"
-  [(set (match_operand:VI2 0 "register_operand" "=v")
-        (plus:VI2 (match_operand:VI2 1 "register_operand" "v")
-		  (match_operand:VI2 2 "register_operand" "v")))]
+  [(set (match_operand:V16QI_V2DI 0 "register_operand" "=v")
+        (plus:V16QI_V2DI (match_operand:V16QI_V2DI 1 "register_operand" "v")
+                         (match_operand:V16QI_V2DI 2 "register_operand" "v")))]
   "<VI_unit>"
   "vaddu<VI_char>m %0,%1,%2"
   [(set_attr "type" "vecsimple")])
+
+(define_insn "add<mode>3"
+  [(set (match_operand:VIArith 0 "register_operand" "=wa,v")
+        (plus:VIArith (match_operand:VIArith 1 "register_operand" "wa,v")
+                      (match_operand:VIArith 2 "register_operand" "wa,v")))]
+  "<VI_unit>"
+  "@
+   xvaddu<VI_char>m %x0,%x1,%x2
+   vaddu<VI_char>m %0,%1,%2"
+  [(set_attr "type" "vecsimple")
+   (set_attr "isa" "future,*")])
 
 (define_insn "*altivec_addv4sf3"
   [(set (match_operand:V4SF 0 "register_operand" "=v")
@@ -549,12 +562,23 @@
 
 ;; sub
 (define_insn "sub<mode>3"
-  [(set (match_operand:VI2 0 "register_operand" "=v")
-        (minus:VI2 (match_operand:VI2 1 "register_operand" "v")
-		   (match_operand:VI2 2 "register_operand" "v")))]
+  [(set (match_operand:V16QI_V2DI 0 "register_operand" "=v")
+        (minus:V16QI_V2DI (match_operand:V16QI_V2DI 1 "register_operand" "v")
+                          (match_operand:V16QI_V2DI 2 "register_operand" "v")))]
   "<VI_unit>"
   "vsubu<VI_char>m %0,%1,%2"
   [(set_attr "type" "vecsimple")])
+
+(define_insn "sub<mode>3"
+  [(set (match_operand:VIArith 0 "register_operand" "=wa,v")
+        (minus:VIArith (match_operand:VIArith 1 "register_operand" "wa,v")
+                       (match_operand:VIArith 2 "register_operand" "wa,v")))]
+  "<VI_unit>"
+  "@
+   xvsubu<VI_char>m %x0,%x1,%x2
+   vsubu<VI_char>m %0,%1,%2"
+  [(set_attr "type" "vecsimple")
+   (set_attr "isa" "future,*")])
 
 (define_insn "*altivec_subv4sf3"
   [(set (match_operand:V4SF 0 "register_operand" "=v")
@@ -3625,10 +3649,7 @@
 
   emit_insn (gen_vsx_xvcvsphp (rtx_tmp_hi, operands[1]));
   emit_insn (gen_vsx_xvcvsphp (rtx_tmp_lo, operands[2]));
-  if (!BYTES_BIG_ENDIAN)
-    emit_insn (gen_altivec_vpkuwum (operands[0], rtx_tmp_hi, rtx_tmp_lo));
-  else
-    emit_insn (gen_altivec_vpkuwum (operands[0], rtx_tmp_lo, rtx_tmp_hi));
+  emit_insn (gen_altivec_vpkuwum (operands[0], rtx_tmp_hi, rtx_tmp_lo));
   DONE;
 })
 
@@ -3772,7 +3793,7 @@
   DONE;
 })
 
-(define_expand "widen_usum<mode>3"
+(define_expand "widen_usumv4si<mode>3"
   [(set (match_operand:V4SI 0 "register_operand" "=v")
         (plus:V4SI (match_operand:V4SI 2 "register_operand" "v")
                    (unspec:V4SI [(match_operand:VIshort 1 "register_operand" "v")]
@@ -3786,7 +3807,7 @@
   DONE;
 })
 
-(define_expand "widen_ssumv16qi3"
+(define_expand "widen_ssumv4siv16qi3"
   [(set (match_operand:V4SI 0 "register_operand" "=v")
         (plus:V4SI (match_operand:V4SI 2 "register_operand" "v")
                    (unspec:V4SI [(match_operand:V16QI 1 "register_operand" "v")]
@@ -3800,7 +3821,7 @@
   DONE;
 })
 
-(define_expand "widen_ssumv8hi3"
+(define_expand "widen_ssumv4siv8hi3"
   [(set (match_operand:V4SI 0 "register_operand" "=v")
         (plus:V4SI (match_operand:V4SI 2 "register_operand" "v")
                    (unspec:V4SI [(match_operand:V8HI 1 "register_operand" "v")]

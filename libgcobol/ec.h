@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -99,6 +99,7 @@ enum ec_type_t {
   ec_io_linage_e,
 
   ec_imp_e = 0x00008000,
+  ec_imp_iconv_open_e, 
   ec_imp_suffix_e,
 
   ec_locale_e = 0x00010000,

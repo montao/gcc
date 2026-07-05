@@ -38,7 +38,6 @@ cscope.out
 
 .local.vimrc
 .lvimrc
-.vscode
 
 .clang-format
 .clang-tidy
@@ -71,6 +70,7 @@ stamp-*
 /gmp*
 /isl*
 /gettext*
-
-# ADDITIONS from GCCRS front-end
-libgrust/*/target/
+temp_auto_push.bat
+temp_interactive_push.bat
+branch_structure.json
+.gitignore

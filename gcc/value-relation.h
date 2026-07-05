@@ -1,5 +1,5 @@
 /* Header file for the value range relational processing.
-   Copyright (C) 2020-2025 Free Software Foundation, Inc.
+   Copyright (C) 2020-2026 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -97,12 +97,13 @@ void adjust_equivalence_range (vrange &range);
 class relation_oracle
 {
 public:
+  relation_oracle () { m_lhs_equiv_set_p = NULL; }
   virtual ~relation_oracle () { }
 
   // register a relation between 2 ssa names.
-  void record (gimple *, relation_kind, tree, tree);
-  void record (edge, relation_kind, tree, tree);
-  virtual void record (basic_block, relation_kind, tree, tree) { }
+  bool record (gimple *, relation_kind, tree, tree);
+  bool record (edge, relation_kind, tree, tree);
+  virtual bool record (basic_block, relation_kind, tree, tree) { return false; }
 
   // Query if there is any relation between SSA1 and SSA2.
   relation_kind query (gimple *s, tree ssa1, tree ssa2);
@@ -128,6 +129,8 @@ protected:
   virtual relation_kind query (basic_block, const_bitmap, const_bitmap)
     { return VREL_VARYING; }
   friend class path_oracle;
+  // Used to Avoid registering multiple eqiuvalences from the same statement.
+  bitmap m_lhs_equiv_set_p;
 };
 
 // Instance with no storage used for default queries with no active oracle.
@@ -166,7 +169,7 @@ public:
   ~equiv_oracle ();
 
   const_bitmap equiv_set (tree ssa, basic_block bb) final override;
-  void record (basic_block bb, relation_kind k, tree ssa1, tree ssa2) override;
+  bool record (basic_block bb, relation_kind k, tree ssa1, tree ssa2) override;
 
   relation_kind partial_equiv (tree ssa1, tree ssa2, tree *base = NULL) const;
   relation_kind query (basic_block, tree, tree) override;
@@ -175,7 +178,7 @@ public:
   void dump (FILE *f) const override;
 
 protected:
-  void add_partial_equiv (relation_kind, tree, tree);
+  bool add_partial_equiv (relation_kind, tree, tree);
   const pe_slice *partial_equiv_set (tree name) final override;
   inline bool has_equiv_p (unsigned v) { return bitmap_bit_p (m_equiv_set, v); }
   bitmap_obstack m_bitmaps;
@@ -224,7 +227,7 @@ public:
   dom_oracle (bool do_trans_p = true);
   ~dom_oracle ();
 
-  void record (basic_block bb, relation_kind k, tree op1, tree op2)
+  bool record (basic_block bb, relation_kind k, tree op1, tree op2)
     final override;
 
   relation_kind query (basic_block bb, tree ssa1, tree ssa2) final override;
@@ -273,7 +276,7 @@ public:
   path_oracle (relation_oracle *oracle = NULL);
   ~path_oracle ();
   const_bitmap equiv_set (tree, basic_block) final override;
-  void record (basic_block, relation_kind, tree, tree) final override;
+  bool record (basic_block, relation_kind, tree, tree) final override;
   void killing_def (tree);
   relation_kind query (basic_block, tree, tree) final override;
   relation_kind query (basic_block, const_bitmap, const_bitmap) final override;
@@ -282,7 +285,7 @@ public:
   void dump (FILE *, basic_block) const final override;
   void dump (FILE *) const final override;
 private:
-  void register_equiv (basic_block bb, tree ssa1, tree ssa2);
+  bool register_equiv (basic_block bb, tree ssa1, tree ssa2);
   equiv_chain m_equiv;
   relation_chain_head m_relations;
   relation_oracle *m_root;

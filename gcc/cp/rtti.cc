@@ -1,5 +1,5 @@
 /* RunTime Type Identification
-   Copyright (C) 1995-2025 Free Software Foundation, Inc.
+   Copyright (C) 1995-2026 Free Software Foundation, Inc.
    Mostly written by Jason Merrill (jason@cygnus.com).
 
 This file is part of GCC.
@@ -166,7 +166,7 @@ build_headof (tree exp)
   gcc_assert (TYPE_PTR_P (type));
   type = TREE_TYPE (type);
 
-  if (!TYPE_POLYMORPHIC_P (type))
+  if (!CLASS_TYPE_P (type) || !TYPE_POLYMORPHIC_P (type))
     return exp;
 
   /* We use this a couple of times below, protect it.  */
@@ -280,7 +280,9 @@ get_tinfo_ptr_dynamic (tree exp, tsubst_flags_t complain)
     return error_mark_node;
 
   /* If exp is a reference to polymorphic type, get the real type_info.  */
-  if (TYPE_POLYMORPHIC_P (type) && ! resolves_to_fixed_type_p (exp, 0))
+  if (CLASS_TYPE_P (type)
+      && TYPE_POLYMORPHIC_P (type)
+      && ! resolves_to_fixed_type_p (exp, 0))
     {
       /* build reference to type_info from vtable.  */
       tree index;
@@ -353,7 +355,8 @@ build_typeid (tree exp, tsubst_flags_t complain)
   if (processing_template_decl)
     return build_min (TYPEID_EXPR, const_type_info_type_node, exp);
 
-  if (TYPE_POLYMORPHIC_P (TREE_TYPE (exp))
+  if (CLASS_TYPE_P (TREE_TYPE (exp))
+      && TYPE_POLYMORPHIC_P (TREE_TYPE (exp))
       && ! resolves_to_fixed_type_p (exp, &nonnull)
       && ! nonnull)
     {
@@ -487,7 +490,7 @@ get_tinfo_decl_direct (tree type, tree name, int pseudo_ix)
 
       d = pushdecl_top_level_and_finish (d, NULL_TREE);
       if (CLASS_TYPE_P (type))
-	CLASSTYPE_TYPEINFO_VAR (TYPE_MAIN_VARIANT (type)) = d;
+	SET_CLASSTYPE_TYPEINFO_VAR (TYPE_MAIN_VARIANT (type), d);
 
       /* Add decl to the global array of tinfo decls.  */
       vec_safe_push (unemitted_tinfo_decls, d);
