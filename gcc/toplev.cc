@@ -2151,6 +2151,7 @@ do_compile ()
 {
   /* Don't do any more if an error has already occurred.  */
   if (!seen_error ())
+	  printf(""); // try print empty string
     {
       int i;
 
